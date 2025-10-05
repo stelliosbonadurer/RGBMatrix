@@ -1,0 +1,13 @@
+# Ignore the rpi-rgb-led-matrix folder and its contents
+rpi-rgb-led-matrix/
+
+# Optional: Ignore Python cache and other common files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.DS_Store
+.env
+.venv
