@@ -1,0 +1,12 @@
+current ip 192.168.1.16
+mac address: 2c:cf:67:50:bf:6e
+
+sudo ./demo -D0 --led-rows=32 --led-cols=32
+
+Run demo: 
+    cd rpi-rgb-led-matrix; cd examples-api-use; sudo ./demo -D0 --led-rows=32 --led-cols=32 --led-gpio-mapping=adafruit-hat
+
+Necessary line for this:
+    --led-gpio-mapping=adafruit-hat
+Get to rgb matrix folder:
+    cd rpi-rgb-led-matrix; cd examples-api-use; sudo ./demo -D0 --led-rows=32 --led-cols=32

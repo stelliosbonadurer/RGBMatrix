@@ -1,0 +1,15 @@
+import time
+import pyaudio
+from rgbmatrix import Adafruit_RGBmatrix
+#import pim
+
+matrix=Adafruit_RGBmatrix(32,1)
+
+x=16
+y=16
+
+for i in range(100):
+   matrix.fill(0xFFFFFF)
+
+
+   time.sleep(1.0)
