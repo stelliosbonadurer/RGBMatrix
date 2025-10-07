@@ -17,42 +17,72 @@ class VisualizeSorts(SampleBase):
         length = self.matrix.width
 
         while True:
-            print("Press b for bubble sort, s for selection sort, i for insertion sort (or q to quit): ", end='', flush=True)
+            print("Press b for bubble sort, s for selection sort, i for insertion sort, q for quick sort, l to loop through all sorts (or e to quit): ", end='', flush=True)
             user_input = input().strip().lower()
-            if user_input == 'q':
+            if user_input == 'e':
                 print("Exiting...")
                 break
             array = generate_array(length)
             if user_input == 'i':
-                sorts.insertion_sort(
-                    array,
-                    lambda arr, highlight_indices=None, pivot_index=None: draw_array(
-                        arr, offset_canvas, length, self.matrix,
-                        highlight_indices=highlight_indices, highlight_color=(255, 255, 0),
-                        pivot_index=pivot_index, pivot_color=(0, 0, 255)
-                    )
-                )
+                self.do_insertion_sort(array, offset_canvas, length)
             elif user_input == 'b':
-                sorts.bubble_sort(
-                    array,
-                    lambda arr, highlight_indices=None, pivot_index=None: draw_array(
-                        arr, offset_canvas, length, self.matrix,
-                        highlight_indices=highlight_indices, highlight_color=(0, 255, 0),
-                        pivot_index=pivot_index, pivot_color=(0, 0, 255)
-                    )
-                )
+                self.do_bubble_sort(array, offset_canvas, length)
             elif user_input == 's':
-                sorts.selection_sort(
-                    array,
-                    lambda arr, highlight_indices=None, pivot_index=None: draw_array(
-                        arr, offset_canvas, length, self.matrix,
-                        highlight_indices=highlight_indices, highlight_color=(0, 0, 255),
-                        pivot_index=pivot_index, pivot_color=(255, 255, 0)
-                    )
-                )
+                self.do_selection_sort(array, offset_canvas, length)
+            elif user_input == 'q':
+                self.do_quick_sort(array, offset_canvas, length)
+            elif user_input == 'l':
+                self.do_insertion_sort(array.copy(), offset_canvas, length)
+                self.do_bubble_sort(array.copy(), offset_canvas, length)
+                self.do_selection_sort(array.copy(), offset_canvas, length)
+                self.do_quick_sort(array.copy(), offset_canvas, length)
             else:
                 print("Invalid input. Please try again.")
 
+
+    def do_insertion_sort(self, array, offset_canvas, length):
+        array = generate_array(length)
+        sorts.insertion_sort(
+            array,
+            lambda arr, highlight_indices=None, pivot_index=None: draw_array(
+                arr, offset_canvas, length, self.matrix,
+                highlight_indices=highlight_indices, highlight_color=(255, 255, 0),
+                pivot_index=pivot_index, pivot_color=(0, 0, 255)
+            )
+        )
+
+    def do_bubble_sort(self, array, offset_canvas, length):
+        array = generate_array(length)
+        sorts.bubble_sort(
+            array,
+            lambda arr, highlight_indices=None, pivot_index=None: draw_array(
+                arr, offset_canvas, length, self.matrix,
+                highlight_indices=highlight_indices, highlight_color=(0, 255, 0),
+                pivot_index=pivot_index, pivot_color=(0, 0, 255)
+            )
+        )
+
+    def do_selection_sort(self, array, offset_canvas, length):
+        array = generate_array(length)
+        sorts.selection_sort(
+            array,
+            lambda arr, highlight_indices=None, pivot_index=None: draw_array(
+                arr, offset_canvas, length, self.matrix,
+                highlight_indices=highlight_indices, highlight_color=(0, 0, 255),
+                pivot_index=pivot_index, pivot_color=(255, 255, 0)
+            )
+        )
+    def do_quick_sort(self, array, offset_canvas, length):
+        sorts.quick_sort(
+            array,
+            0,
+            len(array) - 1,
+            lambda arr, highlight_indices=None, pivot_index=None: draw_array(
+                arr, offset_canvas, length, self.matrix,
+                highlight_indices=highlight_indices, highlight_color=(255, 255, 0),
+                pivot_index=pivot_index, pivot_color=(0, 0, 255)
+            )
+        )
 
 def generate_array(length):
     #Generate random array of integers between 1 and matrix size
