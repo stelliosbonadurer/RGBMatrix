@@ -23,13 +23,24 @@ class LGrid(SampleBase):
             time.sleep(1000)
 
 def generate_color():
-    #return (random.randint(0,255),random.randint(0,255),random.randint(0,255))
+    # Ensure at least one of R, G, B is >= 100
+    # while True:
+    #     r = random.randint(0, 255)
+    #     g = random.randint(0, 255)
+    #     b = random.randint(0, 255)
+    #     if r >= 100 or g >= 100 or b >= 100:
+    #         return (r, g, b)
     colors = [
-        (255, 0, 0),    # Red
-        (0, 255, 0),    # Green
-        (0, 0, 255),    # Blue
-        (255, 255, 0),  # Yellow
-        (255, 0, 255)   # Magenta
+        (255, 0, 0),      # Red
+        (0, 255, 0),      # Green
+        (0, 0, 255),      # Blue
+        (255, 255, 0),    # Yellow
+        (255, 0, 255),    # Magenta
+        (0, 255, 255),    # Cyan
+        (255, 128, 0),    # Orange
+        (128, 0, 255),    # Purple
+        (0, 128, 255),    # Sky Blue
+        (128, 255, 0)     # Lime
     ]
     return random.choice(colors)
 
