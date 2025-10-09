@@ -59,6 +59,47 @@ def update_grid(self, grid):
                     new_grid[y][x] = 1
     return new_grid
 
+def decode_rle(rle_string):
+    """
+    Decode an RLE (Run-Length Encoded) string into a 2D grid for Game of Life.
+    Returns a list of lists where 1 is alive, 0 is dead.
+    """
+    lines = rle_string.strip().split('$')
+    grid = []
+    for line in lines:
+        row = []
+        i = 0
+        while i < len(line):
+            if line[i].isdigit():
+                # Parse the number
+                num_str = ''
+                while i < len(line) and line[i].isdigit():
+                    num_str += line[i]
+                    i += 1
+                num = int(num_str)
+            else:
+                num = 1
+            if i < len(line):
+                char = line[i]
+                if char == 'b':
+                    row.extend([0] * num)
+                elif char == 'o':
+                    row.extend([1] * num)
+                i += 1
+        grid.append(row)
+    return grid
+
+def place_pattern_on_grid(grid, pattern, start_x=0, start_y=0):
+    """
+    Place a decoded RLE pattern onto the grid at the specified position.
+    Assumes pattern is smaller than grid.
+    """
+    for y, row in enumerate(pattern):
+        for x, cell in enumerate(row):
+            if start_y + y < len(grid) and start_x + x < len(grid[0]):
+                grid[start_y + y][start_x + x] = cell
+    return grid
+
 
 # Main function
 if __name__ == "__main__":
