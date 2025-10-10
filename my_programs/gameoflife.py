@@ -17,15 +17,30 @@ class GameofLife(SampleBase):
         width = self.matrix.width
         height = self.matrix.height
         # Initialize a random grid
-        grid = [[random.choice([0, 1]) for _ in range(width)] for _ in range(height)]
+        grid = [[0 for _ in range(width)] for _ in range(height)]  # Start with empty grid
+        
+        # Load pattern from .lif file
+        lif_file = 'glider-reflectors.lif'  # Replace with your .lif file path
+        rle_pattern = load_lif_file(lif_file)
+        pattern = decode_rle(rle_pattern)
+        
+        # Center the pattern on the grid
+        pattern_height = len(pattern)
+        pattern_width = max(len(row) for row in pattern) if pattern else 0
+        start_y = (height - pattern_height) // 2
+        start_x = (width - pattern_width) // 2
+        
+        grid = place_pattern_on_grid(grid, pattern, start_x, start_y)
+        
         while True:
             draw_grid(self,grid,offset_canvas)
             grid = update_grid(self, grid)
             time.sleep(1)
-        
-        #if grid is empty, reinitialize
-        if all(cell == 0 for row in grid for cell in row):
-            grid = [[random.choice([0, 1]) for _ in range(width)] for _ in range(height)]
+            # Optional: Reinitialize if grid is empty
+            if all(cell == 0 for row in grid for cell in row):
+                grid = [[0 for _ in range(width)] for _ in range(height)]
+                # Reload pattern if desired
+                grid = place_pattern_on_grid(grid, pattern, start_x, start_y)
 
 def draw_grid(self, grid, canvas):
     canvas.Clear()
@@ -99,6 +114,29 @@ def place_pattern_on_grid(grid, pattern, start_x=0, start_y=0):
             if start_y + y < len(grid) and start_x + x < len(grid[0]):
                 grid[start_y + y][start_x + x] = cell
     return grid
+
+def load_lif_file(filename):
+    """
+    Load a .lif file and extract the RLE string.
+    Assumes the RLE starts after the x = ... line.
+    """
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    
+    rle_lines = []
+    start_rle = False
+    for line in lines:
+        line = line.strip()
+        if line.startswith('#'):
+            continue
+        if line.startswith('x ='):
+            start_rle = True
+            continue
+        if start_rle:
+            rle_lines.append(line)
+    
+    rle_string = ''.join(rle_lines)
+    return rle_string
 
 
 # Main function
