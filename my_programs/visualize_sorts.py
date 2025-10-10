@@ -102,7 +102,7 @@ def generate_array(length):
     #Generate random array of integers between 1 and matrix size
     return [random.randint(1, length) for _ in range(length)]
 
-def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5)):
+def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5),sleep_delay=0.7):
     """
       - groups: list of tuples (indices_list, (r, g, b)).
                 Each indices_list is a list of column indices to color with the given RGB.
@@ -130,7 +130,7 @@ def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5))
         for j in range(col_height):
             # Draw bottom-up so j=0 is the bottom row (y = height-1), increasing upwards.
             canvas.SetPixel(i, canvas.height - 1 - j, *color)
-    time.sleep(0.7)
+    time.sleep(sleep_delay)
     canvas = matrix.SwapOnVSync(canvas)
     return canvas
 

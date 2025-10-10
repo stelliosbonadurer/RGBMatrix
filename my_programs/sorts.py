@@ -1,6 +1,16 @@
 # my_programs/sorts.py
-#Various sorting algorithms with visualization callbacks
-#Used with visualize_sorts.py
+# Various sorting algorithms with visualization callbacks
+# Used with visualize_sorts.py
+
+# Shared color palette (RGB tuples) for visualizations
+COLORS = {
+    "base": (150, 5, 5),        # default bar color (should match visualize_sorts base_color)
+    "compare": (255, 255, 0),   # yellow: comparing/swapping pair
+    "swap": (255, 255, 0),        # green: swap highlight
+    "move": (0,0,255),          # blue: The item being put into place
+    "pivot": (0, 0, 255),       # blue: pivot or key insertion position
+    "min": (0, 0, 255),         # blue: current min (reuse pivot blue)
+}
 
 def insertion_sort(arr, draw_callback):
     print("Performing insertion sort")
@@ -15,8 +25,8 @@ def insertion_sort(arr, draw_callback):
             # Create a fictitious array with the key at its intended position
             fictitious = arr.copy()
             fictitious[j] = key
-            # Highlight item being inserted as the pivot (blue)
-            draw_callback(fictitious, groups=[([j], (0, 0, 255))])
+            # Highlight item being inserted as the pivot/key
+            draw_callback(fictitious, groups=[([j], COLORS["move"])])
             j -= 1
         arr[j + 1] = key
         #draw_callback(arr)
@@ -29,9 +39,8 @@ def bubble_sort(arr, draw_callback):
     for i in range(n):
         for j in range(0, n - i - 1):
             if arr[j] > arr[j + 1]:
-                draw_callback(arr, groups=[([j, j+1], (0, 255, 0))])
                 arr[j], arr[j + 1] = arr[j + 1], arr[j]
-                draw_callback(arr, groups=[([j, j+1], (0, 255, 0))])
+                draw_callback(arr, groups=[[ [j+1], COLORS["move"] ]])
                 # The item at j+1 is the one being bubbled up
                 #draw_callback(arr, pivot_index=j+1)
 
@@ -44,10 +53,10 @@ def selection_sort(arr, draw_callback):
         for j in range(i + 1, n):
             if arr[j] < arr[min_idx]:
                 min_idx = j
-        # Draw the array before and after the swap, highlighting the two indices being swapped (blue)
-        draw_callback(arr, groups=[([i, min_idx], (0, 0, 255))])
+        # Draw before and after the swap; highlight i and min_idx
+        draw_callback(arr, groups=[[ [i], COLORS["swap"] ], [ [min_idx], COLORS["move"]]])
         arr[i], arr[min_idx] = arr[min_idx], arr[i]
-        draw_callback(arr, groups=[([i, min_idx], (0, 0, 255))])
+        draw_callback(arr, groups=[[ [min_idx], COLORS["swap"] ], [ [i], COLORS["move"]]])
     return arr
 
 #Quick Sort Using Hoare's partitioning scheme
@@ -80,12 +89,14 @@ def qs_partition(arr, lo, hi, draw_callback):
         #If pointers cross, break
         if i >= j:
             break
-        draw_callback(arr, groups=[([i, j], (255, 255, 0))])
+        draw_callback(arr, groups=[[ [lo], COLORS["move"] ], [ [i, j], COLORS["swap"] ]])
         # swap out-of-place pair
         arr[i], arr[j] = arr[j], arr[i]
 
-        draw_callback(arr, groups=[([i, j], (255, 255, 0))])
+        draw_callback(arr, groups=[[ [lo], COLORS["move"] ], [ [i, j], COLORS["swap"] ]])
 
     # place pivot into its final spot
+    draw_callback(arr, groups=[[ [j], COLORS["swap"] ], [ [lo], COLORS["move"]]])
     arr[lo], arr[j] = arr[j], arr[lo]
+    draw_callback(arr, groups=[[ [lo], COLORS["swap"] ], [ [j], COLORS["move"]]])
     return j
