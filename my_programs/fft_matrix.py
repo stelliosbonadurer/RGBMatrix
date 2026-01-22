@@ -1,14 +1,14 @@
 #!/usr/bin/env python
 import sys
 import os
-import numpy as np
-import sounddevice as sd
+import numpy as np # type: ignore
+import sounddevice as sd # type: ignore
 import time
 
 # Add path to find the samplebase and rgbmatrix modules
 sys.path.append(os.path.abspath(os.path.dirname(__file__) + '/..'))
-from samplebase import SampleBase
-from rgbmatrix import graphics
+from samplebase import SampleBase # type: ignore
+from rgbmatrix import graphics # type: ignore
 
 # ---------- CONFIG ----------
 DEVICE = 'iMM-6C'  # Use device name instead of index

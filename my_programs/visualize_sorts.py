@@ -10,8 +10,8 @@ import time
 # Registry of available sorts: (Display Name, VisualizeSorts method name)
 SORTS = [
     ("Insertion", "do_insertion_sort"),
-    ("Bubble", "do_bubble_sort"),
     ("Selection", "do_selection_sort"),
+    ("Bubble", "do_bubble_sort"),
     ("Quick", "do_quick_sort"),
 ]
 
@@ -102,7 +102,7 @@ def generate_array(length):
     #Generate random array of integers between 1 and matrix size
     return [random.randint(1, length) for _ in range(length)]
 
-def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5),sleep_delay=0.7):
+def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5),sleep_delay=0.05):
     """
       - groups: list of tuples (indices_list, (r, g, b)).
                 Each indices_list is a list of column indices to color with the given RGB.

@@ -61,17 +61,18 @@ def selection_sort(arr, draw_callback):
 
 #Quick Sort Using Hoare's partitioning scheme
 def quick_sort(arr, draw_callback):
+    print("Performing Quick Sort (Hoare's Partition)")
     _qs(arr, 0, len(arr) - 1, draw_callback)
 
 def _qs(arr, lo, hi, draw_callback):
     if lo >= hi: 
         return
-    j = qs_partition(arr, lo, hi, draw_callback)
+    j = _qs_partition(arr, lo, hi, draw_callback)
     _qs(arr, lo, j - 1, draw_callback)   # fix: pivot at j is done
     _qs(arr, j + 1, hi, draw_callback)
 
 
-def qs_partition(arr, lo, hi, draw_callback):
+def _qs_partition(arr, lo, hi, draw_callback):
     pivot = arr[lo]
     i = lo
     j = hi + 1
@@ -100,3 +101,46 @@ def qs_partition(arr, lo, hi, draw_callback):
     arr[lo], arr[j] = arr[j], arr[lo]
     draw_callback(arr, groups=[[ [lo], COLORS["swap"] ], [ [j], COLORS["move"]]])
     return j
+
+
+    def shell_sort(arr, draw_callback):
+        """
+        Shell sort (gap-based insertion sort).
+        Uses the groups-based draw_callback for visualization with COLORS palette.
+        """
+        print("Performing shell sort")
+        n = len(arr)
+        gap = n // 2
+
+        while gap > 0:
+            for i in range(gap, n):
+                temp = arr[i]
+                j = i
+                # Highlight the current element being positioned
+                draw_callback(arr, groups=[([i], COLORS.get("move", (0, 0, 255)))])
+
+                # Gap-based insertion
+                while j >= gap and arr[j - gap] > temp:
+                    # Show comparison/shift
+                    draw_callback(
+                        arr,
+                        groups=[
+                            ([j], COLORS.get("swap", (255, 255, 0))),
+                            ([j - gap], COLORS.get("swap", (255, 255, 0))),
+                            ([i], COLORS.get("move", (0, 0, 255))),
+                        ],
+                    )
+                    arr[j] = arr[j - gap]
+                    # Show the shift result at position j
+                    draw_callback(arr, groups=[([j], COLORS.get("move", (0, 0, 255)))])
+                    j -= gap
+
+                # Place temp into its correct position for this gap
+                arr[j] = temp
+                draw_callback(arr, groups=[([j], COLORS.get("move", (0, 0, 255)))])
+
+            gap //= 2
+
+        return arr
+
+
