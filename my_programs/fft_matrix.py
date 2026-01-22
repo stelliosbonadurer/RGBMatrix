@@ -12,23 +12,23 @@ from rgbmatrix import graphics # type: ignore
 
 # ---------- CONFIG ----------
 DEVICE = 'iMM-6C'  # Use device name instead of index
-BLOCK_SIZE = 1024  # Actual audio samples per callback (~23ms at 44kHz)
+BLOCK_SIZE = 512  # Actual audio samples per callback (~23ms at 44kHz)
 FFT_SIZE = 4096    # Zero-pad to this size for better freq resolution
 CHANNEL = 0
 MIN_FREQ = 120     # Raise to cut more rumble/ambient noise
 MAX_FREQ = 12000
-SLEEP_DELAY = 0.01  # Delay between frames
+SLEEP_DELAY = 0.005  # Delay between frames
 
 # Sensitivity tuning
 NOISE_FLOOR = 0.01       # Ignore signals below this threshold (raised to cut noise)
 BASS_ATTENUATION = 0.15  # Reduce bass more aggressively
-HIGH_FREQ_BOOST = 4.0    # Boost high frequencies to make them visible
-USE_FIXED_SCALE = False  # Use auto-normalizing for now to debug
-FIXED_SCALE_MAX = 0.15   # Maximum magnitude for fixed scale (adjust based on your mic)
+HIGH_FREQ_BOOST = 8.0    # Boost high frequencies to make them visible
+USE_FIXED_SCALE = True  # Use auto-normalizing for now to debug
+FIXED_SCALE_MAX = 0.3   # Maximum magnitude for fixed scale (adjust based on your mic)
 SILENCE_THRESHOLD = 0.00 # If max magnitude is below this, show nothing (cuts idle noise)
 
 # Smoothing
-SMOOTH_RISE = 0.5        # Slightly slower rise (was 0.6)
+SMOOTH_RISE = 0.7       # Slightly slower rise (was 0.6)
 SMOOTH_FALL = 0.15       # How fast bars fall (slower = smoother decay)
 # ---------------------------
 
