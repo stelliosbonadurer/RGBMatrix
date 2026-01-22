@@ -21,10 +21,11 @@ SLEEP_DELAY = 0.01  # Delay between frames
 
 # Sensitivity tuning
 NOISE_FLOOR = 0.01       # Ignore signals below this threshold (raised to cut noise)
-BASS_ATTENUATION = 0.2   # Reduce bass more aggressively (was 0.4)
+BASS_ATTENUATION = 0.15  # Reduce bass more aggressively
+HIGH_FREQ_BOOST = 4.0    # Boost high frequencies to make them visible
 USE_FIXED_SCALE = False  # Use auto-normalizing for now to debug
 FIXED_SCALE_MAX = 0.15   # Maximum magnitude for fixed scale (adjust based on your mic)
-SILENCE_THRESHOLD = 0.02 # If max magnitude is below this, show nothing (cuts idle noise)
+SILENCE_THRESHOLD = 0.00 # If max magnitude is below this, show nothing (cuts idle noise)
 
 # Smoothing
 SMOOTH_RISE = 0.5        # Slightly slower rise (was 0.6)
@@ -43,17 +44,25 @@ class FFTMatrix(SampleBase):
         self.have_data = True
 
     def freq_to_bin(self, freqs, fmin, fmax, n):
-        """Create logarithmic frequency bins with bass attenuation weights"""
+        """Create logarithmic frequency bins with frequency-dependent weights.
+        
+        Bass is attenuated, high frequencies are boosted to compensate for
+        the natural 1/f rolloff of most audio content.
+        """
         edges = np.logspace(np.log10(fmin), np.log10(fmax), n + 1)
         bins = []
         weights = []
         for i in range(n):
             mask = (freqs >= edges[i]) & (freqs < edges[i+1])
             bins.append(mask)
-            # Calculate center frequency and create attenuation weight for bass
+            # Calculate center frequency
             center_freq = (edges[i] + edges[i+1]) / 2
-            # Attenuate bass: weight goes from BASS_ATTENUATION at low freq to 1.0 at high freq
-            weight = BASS_ATTENUATION + (1 - BASS_ATTENUATION) * (np.log10(center_freq / fmin) / np.log10(fmax / fmin))
+            # Normalized position: 0 at fmin, 1 at fmax (log scale)
+            norm_pos = np.log10(center_freq / fmin) / np.log10(fmax / fmin)
+            # Weight curve: attenuate bass, boost highs
+            # At low freq (norm_pos=0): weight = BASS_ATTENUATION
+            # At high freq (norm_pos=1): weight = HIGH_FREQ_BOOST
+            weight = BASS_ATTENUATION + (HIGH_FREQ_BOOST - BASS_ATTENUATION) * (norm_pos ** 1.5)
             weights.append(weight)
         return bins, np.array(weights)
 
