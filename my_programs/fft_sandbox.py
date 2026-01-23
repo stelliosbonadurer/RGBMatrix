@@ -27,9 +27,12 @@ ZOOM_MAX_FREQ = 3500     # ~60% of log scale (where action ends)
 # Sensitivity tuning
 NOISE_FLOOR = 0.1       # Subtract from signal (0 = no floor, 1 = mute everything)
 LOW_FREQ_WEIGHT = 0.15   # Multiplier for lowest freq bin (0 = mute, 1 = neutral, >1 = boost)
+
 HIGH_FREQ_WEIGHT = 8.0   # Multiplier for highest freq bin (0 = mute, 1 = neutral, >1 = boost)
 USE_FIXED_SCALE = True   # True = fixed sensitivity, False = auto-normalize (loudest bar always max)
+USE_ROLLING_MAX_SCALE = False  # True = normalize to max in last 30 seconds
 FIXED_SCALE_MAX = 0.3    # Divide signal by this (0 = infinite gain/clipped, 1 = low sensitivity)
+ROLLING_MAX_SECONDS = 30  # Window for rolling max normalization
 SILENCE_THRESHOLD = 0.00 # Below this = black (0 = always show something, 1 = mute nearly everything)
 
 # Smoothing
@@ -72,6 +75,8 @@ class FFTMatrix(SampleBase):
         return bins, np.array(weights)
 
     def run(self):
+        import collections
+        rolling_max_buffer = collections.deque(maxlen=int(ROLLING_MAX_SECONDS / SLEEP_DELAY))
         """Main program loop"""
         offset_canvas = self.matrix.CreateFrameCanvas()
         
@@ -148,8 +153,15 @@ class FFTMatrix(SampleBase):
                 if peak < SILENCE_THRESHOLD:
                     bars = bars * (peak / SILENCE_THRESHOLD)  # Fade out near silence
                 
+
                 # Normalize to 0-1 range
-                if USE_FIXED_SCALE:
+                if USE_ROLLING_MAX_SCALE:
+                    # Update rolling max buffer
+                    peak = np.max(bars)
+                    rolling_max_buffer.append(peak)
+                    rolling_max = max(rolling_max_buffer) if rolling_max_buffer else 1e-9
+                    max_val = rolling_max + 1e-9
+                elif USE_FIXED_SCALE:
                     max_val = FIXED_SCALE_MAX
                 else:
                     max_val = max(bars) + 1e-9
