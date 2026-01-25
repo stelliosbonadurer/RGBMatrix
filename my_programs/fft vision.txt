@@ -1,0 +1,7 @@
+
+
+Generating session wide floor and ceiling values so that when we get to a particularly
+intense part of the show it stays high and vibrant and doesn't normalize as quickly.
+
+Instead of normalizing to max, when it maxes out a new bar goes in front continuing that
+next color.

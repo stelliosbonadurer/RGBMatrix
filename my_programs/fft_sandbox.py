@@ -36,7 +36,7 @@ PEAK_HOLD_FRAMES = 8       # Frames to hold peak before falling (0 = immediate f
 PEAK_COLOR_MODE = 'contrast'   # 'white' = always white, 'bar' = match bar color, 'contrast' = opposite of bar, 'peak' = max height color of theme
 
 # ---------- COLOR THEME ----------
-# Options: 'classic', 'warm', 'fire', 'ocean', 'forest', 'purple', 'rainbow', 'spectrum', 'fire_spectrum', 'mono_green', 'mono_amber'
+# Options: 'classic', 'warm', 'fire', 'ocean', 'forest', 'purple', 'rainbow', 'spectrum', 'fire_spectrum', 'blue_flame', 'waves', 'mono_green', 'mono_amber'
 COLOR_THEME = 'fire_spectrum'
 #   'classic'    - Blue (low) -> Green (mid) -> Red (high) - original theme
 #   'warm'       - Dark red (low) -> Orange (mid) -> Yellow (high) - great for bluegrass
@@ -47,6 +47,8 @@ COLOR_THEME = 'fire_spectrum'
 #   'rainbow'    - Full spectrum based on bar position (column), brightness varies with height
 #   'spectrum'   - Rainbow hue by column + hue shifts with amplitude (low=blue-ish, high=red-ish)
 #   'fire_spectrum' - Fire hues vary by column (deep red to orange), fire gradient on y-axis
+#   'blue_flame' - Fire spectrum but peaks fade to blue (like hottest part of flame)
+#   'waves'      - Ocean waves: deep blue -> light blue -> cyan -> white (seafoam peaks)
 #   'mono_green' - Single color (green) with brightness based on height - retro
 #   'mono_amber' - Single color (amber/orange) with brightness based on height - vintage VU
 
@@ -66,8 +68,8 @@ USE_ROLLING_MAX_SCALE = False  # True = scale to max in window (less punchy, eve
 FIXED_SCALE_MAX = 0.3    # For fixed scale: divide signal by this (0.1 = very sensitive, 0.5 = needs loud audio)
 ROLLING_WINDOW_SECONDS = 3  # Seconds of history for RMS/max calculation (shorter = more reactive, longer = stable)
 HEADROOM_MULTIPLIER = 2.5   # RMS multiplier for headroom (2.0 = punchy, 3.0 = very punchy, 1.5 = more filled)
-ATTACK_SPEED = 0.3         # How fast scale adapts to LOUDER audio (0.1 = slow, 0.5 = instant)
-DECAY_SPEED = 0.02          # How fast scale adapts to QUIETER audio (0.01 = very slow, 0.1 = fast)
+ATTACK_SPEED = 0.1         # How fast scale adapts to LOUDER audio (0.1 = slow, 0.5 = instant)
+DECAY_SPEED = 0.06          # How fast scale adapts to QUIETER audio (0.01 = very slow, 0.1 = fast)
 MIN_SCALE = 0.05            # Minimum scale to prevent infinite gain in silence (0.01-0.1)
 SILENCE_THRESHOLD = 0.00 # Below this peak = fade to black (0 = always show, 0.1 = hide quiet noise)
 SENSITIVITY_SCALAR = 1.0   # Manual sensitivity boost on TOP of auto-scaling (0.5 = half as sensitive/taller bars, 2.0 = twice as sensitive/shorter bars)
@@ -450,6 +452,35 @@ class FFTMatrix(SampleBase):
                 b = int(180 + (255 - 180) * intensity)  # Ramp to full blue
             
             # Clamp all values to valid range
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
+        
+        elif COLOR_THEME == 'waves':
+            # Ocean waves: deep blue -> light blue -> cyan -> white seafoam
+            # X-axis varies the shade slightly (deeper vs lighter blue)
+            depth = 1.0 - column_ratio * 0.3  # 1.0 to 0.7, makes some columns deeper blue
+            
+            if ratio < 0.33:
+                # Bottom third: dark/deep blue
+                intensity = ratio * 3
+                r = 0
+                g = int(30 * intensity * depth)
+                b = int((100 + 80 * depth) * intensity)
+            elif ratio < 0.66:
+                # Middle third: deep blue -> light blue/cyan
+                intensity = (ratio - 0.33) * 3
+                r = int(30 * intensity)
+                g = int(30 * depth + (180 - 30) * intensity)
+                b = int(100 + 80 * depth + (255 - (100 + 80 * depth)) * intensity * 0.5)
+            else:
+                # Top third: cyan -> white (seafoam/whitecaps)
+                intensity = (ratio - 0.66) * 3
+                r = int(30 + (255 - 30) * intensity)
+                g = int(180 + (255 - 180) * intensity)
+                b = int(200 + (255 - 200) * intensity)
+            
+            # Clamp values
             r = max(0, min(255, r))
             g = max(0, min(255, g))
             b = max(0, min(255, b))

@@ -1,0 +1,326 @@
+================================================================================
+FFT SANDBOX PARAMETER GUIDE
+================================================================================
+A comprehensive explanation of all parameters, the math behind them, and how
+they affect the visualization.
+
+================================================================================
+AUDIO INPUT SETTINGS
+================================================================================
+
+DEVICE
+------
+The name or index of the audio input device. Use `python -m sounddevice` to
+list available devices.
+
+BLOCK_SIZE (default: 512)
+-------------------------
+Number of audio samples captured per callback. At 44.1kHz sample rate:
+  - 512 samples = ~11.6ms of audio per frame
+  - Lower = more responsive but more CPU usage
+  - Higher = smoother but more latency
+
+FFT_SIZE (default: 4096)
+------------------------
+Size of the FFT (Fast Fourier Transform). The input is zero-padded to this size.
+  - Larger = better frequency resolution (can distinguish closer pitches)
+  - Frequency resolution = sample_rate / FFT_SIZE
+  - At 44.1kHz with FFT_SIZE=4096: resolution = ~10.7 Hz per bin
+
+CHANNEL (default: 0)
+--------------------
+Which audio channel to use (0 = left/mono, 1 = right for stereo).
+
+
+================================================================================
+FREQUENCY RANGE
+================================================================================
+
+MIN_FREQ / MAX_FREQ (default: 60 / 12000)
+-----------------------------------------
+The frequency range to visualize when ZOOM_MODE is False.
+  - Human hearing: ~20 Hz to ~20,000 Hz
+  - Most music content: 60 Hz to 12,000 Hz
+  - Bass guitar/upright bass fundamentals: 40-100 Hz
+  - Vocals: 80-1000 Hz
+  - Cymbals/harmonics: 8000+ Hz
+
+ZOOM_MODE / ZOOM_MIN_FREQ / ZOOM_MAX_FREQ
+-----------------------------------------
+When ZOOM_MODE=True, uses the ZOOM frequencies instead of MIN/MAX.
+Useful for focusing on a specific range:
+  - Bluegrass: 80-8000 Hz (guitar, banjo, fiddle, vocals)
+  - Bass-heavy: 40-500 Hz
+  - Vocals only: 200-4000 Hz
+
+
+================================================================================
+DISPLAY MODES
+================================================================================
+
+MIRROR_HORIZONTAL (default: False)
+----------------------------------
+When True, creates a symmetric display:
+  - Combines 32 bins into 16 by taking max of adjacent pairs (bins 0+1, 2+3, etc.)
+  - Displays these 16 bins mirrored across the 32 columns
+  - Creates a butterfly/symmetric visualization
+
+FLIP_X (default: False)
+-----------------------
+Reverses which frequencies go where:
+  - False: Low frequencies on left (or center if mirrored)
+  - True: Low frequencies on right (or edges if mirrored)
+
+CENTER_VERTICAL (default: False)
+--------------------------------
+When True, bars grow from the vertical center both up AND down.
+When False, bars grow from the bottom up (traditional spectrum analyzer).
+
+
+================================================================================
+PEAK INDICATORS
+================================================================================
+
+PEAK_ENABLED (default: True)
+----------------------------
+Shows floating dots that mark the highest point each bar has reached.
+
+PEAK_HOLD_FRAMES (default: 8)
+-----------------------------
+Number of frames to hold the peak at its position before it starts falling.
+At 60fps: 8 frames = ~133ms hold time.
+
+PEAK_FALL_SPEED (default: 0.08)
+-------------------------------
+How fast peaks fall after the hold period. Each frame:
+  peak_height -= PEAK_FALL_SPEED
+
+  - 0.01 = very slow/floaty (falls ~0.3 units per second at 30fps)
+  - 0.08 = moderate
+  - 0.2 = fast drop
+
+PEAK_COLOR_MODE
+---------------
+  - 'white': Always white
+  - 'bar': Matches the current bar color
+  - 'contrast': Inverts the bar color (255 - r, 255 - g, 255 - b)
+  - 'peak': Uses the color for maximum height (ratio=1.0) in the theme
+
+
+================================================================================
+SENSITIVITY / FREQUENCY WEIGHTING
+================================================================================
+
+NOISE_FLOOR (default: 0.4)
+--------------------------
+Subtracts this value from all frequency magnitudes before display:
+  bars = max(0, magnitude - NOISE_FLOOR)
+
+  - 0 = no floor, very sensitive, shows background noise
+  - 0.3-0.5 = cuts most ambient noise
+  - 1.0 = mutes nearly everything
+
+LOW_FREQ_WEIGHT / HIGH_FREQ_WEIGHT (default: 0.15 / 15.0)
+---------------------------------------------------------
+Compensates for the natural 1/f rolloff in audio (bass is naturally louder
+in most recordings). Each frequency bin gets a weight interpolated between
+these two values based on its position in the spectrum.
+
+The weight curve uses a power function for smooth interpolation:
+  norm_pos = log10(center_freq / min_freq) / log10(max_freq / min_freq)
+  weight = LOW_FREQ_WEIGHT + (HIGH_FREQ_WEIGHT - LOW_FREQ_WEIGHT) * (norm_pos ^ 1.5)
+
+Example with defaults (0.15 to 15.0):
+  - Lowest freq bin: weight = 0.15 (attenuated, bass is naturally loud)
+  - Middle freq bin: weight ≈ 2.5
+  - Highest freq bin: weight = 15.0 (boosted, treble is naturally quiet)
+
+
+================================================================================
+SCALING MODES - THE CORE MATH
+================================================================================
+
+The scaling system normalizes the signal so bars fit nicely on the display
+regardless of input volume. Three modes are available:
+
+1. USE_FIXED_SCALE
+------------------
+Divides all values by a fixed constant:
+  bars = bars / FIXED_SCALE_MAX
+
+Simple but doesn't adapt to volume changes. May clip (all bars maxed) if
+audio is loud, or show tiny bars if audio is quiet.
+
+2. USE_ROLLING_MAX_SCALE
+------------------------
+Tracks the maximum peak over the last ROLLING_WINDOW_SECONDS:
+  max_val = max(peaks in rolling window)
+  bars = bars / max_val
+
+All bars are relative to the loudest recent moment. Less punchy because
+the loudest sound always reaches the top.
+
+3. USE_ROLLING_RMS_SCALE (RECOMMENDED)
+--------------------------------------
+Tracks the RMS (Root Mean Square) of peaks over the rolling window, then
+adds headroom for peaks to punch through:
+
+  Step 1: Collect peaks in rolling buffer
+  Step 2: Calculate RMS = sqrt(mean(peak²))
+  Step 3: target_scale = RMS × HEADROOM_MULTIPLIER
+  Step 4: Smooth current_scale toward target (see Attack/Decay below)
+  Step 5: bars = bars / current_scale
+
+This means average-loudness content sits at roughly 1/HEADROOM_MULTIPLIER
+of the display height, leaving room for peaks to punch through.
+
+HEADROOM_MULTIPLIER (default: 2.5)
+----------------------------------
+With HEADROOM_MULTIPLIER = 2.5:
+  - Average signal fills ~40% of display (1/2.5 = 0.4)
+  - Peaks that are 2.5× louder than average reach the top
+  - Higher values = more headroom, punchier peaks, shorter average bars
+  - Lower values = less headroom, fuller display, less punch
+
+
+================================================================================
+ATTACK AND DECAY - SMOOTH SCALING ADAPTATION
+================================================================================
+
+The scaling factor doesn't jump instantly—it smoothly follows the target
+using asymmetric smoothing:
+
+  if target_scale > current_scale:
+      # Volume increasing - use ATTACK
+      current_scale += (target_scale - current_scale) × ATTACK_SPEED
+  else:
+      # Volume decreasing - use DECAY
+      current_scale += (target_scale - current_scale) × DECAY_SPEED
+
+This is exponential smoothing (a.k.a. EMA - Exponential Moving Average).
+
+ATTACK_SPEED (default: 0.3)
+---------------------------
+How fast the scale adapts when volume INCREASES.
+  - Each frame closes this fraction of the gap to the target
+  - 0.1 = closes 10% of gap per frame (slow, ~30 frames to mostly adapt)
+  - 0.3 = closes 30% of gap per frame (moderate, ~10 frames)
+  - 0.5 = closes 50% of gap per frame (fast, ~5 frames)
+
+Fast attack prevents clipping when volume suddenly increases.
+
+DECAY_SPEED (default: 0.02)
+---------------------------
+How fast the scale adapts when volume DECREASES.
+  - 0.01 = closes 1% of gap per frame (very slow, keeps bars "pumped")
+  - 0.02 = closes 2% of gap per frame (slow, good punch retention)
+  - 0.1 = closes 10% of gap per frame (fast recovery)
+
+Slow decay keeps the visualization looking energetic after loud sections.
+This is why it's asymmetric: fast attack (avoid clipping) + slow decay
+(maintain visual impact).
+
+Time to reach ~95% of target:
+  frames_needed ≈ 3 / speed
+  At 30fps with DECAY_SPEED=0.02: 3/0.02 = 150 frames = 5 seconds
+
+
+================================================================================
+SENSITIVITY SCALAR
+================================================================================
+
+SENSITIVITY_SCALAR (default: 1.0)
+---------------------------------
+A manual multiplier applied ON TOP of the auto-scaling:
+  final_scale = calculated_scale × SENSITIVITY_SCALAR
+
+  - 0.5 = half the scale = bars appear twice as tall
+  - 1.0 = no change
+  - 2.0 = double the scale = bars appear half as tall
+
+Use this to fine-tune the overall "energy" of the display without
+changing the adaptive behavior.
+
+
+================================================================================
+BAR SMOOTHING
+================================================================================
+
+Separate from scaling, each bar's height is smoothed over time for visual appeal.
+
+SMOOTH_RISE (default: 0.7)
+--------------------------
+How fast bars rise when the signal increases:
+  if new_value > smoothed_value:
+      smoothed_value += (new_value - smoothed_value) × SMOOTH_RISE
+
+  - 0.3 = slow, smooth rise
+  - 0.7-0.8 = snappy, responsive
+  - 1.0 = instant (no smoothing on rise)
+
+SMOOTH_FALL (default: 0.55)
+---------------------------
+How fast bars fall when the signal decreases:
+  if new_value < smoothed_value:
+      smoothed_value += (new_value - smoothed_value) × SMOOTH_FALL
+
+  - 0.2 = slow decay (bars linger)
+  - 0.4-0.6 = natural decay
+  - 0.8 = fast drop
+
+
+================================================================================
+COLOR THEMES
+================================================================================
+
+Colors are calculated based on two values:
+  - ratio: 0-1, the bar's height (0 = bottom, 1 = top)
+  - column_ratio: 0-1, the bar's horizontal position (0 = left, 1 = right)
+
+Most themes only use ratio (height-based gradient).
+'rainbow', 'spectrum', 'fire_spectrum', 'waves' also use column_ratio.
+
+Theme descriptions:
+  - classic: Blue → Green → Red (original)
+  - warm: Dark red → Orange → Yellow (good for acoustic/bluegrass)
+  - fire: Black → Red → Orange → Yellow → White
+  - ocean: Deep blue → Cyan → White
+  - forest: Dark green → Bright green → Yellow
+  - purple: Deep purple → Magenta → Pink
+  - rainbow: Full spectrum by column, brightness by height
+  - spectrum: Rainbow by column + hue shifts with amplitude
+  - fire_spectrum: Fire colors that vary by column
+  - blue_flame: Fire that transitions to blue at the hottest peaks
+  - waves: Ocean waves - deep blue → light blue → cyan → white seafoam
+  - mono_green: Single green color, brightness varies
+  - mono_amber: Vintage VU meter amber look
+
+
+================================================================================
+QUICK TUNING GUIDE
+================================================================================
+
+For PUNCHY visualization (peaks hit hard):
+  - HEADROOM_MULTIPLIER = 2.5-3.0
+  - ATTACK_SPEED = 0.2-0.3
+  - DECAY_SPEED = 0.01-0.02
+  - SMOOTH_RISE = 0.8-1.0
+  - SMOOTH_FALL = 0.3-0.4
+
+For SMOOTH visualization (less jarring):
+  - HEADROOM_MULTIPLIER = 1.5-2.0
+  - ATTACK_SPEED = 0.1
+  - DECAY_SPEED = 0.05
+  - SMOOTH_RISE = 0.5-0.6
+  - SMOOTH_FALL = 0.4-0.5
+
+For REACTIVE to quiet passages:
+  - ROLLING_WINDOW_SECONDS = 2-3
+  - DECAY_SPEED = 0.05-0.1
+
+For STABLE during volume changes:
+  - ROLLING_WINDOW_SECONDS = 8-10
+  - DECAY_SPEED = 0.01
+
+
+================================================================================
