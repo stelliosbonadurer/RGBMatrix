@@ -36,7 +36,7 @@ PEAK_HOLD_FRAMES = 8       # Frames to hold peak before falling (0 = immediate f
 PEAK_COLOR_MODE = 'contrast'   # 'white' = always white, 'bar' = match bar color, 'contrast' = opposite of bar, 'peak' = max height color of theme
 
 # ---------- COLOR THEME ----------
-# Options: 'classic', 'warm', 'fire', 'ocean', 'forest', 'purple', 'rainbow', 'spectrum', 'fire_spectrum', 'blue_flame', 'mono_green', 'mono_amber'
+# Options: 'classic', 'warm', 'fire', 'ocean', 'forest', 'purple', 'rainbow', 'spectrum', 'fire_spectrum', 'mono_green', 'mono_amber'
 COLOR_THEME = 'blue_flame'
 #   'classic'    - Blue (low) -> Green (mid) -> Red (high) - original theme
 #   'warm'       - Dark red (low) -> Orange (mid) -> Yellow (high) - great for bluegrass
@@ -47,7 +47,6 @@ COLOR_THEME = 'blue_flame'
 #   'rainbow'    - Full spectrum based on bar position (column), brightness varies with height
 #   'spectrum'   - Rainbow hue by column + hue shifts with amplitude (low=blue-ish, high=red-ish)
 #   'fire_spectrum' - Fire hues vary by column (deep red to orange), fire gradient on y-axis
-#   'blue_flame' - Fire spectrum but peaks fade to blue (like hottest part of flame)
 #   'mono_green' - Single color (green) with brightness based on height - retro
 #   'mono_amber' - Single color (amber/orange) with brightness based on height - vintage VU
 
@@ -440,11 +439,16 @@ class FFTMatrix(SampleBase):
                 b = int(180 * intensity)  # Start adding white
             else:
                 # Top quarter: yellow/white transitioning to blue
-                intensity = (ratio - 0.75) * 4  # 0 to 1 within this band
+                intensity = min(1.0, (ratio - 0.75) * 4)  # 0 to 1 within this band
                 # Fade red and green down, blue up
-                r = int(255 * (1 - intensity * 0.8))  # Fade to ~50
-                g = int(255 * (1 - intensity * 0.6))  # Fade to ~100
+                r = int(255 * max(0, 1 - intensity * 0.8))  # Fade to ~50
+                g = int(255 * max(0, 1 - intensity * 0.6))  # Fade to ~100
                 b = int(180 + (255 - 180) * intensity)  # Ramp to full blue
+            
+            # Clamp all values to valid range
+            r = max(0, min(255, r))
+            g = max(0, min(255, g))
+            b = max(0, min(255, b))
             
         elif COLOR_THEME == 'mono_green':
             # Single green color, brightness varies with height
