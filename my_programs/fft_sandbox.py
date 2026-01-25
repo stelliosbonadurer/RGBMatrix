@@ -19,20 +19,27 @@ MIN_FREQ = 120     # Raise to cut more rumble/ambient noise
 MAX_FREQ = 12000
 SLEEP_DELAY = 0.005  # Delay between frames
 
-# Zoom mode - focus on a narrower frequency range
-ZOOM_MODE = False         # Set to True to zoom in on active frequency range
-ZOOM_MIN_FREQ = 360      # ~25% of log scale (where action starts)
-ZOOM_MAX_FREQ = 3500     # ~60% of log scale (where action ends)
+# Zoom mode - focus on a narrower frequency range. No zoom = 120 - 12,000
+ZOOM_MODE = True         # Set to True to zoom in on active frequency range
+ZOOM_MIN_FREQ = 120      # 
+ZOOM_MAX_FREQ = 6000     # 
 
 # Sensitivity tuning
-NOISE_FLOOR = 0.1       # Subtract from signal (0 = no floor, 1 = mute everything)
+NOISE_FLOOR = 0.4      # Subtract from signal (0 = no floor, 1 = mute everything)
 LOW_FREQ_WEIGHT = 0.15   # Multiplier for lowest freq bin (0 = mute, 1 = neutral, >1 = boost)
+HIGH_FREQ_WEIGHT = 15.0   # Multiplier for highest freq bin (0 = mute, 1 = neutral, >1 = boost)
 
-HIGH_FREQ_WEIGHT = 8.0   # Multiplier for highest freq bin (0 = mute, 1 = neutral, >1 = boost)
-USE_FIXED_SCALE = True   # True = fixed sensitivity, False = auto-normalize (loudest bar always max)
-USE_ROLLING_MAX_SCALE = False  # True = normalize to max in last 30 seconds
-FIXED_SCALE_MAX = 0.3    # Divide signal by this (0 = infinite gain/clipped, 1 = low sensitivity)
-ROLLING_MAX_SECONDS = 30  # Window for rolling max normalization
+# Scaling modes (only one should be True, or all False for instant auto-normalize)
+USE_FIXED_SCALE = False   # True = fixed sensitivity, False = dynamic
+USE_ROLLING_RMS_SCALE = True  # RECOMMENDED: Scale to rolling average energy + headroom for punchy peaks
+USE_ROLLING_MAX_SCALE = False  # Scale to max in window (less punchy, everything looks similar)
+
+FIXED_SCALE_MAX = 0.3    # For fixed scale: divide signal by this (lower = more sensitive)
+ROLLING_WINDOW_SECONDS = 8  # How many seconds of history to consider
+HEADROOM_MULTIPLIER = 2.5   # Scale to RMS * this value (higher = more headroom for peaks, 2-3 is punchy)
+ATTACK_SPEED = 0.15         # How fast scale adapts to LOUDER audio (0.1-0.3, lower = slower, avoids clipping)
+DECAY_SPEED = 0.02          # How fast scale adapts to QUIETER audio (0.01-0.05, lower = slower recovery)
+MIN_SCALE = 0.05            # Minimum scale value (prevents infinite gain in silence)
 SILENCE_THRESHOLD = 0.00 # Below this = black (0 = always show something, 1 = mute nearly everything)
 
 # Smoothing
@@ -76,7 +83,9 @@ class FFTMatrix(SampleBase):
 
     def run(self):
         import collections
-        rolling_max_buffer = collections.deque(maxlen=int(ROLLING_MAX_SECONDS / SLEEP_DELAY))
+        # Rolling buffer for RMS calculation
+        rms_buffer = collections.deque(maxlen=int(ROLLING_WINDOW_SECONDS / SLEEP_DELAY))
+        current_scale = MIN_SCALE  # Adaptive scale that smoothly follows the audio
         """Main program loop"""
         offset_canvas = self.matrix.CreateFrameCanvas()
         
@@ -154,17 +163,40 @@ class FFTMatrix(SampleBase):
                     bars = bars * (peak / SILENCE_THRESHOLD)  # Fade out near silence
                 
 
-                # Normalize to 0-1 range
-                if USE_ROLLING_MAX_SCALE:
-                    # Update rolling max buffer
-                    peak = np.max(bars)
-                    rolling_max_buffer.append(peak)
-                    rolling_max = max(rolling_max_buffer) if rolling_max_buffer else 1e-9
+                # Normalize to 0-1 range with adaptive scaling
+                peak = np.max(bars)
+                
+                if USE_ROLLING_RMS_SCALE:
+                    # Track RMS (root mean square) of peaks for average energy
+                    rms_buffer.append(peak ** 2)
+                    if len(rms_buffer) > 0:
+                        rms = np.sqrt(np.mean(rms_buffer))
+                    else:
+                        rms = peak
+                    
+                    # Target scale = RMS * headroom (so average signal is ~40% height, peaks punch through)
+                    target_scale = max(rms * HEADROOM_MULTIPLIER, MIN_SCALE)
+                    
+                    # Asymmetric smoothing: fast attack (loud), slow decay (quiet)
+                    if target_scale > current_scale:
+                        # Getting louder - adapt quickly to avoid clipping
+                        current_scale += (target_scale - current_scale) * ATTACK_SPEED
+                    else:
+                        # Getting quieter - adapt slowly to maintain punch
+                        current_scale += (target_scale - current_scale) * DECAY_SPEED
+                    
+                    max_val = current_scale
+                elif USE_ROLLING_MAX_SCALE:
+                    # Legacy: rolling max (less punchy)
+                    rms_buffer.append(peak)
+                    rolling_max = max(rms_buffer) if rms_buffer else 1e-9
                     max_val = rolling_max + 1e-9
                 elif USE_FIXED_SCALE:
                     max_val = FIXED_SCALE_MAX
                 else:
-                    max_val = max(bars) + 1e-9
+                    # Instant auto-normalize (loudest bar always max)
+                    max_val = peak + 1e-9
+                    
                 bars = np.clip(bars / max_val, 0, 1)
                 
                 # Apply smoothing (asymmetric: fast rise, slow fall)
