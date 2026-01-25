@@ -4,4 +4,6 @@ Generating session wide floor and ceiling values so that when we get to a partic
 intense part of the show it stays high and vibrant and doesn't normalize as quickly.
 
 Instead of normalizing to max, when it maxes out a new bar goes in front continuing that
-next color.
+next color. Can we do that and then go from color to color? That sounds sick.
+
+Make the basic fire mode go black->red->yellow->white. that looks good

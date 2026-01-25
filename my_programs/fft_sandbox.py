@@ -29,6 +29,15 @@ MIRROR_HORIZONTAL = False  # True = bars mirror left/right from center, False = 
 CENTER_VERTICAL = False    # True = bars grow from vertical center up AND down, False = grow from bottom
 FLIP_X = False             # True = reverse x-axis (low freq on right), False = low freq on left. Works with mirror mode.
 
+# ---------- OVERFLOW MODE ----------
+# When enabled, bars can exceed display height and wrap around with different colors
+# Still uses rolling RMS normalization - values can exceed 1.0 and overflow into additional layers
+OVERFLOW_MODE = True       # True = bars wrap/stack when exceeding height, False = normal clamped mode
+OVERFLOW_MULTIPLIER = 1.5  # Sensitivity for overflow (1.0 = overflow at normalized value of 1.0, higher = more sensitive)
+# Overflow colors: first layer is red→orange, second is orange→white, then these:
+OVERFLOW_COLOR_2 = (0, 150, 255)    # Color for 3rd layer (cyan)
+OVERFLOW_COLOR_3 = (255, 0, 255)    # Color for 4th+ layer (magenta)
+
 # ---------- PEAK INDICATORS ----------
 PEAK_ENABLED = False        # True = show floating peak dots above bars, False = bars only
 PEAK_FALL_SPEED = 0.08     # How fast peaks fall (0.01 = slow/floaty, 0.2 = fast, 0.05-0.1 = nice)
@@ -235,8 +244,12 @@ class FFTMatrix(SampleBase):
                 
                 # Apply manual sensitivity scalar on top of auto-scaling
                 max_val = max_val * SENSITIVITY_SCALAR
-                    
-                bars = np.clip(bars / max_val, 0, 1)
+                
+                # Normalize - in overflow mode allow values > 1.0, otherwise clip
+                if OVERFLOW_MODE:
+                    bars = bars / max_val  # No clipping - values can exceed 1.0
+                else:
+                    bars = np.clip(bars / max_val, 0, 1)
                 
                 # Apply smoothing (asymmetric: fast rise, slow fall)
                 for i in range(num_bins):
@@ -245,8 +258,11 @@ class FFTMatrix(SampleBase):
                     else:
                         smoothed_bars[i] += (bars[i] - smoothed_bars[i]) * SMOOTH_FALL
                 
-                # Convert to pixel heights
-                bars = [int(b * self.matrix.height) for b in smoothed_bars]
+                # Convert to pixel heights (clamp to matrix height for non-overflow mode)
+                if OVERFLOW_MODE:
+                    bars = [int(min(b, 1.0) * self.matrix.height) for b in smoothed_bars]
+                else:
+                    bars = [int(b * self.matrix.height) for b in smoothed_bars]
                 
                 # Update peak indicators
                 if PEAK_ENABLED:
@@ -595,38 +611,86 @@ class FFTMatrix(SampleBase):
         
         # Draw each frequency bin as a vertical bar
         for i, bar_height in enumerate(bars):
-            # Clamp height to canvas dimensions
-            col_height = min(bar_height, height)
+            # Get column ratio for color themes that use it
+            column_ratio = i / num_bins
             
-            # Get normalized ratio for color calculation
-            if smoothed_bars is not None:
-                color_ratio = smoothed_bars[i]
-            else:
-                color_ratio = col_height / height if height > 0 else 0
-            
-            column_ratio = i / num_bins  # For rainbow mode
-            
-            if col_height > 0:
-                r, g, b = self.get_color(color_ratio, column_ratio)
-                
-                if CENTER_VERTICAL:
-                    # Bars grow from center up AND down
-                    center = height // 2
-                    half_height = col_height // 2
-                    # Upper half
-                    for j in range(half_height):
-                        y = center - 1 - j
-                        if 0 <= y < height:
-                            canvas.SetPixel(i, y, r, g, b)
-                    # Lower half
-                    for j in range(half_height):
-                        y = center + j
-                        if 0 <= y < height:
-                            canvas.SetPixel(i, y, r, g, b)
+            if OVERFLOW_MODE:
+                # Overflow mode: uses normalization but allows values to exceed 1.0 and wrap
+                # Get the normalized value (can exceed 1.0 when loud)
+                if smoothed_bars is not None:
+                    raw_ratio = smoothed_bars[i]
                 else:
-                    # Normal: bars grow from bottom up
-                    for j in range(col_height):
-                        canvas.SetPixel(i, height - 1 - j, r, g, b)
+                    raw_ratio = bar_height / height if height > 0 else 0
+                
+                # Calculate total pixels to draw (can exceed display height)
+                # OVERFLOW_MULTIPLIER controls how much beyond 1.0 is needed for overflow
+                # raw_ratio=1.0 fills 1 layer, raw_ratio=2.0 with multiplier=1.0 fills 2 layers
+                # With multiplier=2.0, raw_ratio=2.0 would only fill 1 layer
+                total_pixels = int(raw_ratio * height * OVERFLOW_MULTIPLIER)
+                
+                # Draw layer by layer
+                pixels_drawn = 0
+                layer = 0
+                while pixels_drawn < total_pixels:
+                    # How many pixels in this layer?
+                    pixels_this_layer = min(height, total_pixels - pixels_drawn)
+                    
+                    # Draw pixels for this layer
+                    for j in range(pixels_this_layer):
+                        y = height - 1 - j
+                        if 0 <= y < height:
+                            layer_ratio = j / height  # 0 at bottom, 1 at top
+                            
+                            if layer == 0:
+                                # First layer: red -> orange
+                                r = 255
+                                g = int(165 * layer_ratio)  # 0 -> 165 (orange)
+                                b = 0
+                            elif layer == 1:
+                                # Second layer: orange -> white
+                                r = 255
+                                g = int(165 + (255 - 165) * layer_ratio)  # 165 -> 255
+                                b = int(255 * layer_ratio)  # 0 -> 255
+                            elif layer == 2:
+                                r, g, b = OVERFLOW_COLOR_2
+                            else:
+                                r, g, b = OVERFLOW_COLOR_3
+                            
+                            canvas.SetPixel(i, y, r, g, b)
+                    
+                    pixels_drawn += pixels_this_layer
+                    layer += 1
+            else:
+                # Normal mode: clamp height to canvas dimensions
+                col_height = min(bar_height, height)
+                
+                # Get normalized ratio for color calculation
+                if smoothed_bars is not None:
+                    color_ratio = smoothed_bars[i]
+                else:
+                    color_ratio = col_height / height if height > 0 else 0
+                
+                if col_height > 0:
+                    r, g, b = self.get_color(color_ratio, column_ratio)
+                    
+                    if CENTER_VERTICAL:
+                        # Bars grow from center up AND down
+                        center = height // 2
+                        half_height = col_height // 2
+                        # Upper half
+                        for j in range(half_height):
+                            y = center - 1 - j
+                            if 0 <= y < height:
+                                canvas.SetPixel(i, y, r, g, b)
+                        # Lower half
+                        for j in range(half_height):
+                            y = center + j
+                            if 0 <= y < height:
+                                canvas.SetPixel(i, y, r, g, b)
+                    else:
+                        # Normal: bars grow from bottom up
+                        for j in range(col_height):
+                            canvas.SetPixel(i, height - 1 - j, r, g, b)
             
             # Draw peak indicator
             if peak_pixels and PEAK_ENABLED:
