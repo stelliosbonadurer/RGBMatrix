@@ -24,11 +24,6 @@ ZOOM_MODE = True         # True = use ZOOM frequencies, False = use MIN/MAX freq
 ZOOM_MIN_FREQ = 100       # Good for bluegrass: 80 catches guitar/bass, cuts rumble
 ZOOM_MAX_FREQ = 3300     # Good for bluegrass: 8000 catches fiddle/banjo harmonics
 
-# ---------- DISPLAY MODE ----------
-MIRROR_HORIZONTAL = False  # True = bars mirror left/right from center, False = normal left-to-right
-CENTER_VERTICAL = False    # True = bars grow from vertical center up AND down, False = grow from bottom
-FLIP_X = False             # True = reverse x-axis (low freq on right), False = low freq on left. Works with mirror mode.
-
 # ---------- OVERFLOW MODE ----------
 # When enabled, bars can exceed display height and wrap around with different colors
 # Still uses rolling RMS normalization - values can exceed 1.0 and overflow into additional layers
@@ -543,72 +538,6 @@ class FFTMatrix(SampleBase):
         height = canvas.height
         width = canvas.width
         
-        # Handle mirror mode - combine adjacent bins then display symmetrically
-        # 32 bins -> 16 combined bins (bin 0+1 -> combined 0, bin 2+3 -> combined 1, etc.)
-        # Then display those 16 bins mirrored across 32 columns
-        if MIRROR_HORIZONTAL:
-            half = num_bins // 2  # 16 combined bins
-            
-            # Step 1: Combine adjacent bins (0+1, 2+3, 4+5, ... 30+31) -> 16 bins
-            combined_bars = []
-            combined_peaks = [] if peak_pixels else None
-            combined_ratios = [] if smoothed_bars is not None else None
-            
-            for i in range(half):
-                # Combine bins 2*i and 2*i+1 using max (captures peaks from both)
-                idx1 = 2 * i
-                idx2 = 2 * i + 1
-                combined_bars.append(max(bars[idx1], bars[idx2]))
-                
-                if peak_pixels:
-                    combined_peaks.append(max(peak_pixels[idx1], peak_pixels[idx2]))
-                
-                if smoothed_bars is not None:
-                    combined_ratios.append(max(smoothed_bars[idx1], smoothed_bars[idx2]))
-            
-            # Step 2: Map 16 combined bins to 32 display columns (mirrored)
-            display_bars = [0] * num_bins
-            display_peaks = [0] * num_bins if peak_pixels else None
-            display_ratios = [0.0] * num_bins if smoothed_bars is not None else None
-            
-            for i in range(half):
-                # Determine which combined bin to use based on FLIP_X
-                # FLIP_X=False: combined bin 0 (low freq) in center, bin 15 (high freq) on edges
-                # FLIP_X=True: combined bin 15 (high freq) in center, bin 0 (low freq) on edges
-                if FLIP_X:
-                    src_idx = half - 1 - i  # 15,14,13...0 (high to low as we go from center to edge)
-                else:
-                    src_idx = i  # 0,1,2...15 (low to high as we go from center to edge)
-                
-                # Left side: column 15 is center-left, column 0 is left edge
-                left_col = half - 1 - i
-                # Right side: column 16 is center-right, column 31 is right edge
-                right_col = half + i
-                
-                display_bars[left_col] = combined_bars[src_idx]
-                display_bars[right_col] = combined_bars[src_idx]
-                
-                if peak_pixels:
-                    display_peaks[left_col] = combined_peaks[src_idx]
-                    display_peaks[right_col] = combined_peaks[src_idx]
-                
-                if smoothed_bars is not None:
-                    display_ratios[left_col] = combined_ratios[src_idx]
-                    display_ratios[right_col] = combined_ratios[src_idx]
-            
-            bars = display_bars
-            peak_pixels = display_peaks
-            if smoothed_bars is not None:
-                smoothed_bars = display_ratios
-        else:
-            # Non-mirror mode: simple flip if enabled
-            if FLIP_X:
-                bars = list(reversed(bars))
-                if peak_pixels:
-                    peak_pixels = list(reversed(peak_pixels))
-                if smoothed_bars is not None:
-                    smoothed_bars = list(reversed(smoothed_bars))
-        
         # Draw each frequency bin as a vertical bar
         for i, bar_height in enumerate(bars):
             # Get column ratio for color themes that use it
@@ -673,24 +602,9 @@ class FFTMatrix(SampleBase):
                 if col_height > 0:
                     r, g, b = self.get_color(color_ratio, column_ratio)
                     
-                    if CENTER_VERTICAL:
-                        # Bars grow from center up AND down
-                        center = height // 2
-                        half_height = col_height // 2
-                        # Upper half
-                        for j in range(half_height):
-                            y = center - 1 - j
-                            if 0 <= y < height:
-                                canvas.SetPixel(i, y, r, g, b)
-                        # Lower half
-                        for j in range(half_height):
-                            y = center + j
-                            if 0 <= y < height:
-                                canvas.SetPixel(i, y, r, g, b)
-                    else:
-                        # Normal: bars grow from bottom up
-                        for j in range(col_height):
-                            canvas.SetPixel(i, height - 1 - j, r, g, b)
+                    # Bars grow from bottom up
+                    for j in range(col_height):
+                        canvas.SetPixel(i, height - 1 - j, r, g, b)
             
             # Draw peak indicator
             if peak_pixels and PEAK_ENABLED:
@@ -711,23 +625,10 @@ class FFTMatrix(SampleBase):
                     else:
                         pr, pg, pb = 255, 255, 255
                     
-                    if CENTER_VERTICAL:
-                        # Peak dots at both top and bottom of center-out bars
-                        center = height // 2
-                        half_peak = peak_y // 2
-                        # Upper peak
-                        y_up = center - half_peak - 1
-                        if 0 <= y_up < height:
-                            canvas.SetPixel(i, y_up, pr, pg, pb)
-                        # Lower peak
-                        y_down = center + half_peak
-                        if 0 <= y_down < height:
-                            canvas.SetPixel(i, y_down, pr, pg, pb)
-                    else:
-                        # Normal: peak dot above bar
-                        y = height - 1 - peak_y
-                        if 0 <= y < height:
-                            canvas.SetPixel(i, y, pr, pg, pb)
+                    # Peak dot above bar
+                    y = height - 1 - peak_y
+                    if 0 <= y < height:
+                        canvas.SetPixel(i, y, pr, pg, pb)
         
         # Swap buffers to display
         canvas = self.matrix.SwapOnVSync(canvas)
