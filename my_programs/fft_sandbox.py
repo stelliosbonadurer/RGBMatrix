@@ -37,7 +37,7 @@ PEAK_COLOR_MODE = 'contrast'   # 'white' = always white, 'bar' = match bar color
 
 # ---------- COLOR THEME ----------
 # Options: 'classic', 'warm', 'fire', 'ocean', 'forest', 'purple', 'rainbow', 'spectrum', 'fire_spectrum', 'mono_green', 'mono_amber'
-COLOR_THEME = 'blue_flame'
+COLOR_THEME = 'fire_spectrum'
 #   'classic'    - Blue (low) -> Green (mid) -> Red (high) - original theme
 #   'warm'       - Dark red (low) -> Orange (mid) -> Yellow (high) - great for bluegrass
 #   'fire'       - Black/red (low) -> Orange (mid) -> Yellow/white (high) - intense
@@ -64,15 +64,16 @@ USE_ROLLING_RMS_SCALE = True  # True = scale to average energy + headroom (RECOM
 USE_ROLLING_MAX_SCALE = False  # True = scale to max in window (less punchy, everything similar height)
 
 FIXED_SCALE_MAX = 0.3    # For fixed scale: divide signal by this (0.1 = very sensitive, 0.5 = needs loud audio)
-ROLLING_WINDOW_SECONDS = 8  # Seconds of history for RMS/max calculation (shorter = more reactive, longer = stable)
+ROLLING_WINDOW_SECONDS = 3  # Seconds of history for RMS/max calculation (shorter = more reactive, longer = stable)
 HEADROOM_MULTIPLIER = 2.5   # RMS multiplier for headroom (2.0 = punchy, 3.0 = very punchy, 1.5 = more filled)
 ATTACK_SPEED = 0.3         # How fast scale adapts to LOUDER audio (0.1 = slow, 0.5 = instant)
 DECAY_SPEED = 0.02          # How fast scale adapts to QUIETER audio (0.01 = very slow, 0.1 = fast)
 MIN_SCALE = 0.05            # Minimum scale to prevent infinite gain in silence (0.01-0.1)
 SILENCE_THRESHOLD = 0.00 # Below this peak = fade to black (0 = always show, 0.1 = hide quiet noise)
+SENSITIVITY_SCALAR = 1.0   # Manual sensitivity boost on TOP of auto-scaling (0.5 = half as sensitive/taller bars, 2.0 = twice as sensitive/shorter bars)
 
 # ---------- SMOOTHING ----------
-SMOOTH_RISE = 0.9       # How fast bars rise (0.3 = smooth/slow, 1.0 = instant, 0.6-0.8 = snappy)
+SMOOTH_RISE = 0.8       # How fast bars rise (0.3 = smooth/slow, 1.0 = instant, 0.6-0.8 = snappy)
 SMOOTH_FALL = 0.35      # How fast bars fall (0.2 = slow decay, 0.8 = fast drop, 0.4-0.6 = natural)
 # ---------------------------
 
@@ -229,6 +230,9 @@ class FFTMatrix(SampleBase):
                 else:
                     # Instant auto-normalize (loudest bar always max)
                     max_val = peak + 1e-9
+                
+                # Apply manual sensitivity scalar on top of auto-scaling
+                max_val = max_val * SENSITIVITY_SCALAR
                     
                 bars = np.clip(bars / max_val, 0, 1)
                 
