@@ -21,7 +21,7 @@ SLEEP_DELAY = 0.005  # Delay between frames (lower = smoother but more CPU)
 
 # Zoom mode - focus on a narrower frequency range
 ZOOM_MODE = True         # True = use ZOOM frequencies, False = use MIN/MAX frequencies
-ZOOM_MIN_FREQ = 150       # Good for bluegrass: 80 catches guitar/bass, cuts rumble
+ZOOM_MIN_FREQ = 100       # Good for bluegrass: 80 catches guitar/bass, cuts rumble
 ZOOM_MAX_FREQ = 3300     # Good for bluegrass: 8000 catches fiddle/banjo harmonics
 
 # ---------- DISPLAY MODE ----------
@@ -85,7 +85,7 @@ SENSITIVITY_SCALAR = 1.0   # Manual sensitivity boost on TOP of auto-scaling (0.
 
 # ---------- SMOOTHING ----------
 SMOOTH_RISE = 0.8       # How fast bars rise (0.3 = smooth/slow, 1.0 = instant, 0.6-0.8 = snappy)
-SMOOTH_FALL = 0.35      # How fast bars fall (0.2 = slow decay, 0.8 = fast drop, 0.4-0.6 = natural)
+SMOOTH_FALL = 0.2      # How fast bars fall (0.2 = slow decay, 0.8 = fast drop, 0.4-0.6 = natural)
 # ---------------------------
 
 class FFTMatrix(SampleBase):
