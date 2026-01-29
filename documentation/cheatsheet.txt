@@ -16,6 +16,6 @@ Python Samples filepath
     /home/stelliosbonadurer/rpi-rgb-led-matrix/bindings/python/samples
 
 Run Hello World
-    sudo python3 hello_world.py  --led-rows=32 --led-cols=32 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2
+    sudo python3 hello_world.py  --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2
 Copy Hello World to pi
     scp hello_world.py stelliosbonadurer@192.168.1.16:/home/stelliosbonadurer/rpi-rgb-led-matrix/bindings/python/samples/

@@ -13,11 +13,11 @@ from rgbmatrix import graphics # type: ignore
 # ---------- CONFIG ----------
 DEVICE = 'iMM-6C'  # Use device name instead of index
 BLOCK_SIZE = 512  # Actual audio samples per callback (~23ms at 44kHz)
-FFT_SIZE = 4096    # Zero-pad to this size for better freq resolution
+FFT_SIZE = 8192    # Zero-pad to this size for better freq resolution (increase for larger matrices)
 CHANNEL = 0
 MIN_FREQ = 60      # Lower bound for full range (60 = catch upright bass fundamentals)
-MAX_FREQ = 12000
-SLEEP_DELAY = 0.005  # Delay between frames (lower = smoother but more CPU)
+MAX_FREQ = 14000
+SLEEP_DELAY = 0.003  # Delay between frames (lower = smoother but more CPU)
 
 # Zoom mode - focus on a narrower frequency range
 ZOOM_MODE = True         # True = use ZOOM frequencies, False = use MIN/MAX frequencies
@@ -41,7 +41,7 @@ PEAK_COLOR_MODE = 'contrast'   # 'white' = always white, 'bar' = match bar color
 
 # ---------- COLOR THEME ----------
 # Options: 'classic', 'warm', 'fire', 'ocean', 'forest', 'purple', 'rainbow', 'spectrum', 'fire_spectrum', 'blue_flame', 'waves', 'mono_green', 'mono_amber'
-COLOR_THEME = 'fire_spectrum'
+COLOR_THEME = 'fire'
 #   'classic'    - Blue (low) -> Green (mid) -> Red (high) - original theme
 #   'warm'       - Dark red (low) -> Orange (mid) -> Yellow (high) - great for bluegrass
 #   'fire'       - Black/red (low) -> Orange (mid) -> Yellow/white (high) - intense
@@ -60,7 +60,7 @@ BRIGHTNESS_BOOST = 1.0     # Overall brightness multiplier (0.5 = dim, 1.0 = nor
 
 # ---------- SENSITIVITY ----------
 NOISE_FLOOR = 0.3      # Subtract from signal (0 = no floor/sensitive, 0.5 = cut noise, 1 = mute all)
-LOW_FREQ_WEIGHT = 0.7   # Multiplier for bass frequencies (0 = mute, 1 = neutral, >1 = boost bass)
+LOW_FREQ_WEIGHT = 0.55   # Multiplier for bass frequencies (0 = mute, 1 = neutral, >1 = boost bass)
 HIGH_FREQ_WEIGHT = 10.0   # Multiplier for treble frequencies (0 = mute, 1 = neutral, >1 = boost treble)
 
 # ---------- SCALING MODES ----------
@@ -80,7 +80,7 @@ SENSITIVITY_SCALAR = 1.0   # Manual sensitivity boost on TOP of auto-scaling (0.
 
 # ---------- SMOOTHING ----------
 SMOOTH_RISE = 0.8       # How fast bars rise (0.3 = smooth/slow, 1.0 = instant, 0.6-0.8 = snappy)
-SMOOTH_FALL = 0.2      # How fast bars fall (0.2 = slow decay, 0.8 = fast drop, 0.4-0.6 = natural)
+SMOOTH_FALL = 0.20      # How fast bars fall (0.2 = slow decay, 0.8 = fast drop, 0.4-0.6 = natural)
 # ---------------------------
 
 class FFTMatrix(SampleBase):
