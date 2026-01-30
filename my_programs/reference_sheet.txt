@@ -14,3 +14,6 @@ sudo -E ~/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3 f
 sudo python3 visualize_sorts.py  --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2
 
 sudo python3 visualize_sorts.py  --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2
+
+
+sudo -E ~/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3 fft_sandbox.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2

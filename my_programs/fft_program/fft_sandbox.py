@@ -17,12 +17,12 @@ FFT_SIZE = 8192    # Zero-pad to this size for better freq resolution (increase 
 CHANNEL = 0
 MIN_FREQ = 60      # Lower bound for full range (60 = catch upright bass fundamentals)
 MAX_FREQ = 14000
-SLEEP_DELAY = 0.003  # Delay between frames (lower = smoother but more CPU)
+SLEEP_DELAY = 0.004  # Delay between frames (lower = smoother but more CPU)
 
 # Zoom mode - focus on a narrower frequency range
 ZOOM_MODE = True         # True = use ZOOM frequencies, False = use MIN/MAX frequencies
 ZOOM_MIN_FREQ = 100       # Good for bluegrass: 80 catches guitar/bass, cuts rumble
-ZOOM_MAX_FREQ = 3300     # Good for bluegrass: 8000 catches fiddle/banjo harmonics
+ZOOM_MAX_FREQ = 6300     # Good for bluegrass: 8000 catches fiddle/banjo harmonics
 
 # ---------- OVERFLOW MODE ----------
 # When enabled, bars can exceed display height and wrap around with different colors
