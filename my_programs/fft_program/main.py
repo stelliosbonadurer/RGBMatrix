@@ -11,10 +11,18 @@ Settings can be customized via:
     - Command line arguments for matrix configuration
     - JSON settings file via --settings flag
     - Editing config/settings.py defaults
+
+Runtime Controls:
+    t / T - Cycle themes forward / backward
+    m / M - Cycle visualizer modes forward / backward
+    Ctrl+C - Quit
 """
 import sys
 import os
 import time
+import select
+import tty
+import termios
 
 # Ensure the fft_program package is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,6 +31,125 @@ from config import Settings, load_settings
 from core import MatrixApp, AudioProcessor, ScalingProcessor
 from themes import get_theme, list_themes
 from visualizers import get_visualizer, list_visualizers
+
+
+class KeyboardHandler:
+    """Non-blocking keyboard input handler for Unix/macOS."""
+    
+    def __init__(self):
+        self.old_settings = None
+    
+    def __enter__(self):
+        """Set terminal to raw mode for single keypress detection."""
+        self.old_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+        return self
+    
+    def __exit__(self, *args):
+        """Restore terminal settings."""
+        if self.old_settings:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, self.old_settings)
+    
+    def get_key(self) -> str | None:
+        """
+        Check for keypress without blocking.
+        
+        Returns:
+            Single character if key pressed, None otherwise
+        """
+        if select.select([sys.stdin], [], [], 0)[0]:
+            return sys.stdin.read(1)
+        return None
+
+
+class ThemeCycler:
+    """Manages cycling through available themes."""
+    
+    def __init__(self, initial_theme: str, brightness_boost: float = 1.0):
+        self.themes = list_themes()
+        self.brightness_boost = brightness_boost
+        try:
+            self.current_index = self.themes.index(initial_theme)
+        except ValueError:
+            self.current_index = 0
+    
+    @property
+    def current_theme_name(self) -> str:
+        return self.themes[self.current_index]
+    
+    def next_theme(self):
+        """Cycle to the next theme."""
+        self.current_index = (self.current_index + 1) % len(self.themes)
+        return self._get_current_theme()
+    
+    def prev_theme(self):
+        """Cycle to the previous theme."""
+        self.current_index = (self.current_index - 1) % len(self.themes)
+        return self._get_current_theme()
+    
+    def _get_current_theme(self):
+        """Get the current theme instance."""
+        return get_theme(self.current_theme_name, brightness_boost=self.brightness_boost)
+
+
+class VisualizerCycler:
+    """Manages cycling through available visualizers."""
+    
+    def __init__(self, initial_visualizer: str, width: int, height: int, settings):
+        self.visualizers = list_visualizers()
+        self.width = width
+        self.height = height
+        self.settings = settings
+        try:
+            self.current_index = self.visualizers.index(initial_visualizer)
+        except ValueError:
+            self.current_index = 0
+    
+    @property
+    def current_visualizer_name(self) -> str:
+        return self.visualizers[self.current_index]
+    
+    def next_visualizer(self):
+        """Cycle to the next visualizer."""
+        self.current_index = (self.current_index + 1) % len(self.visualizers)
+        return self._get_current_visualizer()
+    
+    def prev_visualizer(self):
+        """Cycle to the previous visualizer."""
+        self.current_index = (self.current_index - 1) % len(self.visualizers)
+        return self._get_current_visualizer()
+    
+    def _get_current_visualizer(self):
+        """Get the current visualizer instance."""
+        return get_visualizer(
+            self.current_visualizer_name,
+            self.width,
+            self.height,
+            self.settings
+        )
+
+
+def print_startup_info(width: int, height: int, theme: str, visualizer: str):
+    """Print startup information and controls."""
+    print(f"\n{'='*50}")
+    print(f"FFT Visualizer - {width}x{height} matrix")
+    print(f"{'='*50}")
+    
+    print(f"\nCurrent: theme={theme}, mode={visualizer}")
+    
+    print(f"\n[t/T] Themes ({len(list_themes())} available):")
+    themes = list_themes()
+    # Print themes in rows of 4
+    for i in range(0, len(themes), 4):
+        row = themes[i:i+4]
+        print(f"    {', '.join(row)}")
+    
+    print(f"\n[m/M] Modes ({len(list_visualizers())} available):")
+    for viz in list_visualizers():
+        print(f"    {viz}")
+    
+    print(f"\n[Ctrl+C] Quit")
+    print(f"{'='*50}\n")
 
 
 def main():
@@ -91,9 +218,8 @@ def main():
         app.print_help()
         sys.exit(1)
     
-    print(f"Matrix size: {app.width}x{app.height}")
-    print(f"Theme: {settings.color.theme}")
-    print(f"Visualizer: {visualizer_name}")
+    # Print startup info with all options
+    print_startup_info(app.width, app.height, settings.color.theme, visualizer_name)
     
     # Initialize components
     try:
@@ -129,16 +255,53 @@ def main():
         )
         visualizer.set_theme(theme)
         
+        # Theme cycler for runtime switching
+        theme_cycler = ThemeCycler(
+            settings.color.theme,
+            brightness_boost=settings.color.brightness_boost
+        )
+        
+        # Visualizer cycler for runtime switching
+        viz_cycler = VisualizerCycler(
+            visualizer_name,
+            app.width,
+            app.height,
+            settings
+        )
+        
     except Exception as e:
         print(f"Initialization error: {e}")
         sys.exit(1)
     
     # Main loop
     try:
-        with audio:
+        with audio, KeyboardHandler() as keyboard:
             time.sleep(0.5)  # Let audio stream settle
             
             while True:
+                # Check for keyboard input
+                key = keyboard.get_key()
+                if key == 't':
+                    # Next theme
+                    new_theme = theme_cycler.next_theme()
+                    visualizer.set_theme(new_theme)
+                    print(f"Theme: {theme_cycler.current_theme_name}")
+                elif key == 'T':
+                    # Previous theme
+                    new_theme = theme_cycler.prev_theme()
+                    visualizer.set_theme(new_theme)
+                    print(f"Theme: {theme_cycler.current_theme_name}")
+                elif key == 'm':
+                    # Next visualizer
+                    visualizer = viz_cycler.next_visualizer()
+                    visualizer.set_theme(theme_cycler._get_current_theme())
+                    print(f"Mode: {viz_cycler.current_visualizer_name}")
+                elif key == 'M':
+                    # Previous visualizer
+                    visualizer = viz_cycler.prev_visualizer()
+                    visualizer.set_theme(theme_cycler._get_current_theme())
+                    print(f"Mode: {viz_cycler.current_visualizer_name}")
+                
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()
                 

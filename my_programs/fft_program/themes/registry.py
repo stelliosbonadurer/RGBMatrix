@@ -21,6 +21,8 @@ from themes.gradients import (
     MonoAmberTheme,
     BlueFlamTheme,
     FireSpectrumTheme,
+    SunsetTheme,
+    OverflowTheme,
 )
 from themes.rainbow import RainbowTheme, SpectrumTheme
 
@@ -42,6 +44,8 @@ def _register_builtin_themes():
         MonoAmberTheme,
         BlueFlamTheme,
         FireSpectrumTheme,
+        SunsetTheme,
+        OverflowTheme,
         RainbowTheme,
         SpectrumTheme,
     ]

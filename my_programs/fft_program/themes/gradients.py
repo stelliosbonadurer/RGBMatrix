@@ -239,3 +239,89 @@ class FireSpectrumTheme(BaseTheme):
             b = int(255 * intensity * warmth)
         
         return self._apply_brightness(r, g, b)
+
+
+class SunsetTheme(BaseTheme):
+    """Deep purple (low) -> Pink/Orange (mid) -> Yellow/White (high) - sunset/sunrise."""
+    
+    name = "sunset"
+    description = "Sunset gradient: purple -> pink -> orange -> yellow"
+    
+    def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
+        ratio = height_ratio
+        
+        if ratio < 0.25:
+            # Bottom quarter: deep purple/indigo
+            intensity = ratio * 4
+            r = int(75 * intensity)
+            g = int(0 * intensity)
+            b = int(130 * intensity)
+        elif ratio < 0.5:
+            # Second quarter: purple -> hot pink/magenta
+            intensity = (ratio - 0.25) * 4
+            r = int(75 + (255 - 75) * intensity)
+            g = int(0 + (20 - 0) * intensity)
+            b = int(130 + (147 - 130) * intensity)
+        elif ratio < 0.75:
+            # Third quarter: pink -> orange
+            intensity = (ratio - 0.5) * 4
+            r = 255
+            g = int(20 + (140 - 20) * intensity)
+            b = int(147 - 147 * intensity)
+        else:
+            # Top quarter: orange -> bright yellow/gold
+            intensity = (ratio - 0.75) * 4
+            r = 255
+            g = int(140 + (220 - 140) * intensity)
+            b = int(0 + (50 * intensity))  # Slight warmth at peak
+        
+        return self._apply_brightness(r, g, b)
+
+
+class OverflowTheme(BaseTheme):
+    """Original overflow theme: red -> orange -> yellow -> white. Classic intense look."""
+    
+    name = "overflow"
+    description = "Original overflow: red -> orange -> yellow -> white"
+    
+    def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
+        ratio = height_ratio
+        
+        if ratio < 0.33:
+            # Bottom third: black -> red
+            intensity = ratio * 3
+            r = int(255 * intensity)
+            g = 0
+            b = 0
+        elif ratio < 0.66:
+            # Middle third: red -> orange
+            intensity = (ratio - 0.33) * 3
+            r = 255
+            g = int(165 * intensity)  # 0 -> 165 (orange)
+            b = 0
+        else:
+            # Top third: orange -> yellow/white
+            intensity = (ratio - 0.66) * 3
+            r = 255
+            g = int(165 + (255 - 165) * intensity)  # 165 -> 255
+            b = int(255 * intensity)  # 0 -> 255 (white)
+        
+        return self._apply_brightness(r, g, b)
+    
+    def get_overflow_color(
+        self,
+        layer: int,
+        height_ratio: float,
+        column_ratio: float = 0.0
+    ) -> Tuple[int, int, int]:
+        """Overflow layers continue the intensity."""
+        if layer == 1:
+            # Second layer: white -> cyan
+            r = int(255 * (1 - height_ratio * 0.5))
+            g = 255
+            b = 255
+        else:
+            # Higher layers: use settings colors
+            return self.get_color(height_ratio, column_ratio)
+        
+        return self._apply_brightness(r, g, b)

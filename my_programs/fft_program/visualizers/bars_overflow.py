@@ -98,20 +98,16 @@ class BarsOverflowVisualizer(BaseVisualizer):
         overflow = self.settings.overflow
         
         if layer == 0:
-            # First layer: red -> orange
-            r = 255
-            g = int(165 * height_ratio)  # 0 -> 165 (orange)
-            b = 0
+            # First layer: use theme colors
+            return self.theme.get_color(height_ratio, column_ratio)
         elif layer == 1:
-            # Second layer: orange -> white
-            r = 255
-            g = int(165 + (255 - 165) * height_ratio)  # 165 -> 255
-            b = int(255 * height_ratio)  # 0 -> 255
+            # Second layer: use theme's overflow color (or default orange -> white)
+            return self.theme.get_overflow_color(layer, height_ratio, column_ratio)
         elif layer == 2:
-            # Third layer: custom color
+            # Third layer: custom color from settings
             r, g, b = overflow.color_2
         else:
-            # Fourth+ layer: custom color
+            # Fourth+ layer: custom color from settings
             r, g, b = overflow.color_3
         
         return (r, g, b)

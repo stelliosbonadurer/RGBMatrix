@@ -16,6 +16,8 @@ from themes.gradients import (
     MonoAmberTheme,
     BlueFlamTheme,
     FireSpectrumTheme,
+    SunsetTheme,
+    OverflowTheme,
 )
 from themes.rainbow import RainbowTheme, SpectrumTheme
 from themes.registry import get_theme, register_theme, list_themes
@@ -33,6 +35,8 @@ __all__ = [
     'MonoAmberTheme',
     'BlueFlamTheme',
     'FireSpectrumTheme',
+    'SunsetTheme',
+    'OverflowTheme',
     'RainbowTheme',
     'SpectrumTheme',
     'get_theme',
