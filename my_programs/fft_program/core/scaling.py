@@ -120,12 +120,17 @@ class ScalingProcessor:
             if self.buffer_count >= self.buffer_size:
                 self.buffer_sum -= self.rms_buffer[self.buffer_index]
             self.buffer_sum += peak_squared
+            
+            # Prevent floating point drift causing negative values
+            if self.buffer_sum < 0:
+                self.buffer_sum = 0.0
+            
             self.rms_buffer[self.buffer_index] = peak_squared
             self.buffer_index = (self.buffer_index + 1) % self.buffer_size
             self.buffer_count = min(self.buffer_count + 1, self.buffer_size)
             
             # Calculate RMS from running sum
-            if self.buffer_count > 0:
+            if self.buffer_count > 0 and self.buffer_sum >= 0:
                 rms = np.sqrt(self.buffer_sum / self.buffer_count)
             else:
                 rms = peak

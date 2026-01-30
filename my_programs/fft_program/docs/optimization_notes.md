@@ -150,3 +150,66 @@ self.smoothed_bars += delta * rates
 The modular architecture is valuable for maintainability, but performance-critical inner loops should minimize abstraction. The draw loop runs thousands of times per frame and needs inline code. The audio processing and scaling can use cleaner abstractions since they only run once per frame.
 
 **Rule of thumb:** If code runs O(width × height) times per frame, inline it. If it runs O(width) times per frame, methods are fine.
+
+---
+
+## Shadow Mode: Sparse Iteration Optimization
+
+### The Feature
+
+Shadow mode adds a fade-out trail effect where pixels gradually dim instead of turning off instantly when a bar drops. This requires:
+
+- A 64×64 buffer storing intensity values (0-1) for each pixel
+- A 64×64×3 buffer storing the last RGB color at each pixel
+- Per-frame decay: subtract 0.1 from all shadow values
+- Render shadows before drawing bars (bars overwrite their pixels at full brightness)
+
+### Initial Implementation (Slow)
+
+```python
+# Iterate ALL 4096 pixels every frame
+for i in range(64):
+    for j in range(64):
+        shadow_val = self.shadow_buffer[i, j]
+        if shadow_val > 0:
+            # ... draw dimmed pixel
+```
+
+**Why it was slow:**
+
+- 4096 Python loop iterations per frame
+- 4096 array accesses to check `shadow_buffer[i, j]`
+- Even with the `if shadow_val > 0` early exit, the loop overhead dominates
+- Typical case: only ~100-500 pixels actually have fading shadows
+
+### Optimized Implementation (Sparse)
+
+```python
+# Only iterate pixels that actually have shadow
+shadow_i, shadow_j = np.nonzero(self.shadow_buffer)
+for idx in range(len(shadow_i)):
+    i, j = shadow_i[idx], shadow_j[idx]
+    shadow_val = self.shadow_buffer[i, j]
+    # ... draw dimmed pixel
+```
+
+**Why it's faster:**
+
+- `np.nonzero()` is a single vectorized C call that returns indices of non-zero elements
+- Loop only runs ~100-500 iterations instead of 4096
+- 8-40x fewer loop iterations in typical usage
+
+### Complexity Analysis
+
+| Scenario | Old (nested loop) | New (sparse) |
+
+| No shadows | 4096 iterations | 0 iterations |
+| 100 fading pixels | 4096 iterations | 100 iterations |
+| 500 fading pixels | 4096 iterations | 500 iterations |
+| Full screen | 4096 iterations | 4096 iterations |
+
+The sparse approach is always equal or better, with the biggest gains when shadows are sparse (the typical case).
+
+### Lesson
+
+When iterating a large array looking for "active" elements, use NumPy's `nonzero()` to get indices directly instead of checking every element in Python loops.

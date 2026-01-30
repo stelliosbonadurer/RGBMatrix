@@ -99,7 +99,7 @@ class SmoothingSettings:
 @dataclass
 class ShadowSettings:
     """Shadow/trail effect configuration."""
-    enabled: bool = True          # True = pixels fade out instead of instant off
+    enabled: bool = False          # True = pixels fade out instead of instant off
     decay_amount: float = 0.4      # Subtract this from shadow each decay step
     decay_interval: int = 3        # Decay every N frames (1 = every frame, 5 = every 5th)
 

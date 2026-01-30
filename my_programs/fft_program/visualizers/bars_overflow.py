@@ -62,6 +62,10 @@ class BarsOverflowVisualizer(BaseVisualizer):
                 canvas.SetPixel(i, y, sr, sg, sb)
         
         for i, raw_ratio in enumerate(smoothed_bars):
+            # Guard against NaN values
+            if np.isnan(raw_ratio):
+                continue
+            
             # Calculate total pixels to draw (can exceed display height)
             total_pixels = int(raw_ratio * height * overflow.multiplier)
             
