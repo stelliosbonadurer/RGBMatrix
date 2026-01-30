@@ -44,7 +44,6 @@ python main.py --list-visualizers
 
 ## Project Structure
 
-```
 fft_program/
 ├── main.py              # Entry point
 ├── config/              # Settings and presets
@@ -53,4 +52,3 @@ fft_program/
 ├── visualizers/         # Display modes
 ├── utils/               # Helper functions
 └── docs/                # Documentation
-```
