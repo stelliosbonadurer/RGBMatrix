@@ -12,19 +12,12 @@ from themes.base import BaseTheme
 from themes.gradients import (
     ClassicTheme,
     WarmTheme,
-    FireTheme,
     OceanTheme,
     ForestTheme,
     PurpleTheme,
-    WavesTheme,
-    MonoGreenTheme,
-    MonoAmberTheme,
-    BlueFlamTheme,
-    FireSpectrumTheme,
     SunsetTheme,
-    OverflowTheme,
+    RainbowTheme,
 )
-from themes.rainbow import RainbowTheme, SpectrumTheme
 
 # Global theme registry
 _THEME_REGISTRY: Dict[str, Type[BaseTheme]] = {}
@@ -35,19 +28,11 @@ def _register_builtin_themes():
     builtin_themes = [
         ClassicTheme,
         WarmTheme,
-        FireTheme,
         OceanTheme,
         ForestTheme,
         PurpleTheme,
-        WavesTheme,
-        MonoGreenTheme,
-        MonoAmberTheme,
-        BlueFlamTheme,
-        FireSpectrumTheme,
         SunsetTheme,
-        OverflowTheme,
         RainbowTheme,
-        SpectrumTheme,
     ]
     for theme_class in builtin_themes:
         _THEME_REGISTRY[theme_class.name] = theme_class
