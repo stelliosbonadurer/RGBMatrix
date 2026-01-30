@@ -12,6 +12,7 @@ Visualizers determine how the FFT data is rendered to the LED matrix.
 ## Selecting a Visualizer
 
 ### Via Command Line
+
 ```bash
 sudo python main.py --visualizer=bars_overflow ...
 ```
@@ -19,6 +20,7 @@ sudo python main.py --visualizer=bars_overflow ...
 ### Automatic Selection
 
 By default, the visualizer is chosen based on settings:
+
 - `overflow.enabled = True` → `bars_overflow`
 - `overflow.enabled = False` → `bars`
 
@@ -38,10 +40,10 @@ from .base import BaseVisualizer
 
 class CircularVisualizer(BaseVisualizer):
     """Radial/circular FFT visualization."""
-    
+
     name = "circular"
     description = "Circular spectrum display"
-    
+
     def draw(
         self,
         canvas,
@@ -50,7 +52,7 @@ class CircularVisualizer(BaseVisualizer):
     ) -> None:
         """
         Draw visualization to canvas.
-        
+
         Args:
             canvas: RGB matrix canvas with SetPixel(x, y, r, g, b) method
             smoothed_bars: Normalized bar values (0-1 range, or >1 for overflow)
@@ -58,30 +60,30 @@ class CircularVisualizer(BaseVisualizer):
         """
         if self.theme is None:
             raise RuntimeError("Theme not set")
-        
+
         canvas.Clear()
-        
+
         num_bins = len(smoothed_bars)
         center_x = self.width // 2
         center_y = self.height // 2
         max_radius = min(center_x, center_y) - 1
-        
+
         for i, bar_value in enumerate(smoothed_bars):
             # Calculate angle for this bin
             angle = (i / num_bins) * 2 * math.pi
-            
+
             # Calculate line from center outward
             length = int(bar_value * max_radius)
-            
+
             # Get color
             column_ratio = i / num_bins
             r, g, b = self.theme.get_color(bar_value, column_ratio)
-            
+
             # Draw line
             for dist in range(length):
                 x = int(center_x + dist * math.cos(angle))
                 y = int(center_y + dist * math.sin(angle))
-                
+
                 if 0 <= x < self.width and 0 <= y < self.height:
                     canvas.SetPixel(x, y, r, g, b)
 ```
@@ -123,7 +125,8 @@ def draw(
 ) -> None:
 ```
 
-**Parameters:**
+__Parameters:__
+
 - `canvas`: Matrix canvas object with:
   - `canvas.Clear()` - Clear display
   - `canvas.SetPixel(x, y, r, g, b)` - Set pixel color
@@ -154,7 +157,9 @@ def on_settings_changed(self, settings: Settings) -> None:
 Here are some visualizers you could implement:
 
 ### Mirrored Bars
+
 Bars extend from center both up and down:
+
 ```python
 # Draw bar from center upward
 for j in range(bar_height // 2):
@@ -165,21 +170,27 @@ for j in range(bar_height // 2):
 ```
 
 ### Spectrogram (Scrolling)
+
 Time scrolls horizontally, frequency on Y-axis:
+
 ```python
 # Store history buffer
 # Each frame, shift left and add new column on right
 ```
 
 ### Waveform
+
 Display raw audio waveform instead of FFT:
+
 ```python
 # Would need to access raw audio samples
 # Plot amplitude over time
 ```
 
 ### Particle System
+
 Spawn particles based on audio energy:
+
 ```python
 # Track particle positions
 # Spawn at beat detection
@@ -187,7 +198,9 @@ Spawn particles based on audio energy:
 ```
 
 ### VU Meter
+
 Classic stereo VU meter style:
+
 ```python
 # Two horizontal bars (left/right channels)
 # With peak hold indicators
@@ -195,9 +208,9 @@ Classic stereo VU meter style:
 
 ## Tips
 
-1. **Always call canvas.Clear()** at the start of draw()
-2. **Check bounds** before SetPixel() to avoid crashes
-3. **Use self.theme** for colors - don't hardcode
-4. **Handle empty bars** gracefully (bar_value = 0)
-5. **Consider peak_heights** even if optional - users may enable peaks
-6. **Test with different matrix sizes** - don't assume 64x64
+1. __Always call canvas.Clear()__ at the start of draw()
+2. __Check bounds__ before SetPixel() to avoid crashes
+3. __Use self.theme__ for colors - don't hardcode
+4. __Handle empty bars__ gracefully (bar_value = 0)
+5. __Consider peak_heights__ even if optional - users may enable peaks
+6. __Test with different matrix sizes__ - don't assume 64x64

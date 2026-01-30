@@ -42,6 +42,7 @@ sleep_delay: float = 0.004  # Frame delay in seconds
 ```
 
 **Tips:**
+
 - Find your device name with `python -c "import sounddevice; print(sounddevice.query_devices())"`
 - Increase `fft_size` for larger matrices (more frequency bins)
 - Lower `sleep_delay` for smoother animation (more CPU)
@@ -57,6 +58,7 @@ zoom_max_freq: int = 6300   # Zoom maximum Hz
 ```
 
 **Tips:**
+
 - `zoom_mode=True` focuses on a narrower, more interesting range
 - For bass-heavy music: lower `zoom_min_freq` to 40-60 Hz
 - For acoustic/voice: 80-8000 Hz works well
@@ -72,6 +74,7 @@ silence_threshold: float = 0.0 # Fade to black below this
 ```
 
 **Tips:**
+
 - Increase `noise_floor` if you see dancing bars with no audio
 - Increase `high_freq_weight` if treble is too quiet
 - Decrease `low_freq_weight` if bass dominates everything
@@ -92,6 +95,7 @@ sensitivity_scalar: float = 1.0     # Manual boost on top
 ```
 
 **Tips:**
+
 - `use_rolling_rms_scale=True` gives the best results for most music
 - Increase `headroom_multiplier` for punchier, more dynamic visuals
 - Decrease `attack_speed` if loud sounds cause jarring jumps
@@ -105,6 +109,7 @@ fall: float = 0.20  # Bar fall speed (0.2=slow, 0.8=fast)
 ```
 
 **Tips:**
+
 - Higher `rise` = snappier response to beats
 - Lower `fall` = smoother, more flowing decay
 - For EDM: `rise=0.9, fall=0.3`
@@ -120,6 +125,7 @@ color_3: Tuple[int,int,int] = (255,0,255)   # 4th+ layer color
 ```
 
 **Tips:**
+
 - Enable for loud electronic music, disable for quieter acoustic
 - Increase `multiplier` for more dramatic overflow effects
 
@@ -165,6 +171,7 @@ Create a JSON file with your settings:
 ```
 
 Then run with:
+
 ```bash
 sudo python main.py --settings=my_settings.json --led-rows=64 ...
 ```

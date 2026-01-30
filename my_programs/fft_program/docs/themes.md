@@ -23,11 +23,13 @@ Themes control the colors used to render the visualization.
 ## Selecting a Theme
 
 ### Via Command Line
+
 ```bash
 sudo python main.py --theme=ocean ...
 ```
 
 ### Via Settings File
+
 ```json
 {
   "color": {
@@ -38,6 +40,7 @@ sudo python main.py --theme=ocean ...
 ```
 
 ### Via Code (config/settings.py defaults)
+
 ```python
 @dataclass
 class ColorSettings:
@@ -54,16 +57,16 @@ Add to `themes/gradients.py` (or create a new file):
 ```python
 class MyCustomTheme(BaseTheme):
     """Description of your theme."""
-    
+
     name = "my_custom"  # Used in --theme=my_custom
     description = "My custom color scheme"
-    
+
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
         """
         Args:
             height_ratio: 0.0 (bottom) to 1.0 (top) - bar height
             column_ratio: 0.0 (left) to 1.0 (right) - column position
-        
+
         Returns:
             (r, g, b) tuple with values 0-255
         """
@@ -71,7 +74,7 @@ class MyCustomTheme(BaseTheme):
         r = int(128 + 127 * height_ratio)
         g = int(50 * height_ratio)
         b = int(200 + 55 * height_ratio)
-        
+
         return self._apply_brightness(r, g, b)
 ```
 
@@ -123,11 +126,11 @@ Color for peak indicator dots.
 
 ## Tips for Good Themes
 
-1. **Contrast at extremes** - Make bottom (quiet) and top (loud) clearly different
-2. **Smooth gradients** - Avoid harsh jumps between color bands
-3. **Consider brightness** - Very dark colors are hard to see on LED panels
-4. **Test with music** - Colors look different in motion than static
-5. **Use column_ratio** - Makes wide displays more interesting (rainbow effect)
+1. __Contrast at extremes__ - Make bottom (quiet) and top (loud) clearly different
+2. __Smooth gradients__ - Avoid harsh jumps between color bands
+3. __Consider brightness__ - Very dark colors are hard to see on LED panels
+4. __Test with music__ - Colors look different in motion than static
+5. __Use column_ratio__ - Makes wide displays more interesting (rainbow effect)
 
 ## Example: Position-Based Theme
 
@@ -135,13 +138,13 @@ Color for peak indicator dots.
 class WaveTheme(BaseTheme):
     name = "wave"
     description = "Colors shift across the display"
-    
+
     def get_color(self, height_ratio, column_ratio=0.0):
         # Hue shifts based on column position
         hue = (column_ratio * 180 + height_ratio * 60) % 360
-        
+
         # Convert HSV to RGB (simplified)
         # ... HSV conversion code ...
-        
+
         return self._apply_brightness(r, g, b)
 ```
