@@ -11,6 +11,7 @@ Common issues and their solutions.
 **Cause:** Incorrect panel configuration (multiplexing or row addressing).
 
 **Solutions:**
+
 ```bash
 # Try different row address types
 --led-row-addr-type=1   # For 64x64 AB-addressed panels
@@ -30,6 +31,7 @@ Common issues and their solutions.
 **Symptom:** Visible flicker, especially in photos/video.
 
 **Solutions:**
+
 1. **Increase PWM bits:** `--led-pwm-bits=11`
 2. **Check refresh rate:** Add `--led-show-refresh` to see Hz
 3. **Reduce chain length** if using many panels
@@ -40,6 +42,7 @@ Common issues and their solutions.
 **Symptom:** Red appears blue, green appears red, etc.
 
 **Solution:**
+
 ```bash
 --led-rgb-sequence=RBG  # Try different sequences: RGB, RBG, GRB, GBR, BRG, BGR
 ```
@@ -49,6 +52,7 @@ Common issues and their solutions.
 **Symptom:** LEDs are not bright enough.
 
 **Solutions:**
+
 1. **Increase brightness:** `--led-brightness=100`
 2. **Increase brightness_boost** in settings
 3. **Check power supply** - insufficient power causes dimming
@@ -59,6 +63,7 @@ Common issues and their solutions.
 **Symptom:** Faint images of previous frames visible.
 
 **Solutions:**
+
 1. **Increase slowdown:** `--led-slowdown-gpio=2` or higher
 2. **Check panel type** - some need initialization
 
@@ -71,11 +76,14 @@ Common issues and their solutions.
 **Symptom:** Error about device not found.
 
 **Solutions:**
+
 1. **List devices:**
+
    ```python
    import sounddevice
    print(sounddevice.query_devices())
    ```
+
 2. **Use exact name** from the list in settings
 3. **Check USB connection** if using USB mic
 4. **Try device index** instead of name (less reliable)
@@ -85,6 +93,7 @@ Common issues and their solutions.
 **Symptom:** Bars stay at zero or don't respond to audio.
 
 **Solutions:**
+
 1. **Check audio device** is correct
 2. **Lower noise_floor:** Try `0.0` to see raw signal
 3. **Increase sensitivity:**
@@ -97,6 +106,7 @@ Common issues and their solutions.
 **Symptom:** Everything pegged at full height.
 
 **Solutions:**
+
 1. **Increase noise_floor:** Try `0.3` or higher
 2. **Increase scaling:**
    - Increase `fixed_scale_max`
@@ -108,6 +118,7 @@ Common issues and their solutions.
 **Symptom:** Bars respond slowly to audio.
 
 **Solutions:**
+
 1. **Reduce block_size:** `256` instead of `512`
 2. **Reduce rolling_window_seconds:** `1.5` instead of `3`
 3. **Increase attack_speed:** `0.2` or higher
@@ -118,6 +129,7 @@ Common issues and their solutions.
 **Symptom:** Bars jump around erratically.
 
 **Solutions:**
+
 1. **Increase noise_floor:** Filter out background noise
 2. **Decrease rise smoothing:** `0.6` for smoother movement
 3. **Increase rolling_window_seconds:** More stable scaling
@@ -132,8 +144,10 @@ Common issues and their solutions.
 **Cause:** Not running on Pi or library not installed.
 
 **Solutions:**
+
 1. Make sure you're on the Raspberry Pi
 2. Install the library:
+
    ```bash
    cd ~/rpi-rgb-led-matrix
    make build-python PYTHON=$(which python3)
@@ -145,6 +159,7 @@ Common issues and their solutions.
 **Cause:** Need root access for GPIO.
 
 **Solution:** Run with sudo:
+
 ```bash
 sudo python main.py ...
 ```
@@ -152,6 +167,7 @@ sudo python main.py ...
 ### "ImportError: No module named 'sounddevice'"
 
 **Solution:**
+
 ```bash
 pip install sounddevice numpy
 # Or in venv:
@@ -165,6 +181,7 @@ sudo -E ~/path/to/.venv/bin/python main.py ...
 ### High CPU Usage
 
 **Solutions:**
+
 1. **Increase sleep_delay:** `0.008` instead of `0.004`
 2. **Reduce fft_size:** `4096` instead of `8192`
 3. **Disable unused features** (peaks if not using)
@@ -172,6 +189,7 @@ sudo -E ~/path/to/.venv/bin/python main.py ...
 ### Low Frame Rate
 
 **Solutions:**
+
 1. **Reduce chain length** if using multiple panels
 2. **Reduce PWM bits:** `--led-pwm-bits=7`
 3. **Use parallel chains** instead of long single chain
@@ -211,10 +229,10 @@ python main.py --list-visualizers
 If issues persist:
 
 1. **Check the rpi-rgb-led-matrix documentation:**
-   https://github.com/hzeller/rpi-rgb-led-matrix
+   <https://github.com/hzeller/rpi-rgb-led-matrix>
 
 2. **Visit the discourse forum:**
-   https://rpi-rgb-led-matrix.discourse.group/
+   <https://rpi-rgb-led-matrix.discourse.group/>
 
 3. **Note your hardware:**
    - Raspberry Pi model

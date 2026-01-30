@@ -5,7 +5,7 @@ Themes control the colors used to render the visualization.
 ## Available Themes
 
 | Theme | Description | Best For |
-|-------|-------------|----------|
+
 | `classic` | Blue → Green → Red | General use |
 | `warm` | Dark red → Orange → Yellow | Acoustic, bluegrass |
 | `fire` | Black/red → Orange → Yellow/white | Intense, EDM |

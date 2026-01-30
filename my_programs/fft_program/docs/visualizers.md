@@ -4,10 +4,8 @@ Visualizers determine how the FFT data is rendered to the LED matrix.
 
 ## Available Visualizers
 
-| Visualizer | Description |
-|------------|-------------|
-| `bars` | Classic vertical bar graph, one bar per frequency bin |
-| `bars_overflow` | Bars that stack/wrap with different colors when audio is loud |
+ `bars`  Classic vertical bar graph, one bar per frequency bin
+ `bars_overflow`  Bars that stack/wrap with different colors when audio is loud
 
 ## Selecting a Visualizer
 

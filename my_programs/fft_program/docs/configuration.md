@@ -7,7 +7,6 @@ All settings are defined in `config/settings.py` as dataclasses. You can modify 
 ### Matrix Configuration
 
 | Argument | Description | Default |
-|----------|-------------|---------|
 | `--led-rows` | Panel height in pixels | 32 |
 | `--led-cols` | Panel width in pixels | 32 |
 | `--led-chain` | Number of daisy-chained panels | 1 |
@@ -22,7 +21,6 @@ All settings are defined in `config/settings.py` as dataclasses. You can modify 
 ### Application Arguments
 
 | Argument | Description |
-|----------|-------------|
 | `--theme` | Color theme name |
 | `--visualizer` | Visualizer type (`bars`, `bars_overflow`) |
 | `--settings` | Path to JSON settings file |
