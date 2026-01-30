@@ -5,10 +5,10 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
+import numpy as np  # type: ignore
 from dataclasses import dataclass
 from typing import List, Optional, Callable
-import sounddevice as sd
+import sounddevice as sd  # type: ignore
 
 from config.settings import AudioSettings, FrequencySettings, SensitivitySettings
 

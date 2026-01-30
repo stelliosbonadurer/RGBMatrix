@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from abc import ABC, abstractmethod
 from typing import Optional, TYPE_CHECKING
-import numpy as np
+import numpy as np  # type: ignore
 
 if TYPE_CHECKING:
     from themes.base import BaseTheme

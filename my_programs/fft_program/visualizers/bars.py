@@ -3,10 +3,11 @@ Standard bar graph visualizer for FFT display.
 """
 import sys
 import os
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Optional
-import numpy as np
+import numpy as np  # type: ignore
 
 from visualizers.base import BaseVisualizer
 
