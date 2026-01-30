@@ -42,14 +42,14 @@ class OverflowSettings:
     """Overflow mode configuration for bars that exceed display height."""
     enabled: bool = True       # True = bars wrap/stack when exceeding height
     multiplier: float = 1.5    # Sensitivity for overflow
-    color_2: Tuple[int, int, int] = (0, 150, 255)    # 3rd layer color (cyan)
-    color_3: Tuple[int, int, int] = (255, 0, 255)    # 4th+ layer color (magenta)
+    color_2: Tuple[int, int, int] = (0, 50, 255)    # 3rd layer color (cyan)
+    color_3: Tuple[int, int, int] = (255, 255, 255)    # 4th+ layer color (magenta)
 
 
 @dataclass
 class PeakSettings:
     """Peak indicator configuration."""
-    enabled: bool = True      # True = show floating peak dots above bars
+    enabled: bool = False      # True = show floating peak dots above bars
     fall_speed: float = 0.08   # How fast peaks fall (0.01 = slow, 0.2 = fast)
     hold_frames: int = 8       # Frames to hold peak before falling
     color_mode: Literal['white', 'bar', 'contrast', 'peak'] = 'contrast'
@@ -92,8 +92,8 @@ class ScalingSettings:
 @dataclass
 class SmoothingSettings:
     """Bar smoothing configuration."""
-    rise: float = 0.8   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
-    fall: float = 0.20  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
+    rise: float = 0.6   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
+    fall: float = 0.18  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
 
 
 @dataclass
