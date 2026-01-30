@@ -45,8 +45,6 @@ class BarsOverflowVisualizer(BaseVisualizer):
         overflow = self.settings.overflow
         
         for i, raw_ratio in enumerate(smoothed_bars):
-            column_ratio = i / num_bins
-            
             # Calculate total pixels to draw (can exceed display height)
             total_pixels = int(raw_ratio * height * overflow.multiplier)
             
@@ -61,14 +59,28 @@ class BarsOverflowVisualizer(BaseVisualizer):
                 # How many pixels in this layer?
                 pixels_this_layer = min(height, total_pixels - pixels_drawn)
                 
-                # Draw pixels for this layer
+                # Draw pixels for this layer - inline color calculation for performance
                 for j in range(pixels_this_layer):
                     y = height - 1 - j
                     if 0 <= y < height:
-                        layer_ratio = j / height  # 0 at bottom, 1 at top
-                        r, g, b = self._get_layer_color(
-                            layer, layer_ratio, column_ratio
-                        )
+                        layer_ratio = j / height  # Inline division is faster than array lookup
+                        
+                        # Inline color calculation (matches fft_sandbox.py)
+                        if layer == 0:
+                            # First layer: red -> orange
+                            r = 255
+                            g = int(165 * layer_ratio)
+                            b = 0
+                        elif layer == 1:
+                            # Second layer: orange -> white
+                            r = 255
+                            g = int(165 + 90 * layer_ratio)  # 165 -> 255
+                            b = int(255 * layer_ratio)
+                        elif layer == 2:
+                            r, g, b = overflow.color_2
+                        else:
+                            r, g, b = overflow.color_3
+                        
                         canvas.SetPixel(i, y, r, g, b)
                 
                 pixels_drawn += pixels_this_layer
@@ -76,7 +88,7 @@ class BarsOverflowVisualizer(BaseVisualizer):
             
             # Draw peak indicator if enabled (not typical for overflow mode)
             if peak_heights is not None and self.settings.peak.enabled:
-                self._draw_peak(canvas, i, peak_heights[i], raw_ratio, column_ratio)
+                self._draw_peak(canvas, i, peak_heights[i], raw_ratio, i / num_bins)
     
     def _get_layer_color(
         self,

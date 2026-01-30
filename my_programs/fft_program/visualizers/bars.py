@@ -54,10 +54,10 @@ class BarsVisualizer(BaseVisualizer):
             if bar_height <= 0:
                 continue
             
-            # Get column ratio for position-based themes
+            # Column ratio for position-based themes
             column_ratio = i / num_bins
             
-            # Get color for this bar's height
+            # Get color once per bar (not per pixel)
             r, g, b = self.theme.get_color(bar_value, column_ratio)
             
             # Draw bar from bottom up

@@ -1,5 +1,7 @@
 """
 Gradient-based color themes for FFT visualizer.
+
+Direct color calculation for best performance on LED matrices.
 """
 from typing import Tuple
 from .base import BaseTheme
@@ -25,15 +27,15 @@ class ClassicTheme(BaseTheme):
 
 
 class WarmTheme(BaseTheme):
-    """Dark red (low) -> Orange (mid) -> Yellow (high) - great for bluegrass."""
+    """Red (low) -> Orange (high) - matches overflow mode first layer."""
     
     name = "warm"
-    description = "Dark red (low) -> Orange (mid) -> Yellow (high)"
+    description = "Red (low) -> Orange (high) - overflow style"
     
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
-        ratio = height_ratio
-        r = int(255 * min(1, ratio * 2 + 0.3))
-        g = int(255 * (ratio ** 1.2))
+        # Matches overflow mode layer 0: red -> orange
+        r = 255
+        g = int(165 * height_ratio)  # 0 -> 165 (orange)
         b = 0
         return self._apply_brightness(r, g, b)
 
@@ -115,6 +117,7 @@ class SunsetTheme(BaseTheme):
             b = int(0 + (50 * intensity))  # Slight warmth at peak
         
         return self._apply_brightness(r, g, b)
+
 
 class RainbowTheme(BaseTheme):
     """Full spectrum based on bar position (column), brightness varies with height."""

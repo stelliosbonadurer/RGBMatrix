@@ -1,5 +1,8 @@
 """
 Base theme class for FFT visualizer color schemes.
+
+Uses direct color calculation (not LUT) for best performance
+on small displays like 64x64 LED matrices.
 """
 from abc import ABC, abstractmethod
 from typing import Tuple
@@ -47,8 +50,7 @@ class BaseTheme(ABC):
         """
         Get RGB color for overflow layers.
         
-        Default implementation provides red->orange->white progression.
-        Override for custom overflow colors.
+        Matches fft_sandbox.py overflow mode exactly.
         
         Args:
             layer: Overflow layer number (0 = first/base layer, 1 = second, etc.)
@@ -59,7 +61,7 @@ class BaseTheme(ABC):
             Tuple of (r, g, b) values 0-255
         """
         if layer == 0:
-            # First layer: red -> orange
+            # First layer: red -> orange (matches fft_sandbox.py)
             r = 255
             g = int(165 * height_ratio)  # 0 -> 165 (orange)
             b = 0

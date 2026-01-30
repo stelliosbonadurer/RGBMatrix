@@ -69,6 +69,10 @@ class AudioProcessor:
         self.bin_weights: Optional[np.ndarray] = None
         self.window: Optional[np.ndarray] = None
         
+        # Optimized bin lookup (initialized in setup())
+        self.bin_indices: Optional[List[np.ndarray]] = None  # Pre-computed indices for each bin
+        self.empty_bins: Optional[np.ndarray] = None  # Mask for bins with no frequency coverage
+        
         # Stream (initialized in start())
         self._stream: Optional[sd.InputStream] = None
     
@@ -105,10 +109,14 @@ class AudioProcessor:
         )
         self.window = np.hanning(self.audio_settings.block_size)
         
+        # Pre-compute bin indices for vectorized magnitude calculation
+        self.bin_indices = [np.where(mask)[0] for mask in self.bin_masks]
+        self.empty_bins = np.array([len(idx) == 0 for idx in self.bin_indices])
+        
         # Check bin coverage
-        empty_bins = sum(1 for mask in self.bin_masks if not np.any(mask))
-        if empty_bins > 0:
-            print(f"Warning: {empty_bins} bins have no frequency coverage. "
+        empty_count = np.sum(self.empty_bins)
+        if empty_count > 0:
+            print(f"Warning: {empty_count} bins have no frequency coverage. "
                   f"Consider increasing FFT_SIZE.")
         
         return self.sample_rate
@@ -200,20 +208,14 @@ class AudioProcessor:
         X = np.fft.rfft(x, n=self.audio_settings.fft_size)
         mag = np.abs(X)
         
-        # Calculate magnitude for each frequency bin with weights
-        bars = []
-        for i, mask in enumerate(self.bin_masks):
-            if np.any(mask):
-                val = np.mean(mag[mask]) * self.bin_weights[i]
-            else:
-                val = 0
-            bars.append(val)
+        # Vectorized magnitude calculation using pre-computed bin indices
+        bars = np.zeros(self.num_bins, dtype=np.float32)
+        for i, indices in enumerate(self.bin_indices):
+            if len(indices) > 0:
+                bars[i] = np.mean(mag[indices]) * self.bin_weights[i]
         
-        bars = np.array(bars, dtype=np.float32)
-        
-        # Apply noise floor
-        noise_floor = self.sensitivity_settings.noise_floor
-        bars = np.maximum(0, bars - noise_floor)
+        # Apply noise floor (vectorized)
+        bars = np.maximum(0, bars - self.sensitivity_settings.noise_floor)
         
         return bars
     

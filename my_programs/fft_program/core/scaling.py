@@ -8,8 +8,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # type: ignore
-from collections import deque
-from typing import Deque
+from typing import Optional
 
 from config.settings import ScalingSettings, SensitivitySettings, SmoothingSettings
 
@@ -47,9 +46,12 @@ class ScalingProcessor:
         self.smoothing = smoothing_settings
         self.num_bins = num_bins
         
-        # Rolling buffer for RMS/max calculation
-        buffer_size = int(scaling_settings.rolling_window_seconds * frame_rate)
-        self.rms_buffer: Deque[float] = deque(maxlen=max(1, buffer_size))
+        # Rolling buffer for RMS/max calculation (using numpy for O(1) mean)
+        self.buffer_size = max(1, int(scaling_settings.rolling_window_seconds * frame_rate))
+        self.rms_buffer: np.ndarray = np.zeros(self.buffer_size, dtype=np.float32)
+        self.buffer_index: int = 0
+        self.buffer_count: int = 0  # Track how many values have been added
+        self.buffer_sum: float = 0.0  # Running sum for O(1) mean calculation
         
         # Current adaptive scale
         self.current_scale = scaling_settings.min_scale
@@ -89,17 +91,15 @@ class ScalingProcessor:
         # Normalize
         normalized = bars / max_val
         
-        # Apply smoothing (asymmetric: fast rise, slow fall)
-        for i in range(self.num_bins):
-            if normalized[i] > self.smoothed_bars[i]:
-                self.smoothed_bars[i] += (normalized[i] - self.smoothed_bars[i]) * self.smoothing.rise
-            else:
-                self.smoothed_bars[i] += (normalized[i] - self.smoothed_bars[i]) * self.smoothing.fall
+        # Vectorized asymmetric smoothing: fast rise, slow fall
+        delta = normalized - self.smoothed_bars
+        rates = np.where(delta > 0, self.smoothing.rise, self.smoothing.fall)
+        self.smoothed_bars += delta * rates
         
-        # Update peak tracking
-        self._update_peaks(peak_hold_frames, peak_fall_speed)
+        # Vectorized peak tracking
+        self._update_peaks_vectorized(peak_hold_frames, peak_fall_speed)
         
-        return normalized, self.smoothed_bars.copy(), self.peak_heights.copy()
+        return normalized, self.smoothed_bars, self.peak_heights
     
     def _calculate_scale(self, peak: float) -> float:
         """
@@ -113,9 +113,20 @@ class ScalingProcessor:
         """
         if self.scaling.use_rolling_rms_scale:
             # Track RMS (root mean square) of peaks for average energy
-            self.rms_buffer.append(peak ** 2)
-            if len(self.rms_buffer) > 0:
-                rms = np.sqrt(np.mean(self.rms_buffer))
+            # O(1) rolling mean using circular buffer and running sum
+            peak_squared = peak ** 2
+            
+            # Subtract old value from sum, add new value
+            if self.buffer_count >= self.buffer_size:
+                self.buffer_sum -= self.rms_buffer[self.buffer_index]
+            self.buffer_sum += peak_squared
+            self.rms_buffer[self.buffer_index] = peak_squared
+            self.buffer_index = (self.buffer_index + 1) % self.buffer_size
+            self.buffer_count = min(self.buffer_count + 1, self.buffer_size)
+            
+            # Calculate RMS from running sum
+            if self.buffer_count > 0:
+                rms = np.sqrt(self.buffer_sum / self.buffer_count)
             else:
                 rms = peak
             
@@ -131,9 +142,11 @@ class ScalingProcessor:
             max_val = self.current_scale
             
         elif self.scaling.use_rolling_max_scale:
-            # Rolling max (less punchy)
-            self.rms_buffer.append(peak)
-            rolling_max = max(self.rms_buffer) if self.rms_buffer else 1e-9
+            # Rolling max (less punchy) - still need to track individual values
+            self.rms_buffer[self.buffer_index] = peak
+            self.buffer_index = (self.buffer_index + 1) % self.buffer_size
+            self.buffer_count = min(self.buffer_count + 1, self.buffer_size)
+            rolling_max = np.max(self.rms_buffer[:self.buffer_count]) if self.buffer_count > 0 else 1e-9
             max_val = rolling_max + 1e-9
             
         elif self.scaling.use_fixed_scale:
@@ -148,33 +161,38 @@ class ScalingProcessor:
         
         return max_val
     
-    def _update_peaks(self, hold_frames: int, fall_speed: float) -> None:
+    def _update_peaks_vectorized(self, hold_frames: int, fall_speed: float) -> None:
         """
-        Update peak indicator positions.
+        Update peak indicator positions (vectorized).
         
         Args:
             hold_frames: Frames to hold peak at position
             fall_speed: Speed of peak descent
         """
-        for i in range(self.num_bins):
-            bar_height = self.smoothed_bars[i]
-            
-            if bar_height >= self.peak_heights[i]:
-                # New peak
-                self.peak_heights[i] = bar_height
-                self.peak_hold_counters[i] = hold_frames
-            else:
-                # Peak above bar - hold or fall
-                if self.peak_hold_counters[i] > 0:
-                    self.peak_hold_counters[i] -= 1
-                else:
-                    self.peak_heights[i] -= fall_speed
-                    if self.peak_heights[i] < 0:
-                        self.peak_heights[i] = 0
+        # Identify where bars have reached or exceeded peaks (new peaks)
+        new_peaks = self.smoothed_bars >= self.peak_heights
+        
+        # Update peak heights and reset hold counters where new peaks occurred
+        self.peak_heights = np.where(new_peaks, self.smoothed_bars, self.peak_heights)
+        self.peak_hold_counters = np.where(new_peaks, hold_frames, self.peak_hold_counters)
+        
+        # For non-new-peak positions: decrement hold counter or apply fall
+        not_new_peaks = ~new_peaks
+        holding = (self.peak_hold_counters > 0) & not_new_peaks
+        falling = (self.peak_hold_counters <= 0) & not_new_peaks
+        
+        # Decrement hold counters
+        self.peak_hold_counters = np.where(holding, self.peak_hold_counters - 1, self.peak_hold_counters)
+        
+        # Apply fall speed and clamp to 0
+        self.peak_heights = np.where(falling, np.maximum(0, self.peak_heights - fall_speed), self.peak_heights)
     
     def reset(self) -> None:
         """Reset all state (useful when switching visualizers)."""
-        self.rms_buffer.clear()
+        self.rms_buffer.fill(0)
+        self.buffer_index = 0
+        self.buffer_count = 0
+        self.buffer_sum = 0.0
         self.current_scale = self.scaling.min_scale
         self.smoothed_bars.fill(0)
         self.peak_heights.fill(0)
