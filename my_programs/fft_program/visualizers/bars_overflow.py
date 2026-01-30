@@ -49,17 +49,17 @@ class BarsOverflowVisualizer(BaseVisualizer):
         if shadow_enabled:
             self.decay_shadow()
             
-            # Draw shadows first, then bars overwrite
-            for i in range(num_bins):
-                for j in range(height):
-                    shadow_val = self.shadow_buffer[i, j]
-                    if shadow_val > 0:
-                        y = height - 1 - j
-                        sc = self.shadow_colors[i, j]
-                        sr = int(sc[0] * shadow_val)
-                        sg = int(sc[1] * shadow_val)
-                        sb = int(sc[2] * shadow_val)
-                        canvas.SetPixel(i, y, sr, sg, sb)
+            # Draw shadows using sparse iteration (only non-zero pixels)
+            shadow_i, shadow_j = np.nonzero(self.shadow_buffer)
+            for idx in range(len(shadow_i)):
+                i, j = shadow_i[idx], shadow_j[idx]
+                shadow_val = self.shadow_buffer[i, j]
+                y = height - 1 - j
+                sc = self.shadow_colors[i, j]
+                sr = int(sc[0] * shadow_val)
+                sg = int(sc[1] * shadow_val)
+                sb = int(sc[2] * shadow_val)
+                canvas.SetPixel(i, y, sr, sg, sb)
         
         for i, raw_ratio in enumerate(smoothed_bars):
             # Calculate total pixels to draw (can exceed display height)

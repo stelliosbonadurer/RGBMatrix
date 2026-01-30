@@ -308,7 +308,7 @@ def main():
                     settings.shadow.enabled = not settings.shadow.enabled
                     # Re-initialize shadow buffers in visualizer
                     if settings.shadow.enabled:
-                        import numpy as np
+                        import numpy as np # type: ignore
                         visualizer.shadow_buffer = np.zeros((app.width, app.height), dtype=np.float32)
                         visualizer.shadow_colors = np.zeros((app.width, app.height, 3), dtype=np.uint8)
                     else:
