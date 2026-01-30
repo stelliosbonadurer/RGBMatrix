@@ -45,6 +45,23 @@ class BarsVisualizer(BaseVisualizer):
         
         num_bins = len(smoothed_bars)
         height = self.height
+        shadow_enabled = self.settings.shadow.enabled and self.shadow_buffer is not None
+        
+        # Decay shadow buffer once per frame (vectorized)
+        if shadow_enabled:
+            self.decay_shadow()
+            
+            # Draw shadows first, then bars overwrite
+            for i in range(num_bins):
+                for j in range(height):
+                    shadow_val = self.shadow_buffer[i, j]
+                    if shadow_val > 0:
+                        y = height - 1 - j
+                        sc = self.shadow_colors[i, j]
+                        sr = int(sc[0] * shadow_val)
+                        sg = int(sc[1] * shadow_val)
+                        sb = int(sc[2] * shadow_val)
+                        canvas.SetPixel(i, y, sr, sg, sb)
         
         for i, bar_value in enumerate(smoothed_bars):
             # Clamp to 0-1 for standard bars mode
@@ -57,13 +74,18 @@ class BarsVisualizer(BaseVisualizer):
             # Column ratio for position-based themes
             column_ratio = i / num_bins
             
-            # Get color once per bar (not per pixel)
+            # Get color once per bar
             r, g, b = self.theme.get_color(bar_value, column_ratio)
             
             # Draw bar from bottom up
             for j in range(bar_height):
                 y = height - 1 - j
                 canvas.SetPixel(i, y, r, g, b)
+                
+                # Update shadow buffer: set to 1.0 and store color
+                if shadow_enabled:
+                    self.shadow_buffer[i, j] = 1.0
+                    self.shadow_colors[i, j] = (r, g, b)
             
             # Draw peak indicator if enabled
             if peak_heights is not None and self.settings.peak.enabled:

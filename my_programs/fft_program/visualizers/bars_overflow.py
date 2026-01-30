@@ -43,6 +43,23 @@ class BarsOverflowVisualizer(BaseVisualizer):
         num_bins = len(smoothed_bars)
         height = self.height
         overflow = self.settings.overflow
+        shadow_enabled = self.settings.shadow.enabled and self.shadow_buffer is not None
+        
+        # Decay shadow buffer once per frame (vectorized)
+        if shadow_enabled:
+            self.decay_shadow()
+            
+            # Draw shadows first, then bars overwrite
+            for i in range(num_bins):
+                for j in range(height):
+                    shadow_val = self.shadow_buffer[i, j]
+                    if shadow_val > 0:
+                        y = height - 1 - j
+                        sc = self.shadow_colors[i, j]
+                        sr = int(sc[0] * shadow_val)
+                        sg = int(sc[1] * shadow_val)
+                        sb = int(sc[2] * shadow_val)
+                        canvas.SetPixel(i, y, sr, sg, sb)
         
         for i, raw_ratio in enumerate(smoothed_bars):
             # Calculate total pixels to draw (can exceed display height)
@@ -51,26 +68,24 @@ class BarsOverflowVisualizer(BaseVisualizer):
             if total_pixels <= 0:
                 continue
             
+            column_ratio = i / num_bins
+            
             # Draw layer by layer
             pixels_drawn = 0
             layer = 0
             
             while pixels_drawn < total_pixels:
-                # How many pixels in this layer?
                 pixels_this_layer = min(height, total_pixels - pixels_drawn)
                 
-                # Draw pixels for this layer
                 for j in range(pixels_this_layer):
                     y = height - 1 - j
                     if 0 <= y < height:
                         layer_ratio = j / height
                         
-                        # Layer 0 uses theme, higher layers use fixed overflow colors
+                        # Get color based on layer
                         if layer == 0:
-                            # First layer: use theme colors (supports theme switching)
-                            r, g, b = self.theme.get_color(layer_ratio, i / num_bins)
+                            r, g, b = self.theme.get_color(layer_ratio, column_ratio)
                         elif layer == 1:
-                            # Second layer: orange -> white (inline for performance)
                             r = 255
                             g = int(165 + 90 * layer_ratio)
                             b = int(255 * layer_ratio)
@@ -80,13 +95,18 @@ class BarsOverflowVisualizer(BaseVisualizer):
                             r, g, b = overflow.color_3
                         
                         canvas.SetPixel(i, y, r, g, b)
+                        
+                        # Update shadow buffer
+                        if shadow_enabled:
+                            self.shadow_buffer[i, j] = 1.0
+                            self.shadow_colors[i, j] = (r, g, b)
                 
                 pixels_drawn += pixels_this_layer
                 layer += 1
             
             # Draw peak indicator if enabled (not typical for overflow mode)
             if peak_heights is not None and self.settings.peak.enabled:
-                self._draw_peak(canvas, i, peak_heights[i], raw_ratio, i / num_bins)
+                self._draw_peak(canvas, i, peak_heights[i], raw_ratio, column_ratio)
     
     def _get_layer_color(
         self,

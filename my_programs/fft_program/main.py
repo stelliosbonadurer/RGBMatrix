@@ -129,13 +129,13 @@ class VisualizerCycler:
         )
 
 
-def print_startup_info(width: int, height: int, theme: str, visualizer: str):
+def print_startup_info(width: int, height: int, theme: str, visualizer: str, shadow: bool, peak: bool):
     """Print startup information and controls."""
     print(f"\n{'='*50}")
     print(f"FFT Visualizer - {width}x{height} matrix")
     print(f"{'='*50}")
     
-    print(f"\nCurrent: theme={theme}, mode={visualizer}")
+    print(f"\nCurrent: theme={theme}, mode={visualizer}, shadow={'ON' if shadow else 'OFF'}, peak={'ON' if peak else 'OFF'}")
     
     print(f"\n[t/T] Themes ({len(list_themes())} available):")
     themes = list_themes()
@@ -148,6 +148,8 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str):
     for viz in list_visualizers():
         print(f"    {viz}")
     
+    print(f"\n[s] Toggle shadow mode")
+    print(f"[p] Toggle peak mode")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
 
@@ -219,7 +221,7 @@ def main():
         sys.exit(1)
     
     # Print startup info with all options
-    print_startup_info(app.width, app.height, settings.color.theme, visualizer_name)
+    print_startup_info(app.width, app.height, settings.color.theme, visualizer_name, settings.shadow.enabled, settings.peak.enabled)
     
     # Initialize components
     try:
@@ -301,6 +303,22 @@ def main():
                     visualizer = viz_cycler.prev_visualizer()
                     visualizer.set_theme(theme_cycler._get_current_theme())
                     print(f"Mode: {viz_cycler.current_visualizer_name}")
+                elif key == 's':
+                    # Toggle shadow mode
+                    settings.shadow.enabled = not settings.shadow.enabled
+                    # Re-initialize shadow buffers in visualizer
+                    if settings.shadow.enabled:
+                        import numpy as np
+                        visualizer.shadow_buffer = np.zeros((app.width, app.height), dtype=np.float32)
+                        visualizer.shadow_colors = np.zeros((app.width, app.height, 3), dtype=np.uint8)
+                    else:
+                        visualizer.shadow_buffer = None
+                        visualizer.shadow_colors = None
+                    print(f"Shadow: {'ON' if settings.shadow.enabled else 'OFF'}")
+                elif key == 'p':
+                    # Toggle peak mode
+                    settings.peak.enabled = not settings.peak.enabled
+                    print(f"Peak: {'ON' if settings.peak.enabled else 'OFF'}")
                 
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()

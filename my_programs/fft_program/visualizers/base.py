@@ -38,6 +38,26 @@ class BaseVisualizer(ABC):
         self.height = height
         self.settings = settings
         self.theme: Optional['BaseTheme'] = None
+        
+        # Shadow buffer: 64x64 intensity multipliers (0-1)
+        # Simple subtraction decay for fade-out effect
+        self.shadow_buffer: Optional[np.ndarray] = None
+        self.shadow_colors: Optional[np.ndarray] = None  # Store last RGB per pixel
+        self.frame_count: int = 0
+        
+        if settings.shadow.enabled:
+            self.shadow_buffer = np.zeros((width, height), dtype=np.float32)
+            self.shadow_colors = np.zeros((width, height, 3), dtype=np.uint8)
+    
+    def decay_shadow(self) -> None:
+        """Decay shadow buffer by subtracting decay_amount (vectorized)."""
+        if self.shadow_buffer is None:
+            return
+        
+        self.frame_count += 1
+        if self.frame_count % self.settings.shadow.decay_interval == 0:
+            # Vectorized subtraction, clamp to 0
+            self.shadow_buffer = np.maximum(0, self.shadow_buffer - self.settings.shadow.decay_amount)
     
     def set_theme(self, theme: 'BaseTheme') -> None:
         """

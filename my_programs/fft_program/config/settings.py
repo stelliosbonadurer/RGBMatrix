@@ -97,6 +97,14 @@ class SmoothingSettings:
 
 
 @dataclass
+class ShadowSettings:
+    """Shadow/trail effect configuration."""
+    enabled: bool = True          # True = pixels fade out instead of instant off
+    decay_amount: float = 0.4      # Subtract this from shadow each decay step
+    decay_interval: int = 3        # Decay every N frames (1 = every frame, 5 = every 5th)
+
+
+@dataclass
 class Settings:
     """Master settings container."""
     audio: AudioSettings = field(default_factory=AudioSettings)
@@ -107,6 +115,7 @@ class Settings:
     sensitivity: SensitivitySettings = field(default_factory=SensitivitySettings)
     scaling: ScalingSettings = field(default_factory=ScalingSettings)
     smoothing: SmoothingSettings = field(default_factory=SmoothingSettings)
+    shadow: ShadowSettings = field(default_factory=ShadowSettings)
 
 
 def get_default_settings() -> Settings:
