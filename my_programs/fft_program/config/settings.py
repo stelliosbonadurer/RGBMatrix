@@ -49,7 +49,7 @@ class OverflowSettings:
 @dataclass
 class PeakSettings:
     """Peak indicator configuration."""
-    enabled: bool = False      # True = show floating peak dots above bars
+    enabled: bool = True      # True = show floating peak dots above bars
     fall_speed: float = 0.08   # How fast peaks fall (0.01 = slow, 0.2 = fast)
     hold_frames: int = 8       # Frames to hold peak before falling
     color_mode: Literal['white', 'bar', 'contrast', 'peak'] = 'contrast'

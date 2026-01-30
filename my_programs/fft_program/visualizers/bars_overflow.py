@@ -59,22 +59,20 @@ class BarsOverflowVisualizer(BaseVisualizer):
                 # How many pixels in this layer?
                 pixels_this_layer = min(height, total_pixels - pixels_drawn)
                 
-                # Draw pixels for this layer - inline color calculation for performance
+                # Draw pixels for this layer
                 for j in range(pixels_this_layer):
                     y = height - 1 - j
                     if 0 <= y < height:
-                        layer_ratio = j / height  # Inline division is faster than array lookup
+                        layer_ratio = j / height
                         
-                        # Inline color calculation (matches fft_sandbox.py)
+                        # Layer 0 uses theme, higher layers use fixed overflow colors
                         if layer == 0:
-                            # First layer: red -> orange
-                            r = 255
-                            g = int(165 * layer_ratio)
-                            b = 0
+                            # First layer: use theme colors (supports theme switching)
+                            r, g, b = self.theme.get_color(layer_ratio, i / num_bins)
                         elif layer == 1:
-                            # Second layer: orange -> white
+                            # Second layer: orange -> white (inline for performance)
                             r = 255
-                            g = int(165 + 90 * layer_ratio)  # 165 -> 255
+                            g = int(165 + 90 * layer_ratio)
                             b = int(255 * layer_ratio)
                         elif layer == 2:
                             r, g, b = overflow.color_2
