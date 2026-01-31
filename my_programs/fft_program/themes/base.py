@@ -46,7 +46,8 @@ class BaseTheme(ABC):
         layer: int,
         height_ratio: float,
         column_ratio: float = 0.0,
-        frame: int = 0
+        frame: int = 0,
+        bar_ratio: float = 0.0
     ) -> Tuple[int, int, int]:
         """
         Get RGB color for overflow layers.
@@ -58,6 +59,7 @@ class BaseTheme(ABC):
             height_ratio: 0-1 value within the current layer
             column_ratio: 0-1 value representing column position
             frame: Current frame number for animation effects
+            bar_ratio: Total bar height ratio (0-1+) for uniform column coloring
         
         Returns:
             Tuple of (r, g, b) values 0-255

@@ -84,7 +84,7 @@ class BarsOverflowVisualizer(BaseVisualizer):
                             layer_ratio = j / height
                             
                             # Get color from theme (each theme defines its own overflow colors)
-                            r, g, b = self.theme.get_overflow_color(layer, layer_ratio, column_ratio, self.frame_count)
+                            r, g, b = self.theme.get_overflow_color(layer, layer_ratio, column_ratio, self.frame_count, raw_ratio)
                             
                             canvas.SetPixel(i, y, r, g, b)
                             
@@ -114,4 +114,4 @@ class BarsOverflowVisualizer(BaseVisualizer):
             RGB color tuple
         """
         # All layers now use theme's overflow color method
-        return self.theme.get_overflow_color(layer, height_ratio, column_ratio, self.frame_count)
+        return self.theme.get_overflow_color(layer, height_ratio, column_ratio, self.frame_count, 0.0)

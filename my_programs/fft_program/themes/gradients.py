@@ -26,7 +26,7 @@ class ClassicTheme(BaseTheme):
             b = 0
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Classic overflow: continues naturally from red at top of base layer."""
         if layer == 0:
             # Base layer uses theme colors (blue -> green -> red)
@@ -68,7 +68,7 @@ class ClassicInvertedTheme(BaseTheme):
             b = 255
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Inverted overflow: continues naturally from cyan at top of base layer."""
         if layer == 0:
             # Base layer uses theme colors (yellow -> magenta -> cyan)
@@ -104,7 +104,7 @@ class WarmTheme(BaseTheme):
         b = 0
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Warm overflow: Orange -> Yellow -> White hot."""
         if layer == 0:
             return self.get_color(height_ratio, column_ratio)
@@ -122,68 +122,38 @@ class WarmTheme(BaseTheme):
 
 
 class FireTheme(BaseTheme):
-    """Red (low) -> Orange -> Yellow -> White tips (high) - realistic fire."""
+    """Like Warm but entire column color scales with bar height."""
     
     name = "fire"
-    description = "Fire gradient: red -> orange -> yellow -> white tips"
+    description = "Uniform column color based on bar height (red -> orange)"
     
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
-        ratio = height_ratio
-        
-        if ratio < 0.4:
-            # Bottom: bright red -> orange
-            intensity = ratio / 0.4
-            r = 255
-            g = int(165 * intensity)
-            b = 0
-        elif ratio < 0.7:
-            # Middle: orange -> yellow
-            intensity = (ratio - 0.4) / 0.3
-            r = 255
-            g = int(165 + (255 - 165) * intensity)
-            b = 0
-        else:
-            # Top: yellow -> white (hot tips)
-            intensity = (ratio - 0.7) / 0.3
-            r = 255
-            g = 255
-            b = int(220 * intensity)
-        
+        # Same as Warm: red -> orange
+        r = 255
+        g = int(165 * height_ratio)  # 0 -> 165 (orange)
+        b = 0
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
-        """Fire overflow: Column-varied flames (left=red, right=orange)."""
-        # Static column variation: left side more red, right side more orange
-        hue_shift = column_ratio * 0.3  # 0-0.3 shift toward orange
-        
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
+        """Fire overflow: Entire column uses same color based on total bar height."""
         if layer == 0:
-            ratio = height_ratio
-            if ratio < 0.4:
-                intensity = ratio / 0.4
-                r = 255
-                g = int((165 + hue_shift * 90) * intensity)
-                b = 0
-            elif ratio < 0.7:
-                intensity = (ratio - 0.4) / 0.3
-                r = 255
-                g = int(165 + hue_shift * 90 + (255 - 165 - hue_shift * 90) * intensity)
-                b = 0
-            else:
-                intensity = (ratio - 0.7) / 0.3
-                r = 255
-                g = 255
-                b = int(220 * intensity)
+            # Entire column uses color based on total bar height (bar_ratio)
+            # Clamp to 1.0 for the base layer color calculation
+            color_ratio = min(1.0, bar_ratio)
+            r = 255
+            g = int(165 * color_ratio)  # 0 -> 165 (orange) based on bar height
+            b = 0
             return self._apply_brightness(r, g, b)
         elif layer == 1:
-            # Second layer: white hot
+            # Second layer: orange -> yellow
+            r = 255
+            g = int(165 + 90 * height_ratio)  # 165 -> 255
+            b = 0
+        else:
+            # Higher layers: yellow -> white
             r = 255
             g = 255
-            b = int(200 + 55 * height_ratio)
-        else:
-            # Higher layers: blue-white core
-            r = int(255 - 55 * height_ratio)
-            g = int(255 - 30 * height_ratio)
-            b = 255
+            b = int(255 * height_ratio)
         return self._apply_brightness(r, g, b)
 
 
@@ -200,7 +170,7 @@ class OceanTheme(BaseTheme):
         b = int(255 * (0.5 + ratio * 0.5))
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Ocean overflow: Theme -> Cyan/White -> Bright white (cool tones only)."""
         if layer == 0:
             return self.get_color(height_ratio, column_ratio)
@@ -230,7 +200,7 @@ class ForestTheme(BaseTheme):
         b = 0
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Forest overflow: Yellow -> Gold -> Sunlight white."""
         if layer == 0:
             return self.get_color(height_ratio, column_ratio)
@@ -260,7 +230,7 @@ class PurpleTheme(BaseTheme):
         b = int(255 * (0.6 + ratio * 0.4))
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Purple overflow: Pink -> Hot pink -> White-pink glow."""
         if layer == 0:
             return self.get_color(height_ratio, column_ratio)
@@ -313,7 +283,7 @@ class SunsetTheme(BaseTheme):
         
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Sunset overflow: Yellow -> White -> Bright sun core."""
         if layer == 0:
             return self.get_color(height_ratio, column_ratio)
@@ -360,7 +330,7 @@ class RainbowTheme(BaseTheme):
         r, g, b = int(r * 255), int(g * 255), int(b * 255)
         return self._apply_brightness(r, g, b)
     
-    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
         """Rainbow overflow: Continue rainbow with increasing brightness/white."""
         if layer == 0:
             return self.get_color(height_ratio, column_ratio)

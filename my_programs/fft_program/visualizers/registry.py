@@ -9,8 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Dict, Type, List
 from visualizers.base import BaseVisualizer
-from visualizers.bars import BarsVisualizer
-from visualizers.bars_overflow import BarsOverflowVisualizer
+from visualizers.bars_unified import BarsUnifiedVisualizer
 from visualizers.none import NoneVisualizer
 
 # Global visualizer registry
@@ -20,8 +19,7 @@ _VISUALIZER_REGISTRY: Dict[str, Type[BaseVisualizer]] = {}
 def _register_builtin_visualizers():
     """Register all built-in visualizers."""
     builtin_visualizers = [
-        BarsVisualizer,
-        BarsOverflowVisualizer,
+        BarsUnifiedVisualizer,
         NoneVisualizer,
     ]
     for viz_class in builtin_visualizers:

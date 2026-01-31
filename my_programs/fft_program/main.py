@@ -14,7 +14,10 @@ Settings can be customized via:
 
 Runtime Controls:
     t / T - Cycle themes forward / backward
-    m / M - Cycle visualizer modes forward / backward
+    g     - Toggle gradient mode (per-pixel vs uniform color)
+    o     - Toggle overflow mode (bars can exceed height)
+    s     - Toggle shadow mode
+    p     - Toggle peak mode
     Ctrl+C - Quit
 """
 import sys
@@ -30,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import Settings, load_settings
 from core import MatrixApp, AudioProcessor, ScalingProcessor
 from themes import get_theme, list_themes
-from visualizers import get_visualizer, list_visualizers, draw_peaks
+from visualizers import get_visualizer, draw_peaks
 
 
 class KeyboardHandler:
@@ -92,50 +95,14 @@ class ThemeCycler:
         return get_theme(self.current_theme_name, brightness_boost=self.brightness_boost)
 
 
-class VisualizerCycler:
-    """Manages cycling through available visualizers."""
-    
-    def __init__(self, initial_visualizer: str, width: int, height: int, settings):
-        self.visualizers = list_visualizers()
-        self.width = width
-        self.height = height
-        self.settings = settings
-        try:
-            self.current_index = self.visualizers.index(initial_visualizer)
-        except ValueError:
-            self.current_index = 0
-    
-    @property
-    def current_visualizer_name(self) -> str:
-        return self.visualizers[self.current_index]
-    
-    def next_visualizer(self):
-        """Cycle to the next visualizer."""
-        self.current_index = (self.current_index + 1) % len(self.visualizers)
-        return self._get_current_visualizer()
-    
-    def prev_visualizer(self):
-        """Cycle to the previous visualizer."""
-        self.current_index = (self.current_index - 1) % len(self.visualizers)
-        return self._get_current_visualizer()
-    
-    def _get_current_visualizer(self):
-        """Get the current visualizer instance."""
-        return get_visualizer(
-            self.current_visualizer_name,
-            self.width,
-            self.height,
-            self.settings
-        )
-
-
-def print_startup_info(width: int, height: int, theme: str, visualizer: str, shadow: bool, peak: bool):
+def print_startup_info(width: int, height: int, theme: str, visualizer: str, shadow: bool, peak: bool, gradient: bool, overflow: bool):
     """Print startup information and controls."""
     print(f"\n{'='*50}")
     print(f"FFT Visualizer - {width}x{height} matrix")
     print(f"{'='*50}")
     
-    print(f"\nCurrent: theme={theme}, mode={visualizer}, shadow={'ON' if shadow else 'OFF'}, peak={'ON' if peak else 'OFF'}")
+    print(f"\nCurrent: theme={theme}, shadow={'ON' if shadow else 'OFF'}, peak={'ON' if peak else 'OFF'}")
+    print(f"         gradient={'ON' if gradient else 'OFF'}, overflow={'ON' if overflow else 'OFF'}")
     
     print(f"\n[t/T] Themes ({len(list_themes())} available):")
     themes = list_themes()
@@ -144,11 +111,9 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
         row = themes[i:i+4]
         print(f"    {', '.join(row)}")
     
-    print(f"\n[m/M] Modes ({len(list_visualizers())} available):")
-    for viz in list_visualizers():
-        print(f"    {viz}")
-    
-    print(f"\n[s] Toggle shadow mode")
+    print(f"\n[g] Toggle gradient mode (per-pixel vs uniform color)")
+    print(f"[o] Toggle overflow mode (bars can exceed height)")
+    print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
@@ -161,12 +126,6 @@ def main():
     
     # Add custom arguments
     app.add_argument(
-        "--visualizer",
-        help=f"Visualizer type. Available: {', '.join(list_visualizers())}",
-        default=None,
-        type=str
-    )
-    app.add_argument(
         "--theme",
         help=f"Color theme. Available: {', '.join(list_themes())}",
         default=None,
@@ -178,9 +137,14 @@ def main():
         help="List available themes and exit"
     )
     app.add_argument(
-        "--list-visualizers",
+        "--gradient",
         action="store_true",
-        help="List available visualizers and exit"
+        help="Start with gradient mode enabled (per-pixel colors)"
+    )
+    app.add_argument(
+        "--overflow",
+        action="store_true",
+        help="Start with overflow mode enabled (bars can exceed height)"
     )
     
     # Parse arguments
@@ -193,12 +157,6 @@ def main():
             print(f"  - {theme_name}")
         sys.exit(0)
     
-    if args.list_visualizers:
-        print("Available visualizers:")
-        for viz_name in list_visualizers():
-            print(f"  - {viz_name}")
-        sys.exit(0)
-    
     # Load settings from file or use defaults
     settings_path = getattr(args, 'settings', None)
     settings = load_settings(settings_path)
@@ -207,13 +165,13 @@ def main():
     if args.theme:
         settings.color.theme = args.theme
     
-    # Determine visualizer based on settings
-    if args.visualizer:
-        visualizer_name = args.visualizer
-    elif settings.overflow.enabled:
-        visualizer_name = "bars_overflow"
-    else:
-        visualizer_name = "bars"
+    # Override mode settings from command line
+    gradient_enabled = getattr(args, 'gradient', False)
+    if args.overflow:
+        settings.overflow.enabled = True
+    
+    # Always use the unified visualizer
+    visualizer_name = "bars"
     
     # Initialize matrix
     if not app.initialize_matrix():
@@ -221,7 +179,11 @@ def main():
         sys.exit(1)
     
     # Print startup info with all options
-    print_startup_info(app.width, app.height, settings.color.theme, visualizer_name, settings.shadow.enabled, settings.peak.enabled)
+    print_startup_info(
+        app.width, app.height, settings.color.theme, visualizer_name,
+        settings.shadow.enabled, settings.peak.enabled,
+        gradient_enabled, settings.overflow.enabled
+    )
     
     # Initialize components
     try:
@@ -250,6 +212,10 @@ def main():
             settings
         )
         
+        # Apply command line mode overrides
+        if gradient_enabled:
+            visualizer.gradient_mode = True
+        
         # Theme
         theme = get_theme(
             settings.color.theme,
@@ -261,14 +227,6 @@ def main():
         theme_cycler = ThemeCycler(
             settings.color.theme,
             brightness_boost=settings.color.brightness_boost
-        )
-        
-        # Visualizer cycler for runtime switching
-        viz_cycler = VisualizerCycler(
-            visualizer_name,
-            app.width,
-            app.height,
-            settings
         )
         
     except Exception as e:
@@ -293,16 +251,14 @@ def main():
                     new_theme = theme_cycler.prev_theme()
                     visualizer.set_theme(new_theme)
                     print(f"Theme: {theme_cycler.current_theme_name}")
-                elif key == 'm':
-                    # Next visualizer
-                    visualizer = viz_cycler.next_visualizer()
-                    visualizer.set_theme(theme_cycler._get_current_theme())
-                    print(f"Mode: {viz_cycler.current_visualizer_name}")
-                elif key == 'M':
-                    # Previous visualizer
-                    visualizer = viz_cycler.prev_visualizer()
-                    visualizer.set_theme(theme_cycler._get_current_theme())
-                    print(f"Mode: {viz_cycler.current_visualizer_name}")
+                elif key == 'g':
+                    # Toggle gradient mode
+                    gradient_on = visualizer.toggle_gradient()
+                    print(f"Gradient: {'ON (per-pixel)' if gradient_on else 'OFF (uniform)'}")
+                elif key == 'o':
+                    # Toggle overflow mode
+                    overflow_on = visualizer.toggle_overflow()
+                    print(f"Overflow: {'ON' if overflow_on else 'OFF'}")
                 elif key == 's':
                     # Toggle shadow mode
                     settings.shadow.enabled = not settings.shadow.enabled
