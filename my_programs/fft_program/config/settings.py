@@ -93,7 +93,7 @@ class ScalingSettings:
 class SmoothingSettings:
     """Bar smoothing configuration."""
     rise: float = 0.6   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
-    fall: float = 0.18  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
+    fall: float = 0.1  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
 
 
 @dataclass
