@@ -68,62 +68,19 @@ class BarsVisualizer(BaseVisualizer):
             bar_value = min(1.0, max(0.0, bar_value))
             bar_height = int(bar_value * height)
             
-            if bar_height <= 0:
-                continue
-            
             # Column ratio for position-based themes
             column_ratio = i / num_bins
             
-            # Get color once per bar
-            r, g, b = self.theme.get_color(bar_value, column_ratio)
-            
-            # Draw bar from bottom up
-            for j in range(bar_height):
-                y = height - 1 - j
-                canvas.SetPixel(i, y, r, g, b)
+            if bar_height > 0:
+                # Get color once per bar
+                r, g, b = self.theme.get_color(bar_value, column_ratio)
                 
-                # Update shadow buffer: set to 1.0 and store color
-                if shadow_enabled:
-                    self.shadow_buffer[i, j] = 1.0
-                    self.shadow_colors[i, j] = (r, g, b)
-            
-            # Draw peak indicator if enabled
-            if peak_heights is not None and self.settings.peak.enabled:
-                self._draw_peak(canvas, i, peak_heights[i], bar_value, column_ratio)
-    
-    def _draw_peak(
-        self,
-        canvas,
-        x: int,
-        peak_value: float,
-        bar_value: float,
-        column_ratio: float
-    ) -> None:
-        """
-        Draw peak indicator dot above bar.
-        
-        Args:
-            canvas: RGB matrix canvas
-            x: Column position
-            peak_value: Peak height (0-1)
-            bar_value: Current bar height (0-1)
-            column_ratio: Column position ratio for theme
-        """
-        if peak_value <= 0:
-            return
-        
-        peak_y = int(peak_value * self.height)
-        y = self.height - 1 - peak_y
-        
-        if y < 0 or y >= self.height:
-            return
-        
-        # Get peak color based on mode
-        bar_color = self.theme.get_color(bar_value, column_ratio)
-        pr, pg, pb = self.theme.get_peak_color(
-            self.settings.peak.color_mode,
-            bar_color,
-            column_ratio
-        )
-        
-        canvas.SetPixel(x, y, pr, pg, pb)
+                # Draw bar from bottom up
+                for j in range(bar_height):
+                    y = height - 1 - j
+                    canvas.SetPixel(i, y, r, g, b)
+                    
+                    # Update shadow buffer: set to 1.0 and store color
+                    if shadow_enabled:
+                        self.shadow_buffer[i, j] = 1.0
+                        self.shadow_colors[i, j] = (r, g, b)

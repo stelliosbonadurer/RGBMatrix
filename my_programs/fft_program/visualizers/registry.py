@@ -11,6 +11,7 @@ from typing import Dict, Type, List
 from visualizers.base import BaseVisualizer
 from visualizers.bars import BarsVisualizer
 from visualizers.bars_overflow import BarsOverflowVisualizer
+from visualizers.none import NoneVisualizer
 
 # Global visualizer registry
 _VISUALIZER_REGISTRY: Dict[str, Type[BaseVisualizer]] = {}
@@ -21,6 +22,7 @@ def _register_builtin_visualizers():
     builtin_visualizers = [
         BarsVisualizer,
         BarsOverflowVisualizer,
+        NoneVisualizer,
     ]
     for viz_class in builtin_visualizers:
         _VISUALIZER_REGISTRY[viz_class.name] = viz_class

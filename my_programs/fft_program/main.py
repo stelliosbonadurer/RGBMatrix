@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import Settings, load_settings
 from core import MatrixApp, AudioProcessor, ScalingProcessor
 from themes import get_theme, list_themes
-from visualizers import get_visualizer, list_visualizers
+from visualizers import get_visualizer, list_visualizers, draw_peaks
 
 
 class KeyboardHandler:
@@ -338,8 +338,18 @@ def main():
                 visualizer.draw(
                     app.canvas,
                     smoothed,
-                    peaks if settings.peak.enabled else None
+                    None  # Peaks are drawn separately now
                 )
+                
+                # Draw peaks as independent overlay
+                if settings.peak.enabled:
+                    draw_peaks(
+                        app.canvas,
+                        peaks,
+                        theme_cycler._get_current_theme(),
+                        settings,
+                        app.height
+                    )
                 
                 # Swap buffers
                 app.swap_canvas()

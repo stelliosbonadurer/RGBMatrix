@@ -45,34 +45,39 @@ class BaseTheme(ABC):
         self,
         layer: int,
         height_ratio: float,
-        column_ratio: float = 0.0
+        column_ratio: float = 0.0,
+        frame: int = 0
     ) -> Tuple[int, int, int]:
         """
         Get RGB color for overflow layers.
         
-        Matches fft_sandbox.py overflow mode exactly.
+        Default implementation - themes should override for custom colors.
         
         Args:
             layer: Overflow layer number (0 = first/base layer, 1 = second, etc.)
             height_ratio: 0-1 value within the current layer
             column_ratio: 0-1 value representing column position
+            frame: Current frame number for animation effects
         
         Returns:
             Tuple of (r, g, b) values 0-255
         """
         if layer == 0:
-            # First layer: red -> orange (matches fft_sandbox.py)
+            # First layer: use theme's main gradient
+            return self.get_color(height_ratio, column_ratio)
+        elif layer == 1:
+            # Second layer: default red -> orange
             r = 255
             g = int(165 * height_ratio)  # 0 -> 165 (orange)
             b = 0
-        elif layer == 1:
-            # Second layer: orange -> white
+        elif layer == 2:
+            # Third layer: orange -> white
             r = 255
             g = int(165 + (255 - 165) * height_ratio)  # 165 -> 255
             b = int(255 * height_ratio)  # 0 -> 255
         else:
-            # Higher layers: use theme color
-            return self.get_color(height_ratio, column_ratio)
+            # Higher layers: white
+            return self._apply_brightness(255, 255, 255)
         
         return self._apply_brightness(r, g, b)
     

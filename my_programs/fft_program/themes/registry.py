@@ -11,7 +11,9 @@ from typing import Dict, Type, Optional, List
 from themes.base import BaseTheme
 from themes.gradients import (
     ClassicTheme,
+    ClassicInvertedTheme,
     WarmTheme,
+    FireTheme,
     OceanTheme,
     ForestTheme,
     PurpleTheme,
@@ -27,7 +29,9 @@ def _register_builtin_themes():
     """Register all built-in themes."""
     builtin_themes = [
         ClassicTheme,
+        ClassicInvertedTheme,
         WarmTheme,
+        FireTheme,
         OceanTheme,
         ForestTheme,
         PurpleTheme,
