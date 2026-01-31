@@ -78,26 +78,14 @@ def get_color(self, height_ratio, column_ratio):
 
 ### Inline Color Calculation in Draw Loop
 
-Changed `bars_overflow.py` to match `fft_sandbox.py` exactly:
+Changed the visualizer to use theme methods for overflow colors (themes define their own overflow progressions):
 
 ```python
-# Before
-r, g, b = self._get_layer_color(layer, layer_ratio, column_ratio)
-
-# After (inline, no function calls)
-if layer == 0:
-    r = 255
-    g = int(165 * layer_ratio)
-    b = 0
-elif layer == 1:
-    r = 255
-    g = int(165 + 90 * layer_ratio)
-    b = int(255 * layer_ratio)
-elif layer == 2:
-    r, g, b = overflow.color_2
-else:
-    r, g, b = overflow.color_3
+# Theme-based overflow colors
+r, g, b = self.theme.get_overflow_color(layer, layer_ratio, column_ratio, frame, bar_ratio)
 ```
+
+Each theme defines `get_overflow_color()` with its own color progression for layers 0, 1, 2+.
 
 ### Simple Division Over Array Lookup
 

@@ -113,6 +113,7 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     
     print(f"\n[g] Toggle gradient mode (per-pixel vs uniform color)")
     print(f"[o] Toggle overflow mode (bars can exceed height)")
+    print(f"[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
     print(f"[P] Cycle peak color: white → bar → contrast → peak")
@@ -260,6 +261,10 @@ def main():
                     # Toggle overflow mode
                     overflow_on = visualizer.toggle_overflow()
                     print(f"Overflow: {'ON' if overflow_on else 'OFF'}")
+                elif key == 'b':
+                    # Toggle bars (to see peaks only)
+                    bars_on = visualizer.toggle_bars()
+                    print(f"Bars: {'ON' if bars_on else 'OFF (peaks only)'}")
                 elif key == 's':
                     # Toggle shadow mode
                     settings.shadow.enabled = not settings.shadow.enabled

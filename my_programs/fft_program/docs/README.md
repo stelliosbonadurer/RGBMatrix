@@ -11,10 +11,22 @@ sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat 
 # With specific theme
 sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2 --theme=ocean
 
-# List available options
+# List available themes
 python main.py --list-themes
-python main.py --list-visualizers
 ```
+
+## Runtime Controls
+
+| Key | Action |
+| --- | ------ |
+| `t` / `T` | Cycle themes forward / backward |
+| `g` | Toggle gradient mode (per-pixel vs uniform color) |
+| `o` | Toggle overflow mode (bars can exceed height) |
+| `b` | Toggle bars (OFF = peaks only) |
+| `s` | Toggle shadow mode |
+| `p` | Toggle peak mode |
+| `P` | Cycle peak color: white → bar → contrast → peak |
+| `Ctrl+C` | Quit |
 
 ## Documentation
 
@@ -27,11 +39,12 @@ python main.py --list-visualizers
 ## Features
 
 - **Real-time FFT** - Audio spectrum analysis with configurable frequency ranges
-- **Multiple Themes** - 13 built-in color themes (fire, ocean, rainbow, etc.)
+- **7 Color Themes** - warm, fire, ocean, forest, purple, sunset, rainbow
 - **Overflow Mode** - Bars stack with different colors when audio is loud
+- **Gradient Toggle** - Per-pixel gradients or uniform bar colors
 - **Peak Indicators** - Floating dots that show recent peak levels
+- **Shadow Mode** - Trailing fade effect on bars
 - **Adaptive Scaling** - Automatic gain control for consistent visuals
-- **Presets** - Quick configurations for different music genres
 
 ## Requirements
 
@@ -44,6 +57,7 @@ python main.py --list-visualizers
 
 ## Project Structure
 
+```text
 fft_program/
 ├── main.py              # Entry point
 ├── config/              # Settings and presets
@@ -52,3 +66,4 @@ fft_program/
 ├── visualizers/         # Display modes
 ├── utils/               # Helper functions
 └── docs/                # Documentation
+```

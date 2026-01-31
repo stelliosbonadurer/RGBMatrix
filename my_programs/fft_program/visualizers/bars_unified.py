@@ -29,6 +29,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         # Modes - default from settings
         self.gradient_mode = getattr(settings, 'gradient_enabled', False)
         self.overflow_mode = settings.overflow.enabled
+        self.bars_enabled = True  # Can be toggled to show only peaks
     
     def toggle_gradient(self) -> bool:
         """Toggle gradient mode. Returns new state."""
@@ -39,6 +40,11 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         """Toggle overflow mode. Returns new state."""
         self.overflow_mode = not self.overflow_mode
         return self.overflow_mode
+    
+    def toggle_bars(self) -> bool:
+        """Toggle bar drawing. Returns new state."""
+        self.bars_enabled = not self.bars_enabled
+        return self.bars_enabled
     
     def draw(
         self,
@@ -67,6 +73,10 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         if shadow_enabled:
             self.decay_shadow()
             self._draw_shadows(canvas, height)
+        
+        # Skip bar drawing if disabled (peaks-only mode)
+        if not self.bars_enabled:
+            return
         
         for i, raw_ratio in enumerate(smoothed_bars):
             # Guard against NaN values
@@ -149,15 +159,14 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         if total_pixels <= 0:
             return
         
-        # Draw layer by layer
-        pixels_drawn = 0
-        layer = 0
-        
-        while pixels_drawn < total_pixels:
-            pixels_this_layer = min(height, total_pixels - pixels_drawn)
+        if self.gradient_mode:
+            # Per-pixel gradient within each layer
+            pixels_drawn = 0
+            layer = 0
             
-            if self.gradient_mode:
-                # Per-pixel gradient within each layer
+            while pixels_drawn < total_pixels:
+                pixels_this_layer = min(height, total_pixels - pixels_drawn)
+                
                 for j in range(pixels_this_layer):
                     y = height - 1 - j
                     if 0 <= y < height:
@@ -170,22 +179,28 @@ class BarsUnifiedVisualizer(BaseVisualizer):
                         if shadow_enabled:
                             self.shadow_buffer[col, j] = 1.0
                             self.shadow_colors[col, j] = (r, g, b)
-            else:
-                # Uniform color for entire layer (based on layer and total bar ratio)
-                # Use layer midpoint for color selection
-                mid_ratio = 0.5
-                r, g, b = self.theme.get_overflow_color(
-                    layer, mid_ratio, column_ratio, self.frame_count, raw_ratio
-                )
                 
-                for j in range(pixels_this_layer):
-                    y = height - 1 - j
-                    if 0 <= y < height:
-                        canvas.SetPixel(col, y, r, g, b)
-                        
-                        if shadow_enabled:
-                            self.shadow_buffer[col, j] = 1.0
-                            self.shadow_colors[col, j] = (r, g, b)
+                pixels_drawn += pixels_this_layer
+                layer += 1
+        else:
+            # Uniform color mode: entire bar is one color
+            # Color = what the top pixel would be in gradient mode
+            # Calculate which layer and position the top pixel is in
+            top_layer = (total_pixels - 1) // height
+            top_position_in_layer = (total_pixels - 1) % height
+            top_ratio = top_position_in_layer / height
             
-            pixels_drawn += pixels_this_layer
-            layer += 1
+            # Get the color for the top pixel
+            r, g, b = self.theme.get_overflow_color(
+                top_layer, top_ratio, column_ratio, self.frame_count, raw_ratio
+            )
+            
+            # Draw entire visible portion with this single color
+            visible_pixels = min(total_pixels, height)
+            for j in range(visible_pixels):
+                y = height - 1 - j
+                canvas.SetPixel(col, y, r, g, b)
+                
+                if shadow_enabled:
+                    self.shadow_buffer[col, j] = 1.0
+                    self.shadow_colors[col, j] = (r, g, b)

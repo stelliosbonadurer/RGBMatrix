@@ -1,26 +1,38 @@
 # Visualizers Guide
 
-Visualizers determine how the FFT data is rendered to the LED matrix.
+The visualizer renders FFT data to the LED matrix. There is one unified visualizer with multiple toggleable modes.
 
-## Available Visualizers
+## Display Modes
 
- `bars`  Classic vertical bar graph, one bar per frequency bin
- `bars_overflow`  Bars that stack/wrap with different colors when audio is loud
+The unified `bars` visualizer supports these toggleable modes:
 
-## Selecting a Visualizer
+| Key | Mode | Description |
+| --- | ---- | ----------- |
+| `g` | Gradient | ON = per-pixel color gradient, OFF = uniform color per bar |
+| `o` | Overflow | ON = bars can exceed height with layered colors, OFF = clamped to height |
+| `b` | Bars | ON = show bars, OFF = show only peaks |
 
-### Via Command Line
+## Mode Combinations
+
+| Gradient | Overflow | Result |
+| -------- | -------- | ------ |
+| OFF | OFF | Uniform color per bar, clamped to height |
+| ON | OFF | Per-pixel gradient within bar, clamped to height |
+| OFF | ON | Uniform color based on total bar height (color changes as bar grows) |
+| ON | ON | Per-pixel gradient with overflow layer colors |
+
+## Command Line Options
 
 ```bash
-sudo python main.py --visualizer=bars_overflow ...
+# Start with gradient mode enabled
+sudo python main.py --gradient ...
+
+# Start with overflow mode enabled  
+sudo python main.py --overflow ...
+
+# Both modes
+sudo python main.py --gradient --overflow ...
 ```
-
-### Automatic Selection
-
-By default, the visualizer is chosen based on settings:
-
-- `overflow.enabled = True` → `bars_overflow`
-- `overflow.enabled = False` → `bars`
 
 ## Creating a Custom Visualizer
 
@@ -95,8 +107,7 @@ from .circular import CircularVisualizer  # Add import
 
 def _register_builtin_visualizers():
     builtin_visualizers = [
-        BarsVisualizer,
-        BarsOverflowVisualizer,
+        BarsUnifiedVisualizer,
         CircularVisualizer,  # Add here
     ]
 ```

@@ -5,20 +5,14 @@ Themes control the colors used to render the visualization.
 ## Available Themes
 
 | Theme | Description | Best For |
-
-| `classic` | Blue → Green → Red | General use |
-| `warm` | Dark red → Orange → Yellow | Acoustic, bluegrass |
-| `fire` | Black/red → Orange → Yellow/white | Intense, EDM |
+| ----- | ----------- | -------- |
+| `warm` | Dark red → Orange → Yellow | Acoustic, general use |
+| `fire` | Red/orange base, uniform color per bar | Intense, EDM |
 | `ocean` | Deep blue → Cyan → White | Calm, ambient |
 | `forest` | Dark green → Bright green → Yellow | Nature vibes |
 | `purple` | Deep purple → Magenta → Pink | Vibrant, pop |
+| `sunset` | Pink → Orange → Yellow | Warm, mellow |
 | `rainbow` | Full spectrum by column position | Colorful displays |
-| `spectrum` | Rainbow + amplitude hue shift | Dynamic, reactive |
-| `fire_spectrum` | Fire colors vary by column | Warm variety |
-| `blue_flame` | Fire that transitions to blue at top | Unique effect |
-| `waves` | Ocean waves with seafoam peaks | Relaxing |
-| `mono_green` | Single green color, brightness varies | Retro |
-| `mono_amber` | Amber/orange, vintage VU meter look | Classic |
 
 ## Selecting a Theme
 

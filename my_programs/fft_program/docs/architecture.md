@@ -4,7 +4,7 @@ This document explains the code structure for developers who want to understand 
 
 ## Module Structure
 
-```
+```text
 fft_program/
 ├── main.py              # Entry point, orchestrates everything
 ├── config/              # Configuration layer
@@ -16,13 +16,12 @@ fft_program/
 │   └── matrix_app.py    # LED matrix interface
 ├── themes/              # Color themes
 │   ├── base.py          # Abstract BaseTheme
-│   ├── gradients.py     # Gradient-based themes
-│   ├── rainbow.py       # Position-based themes
+│   ├── gradients.py     # All gradient-based themes
 │   └── registry.py      # Theme lookup
 ├── visualizers/         # Display modes
 │   ├── base.py          # Abstract BaseVisualizer
-│   ├── bars.py          # Standard bars
-│   ├── bars_overflow.py # Overflow bars
+│   ├── bars_unified.py  # Unified visualizer with gradient/overflow toggles
+│   ├── peaks.py         # Peak indicator drawing
 │   └── registry.py      # Visualizer lookup
 └── utils/               # Helpers
     └── colors.py        # Color math utilities
@@ -30,7 +29,7 @@ fft_program/
 
 ## Data Flow
 
-```
+```text
 ┌─────────────┐     ┌─────────────────┐     ┌─────────────────┐
 │ Audio Input │ ──▶ │ AudioProcessor  │ ──▶ │ ScalingProcessor│
 │ (sounddevice)     │ (FFT, binning)  │     │ (normalize,     │
@@ -192,7 +191,7 @@ class Settings:
 
 ## Threading Model
 
-```
+```text
 Main Thread:
     └── Main loop (draw frames)
 
@@ -206,7 +205,7 @@ Communication is via `self.latest_samples` (numpy array copy).
 ## Performance Considerations
 
 | Component | Typical Time | Notes |
-|-----------|--------------|-------|
+| --------- | ------------ | ----- |
 | FFT (numpy) | ~0.5ms | Runs in C, very fast |
 | Scaling/smoothing | ~0.1ms | Simple numpy ops |
 | Visualizer draw | ~1-3ms | Per-pixel SetPixel calls |
