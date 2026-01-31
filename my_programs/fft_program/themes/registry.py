@@ -10,8 +10,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from typing import Dict, Type, Optional, List
 from themes.base import BaseTheme
 from themes.gradients import (
-    ClassicTheme,
-    ClassicInvertedTheme,
     WarmTheme,
     FireTheme,
     OceanTheme,
@@ -28,8 +26,6 @@ _THEME_REGISTRY: Dict[str, Type[BaseTheme]] = {}
 def _register_builtin_themes():
     """Register all built-in themes."""
     builtin_themes = [
-        ClassicTheme,
-        ClassicInvertedTheme,
         WarmTheme,
         FireTheme,
         OceanTheme,

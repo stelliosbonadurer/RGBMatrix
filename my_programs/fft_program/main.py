@@ -115,6 +115,7 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[o] Toggle overflow mode (bars can exceed height)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
+    print(f"[P] Cycle peak color: white → bar → contrast → peak")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
 
@@ -275,6 +276,19 @@ def main():
                     # Toggle peak mode
                     settings.peak.enabled = not settings.peak.enabled
                     print(f"Peak: {'ON' if settings.peak.enabled else 'OFF'}")
+                elif key == 'P':
+                    # Cycle peak color mode
+                    peak_modes = ['white', 'bar', 'contrast', 'peak']
+                    current_idx = peak_modes.index(settings.peak.color_mode)
+                    new_idx = (current_idx + 1) % len(peak_modes)
+                    settings.peak.color_mode = peak_modes[new_idx]
+                    mode_descriptions = {
+                        'white': 'white (always white)',
+                        'bar': 'bar (matches bar color)',
+                        'contrast': 'contrast (inverted bar color)',
+                        'peak': 'peak (color at max height)'
+                    }
+                    print(f"Peak color: {mode_descriptions[settings.peak.color_mode]}")
                 
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()
