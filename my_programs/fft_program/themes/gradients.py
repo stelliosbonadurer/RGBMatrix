@@ -27,14 +27,19 @@ class ClassicTheme(BaseTheme):
         return self._apply_brightness(r, g, b)
     
     def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
-        """Classic overflow: Red -> Yellow -> White (continues the gradient up)."""
+        """Classic overflow: continues naturally from red at top of base layer."""
         if layer == 0:
-            # First layer uses theme colors
+            # Base layer uses theme colors (blue -> green -> red)
             return self.get_color(height_ratio, column_ratio)
         elif layer == 1:
-            # Second layer: red -> yellow
+            # Layer 1: red -> orange (continuing from where layer 0 ends at red)
             r = 255
-            g = int(255 * height_ratio)
+            g = int(165 * height_ratio)  # 0 -> 165 (orange)
+            b = 0
+        elif layer == 2:
+            # Layer 2: orange -> yellow
+            r = 255
+            g = int(165 + 90 * height_ratio)  # 165 -> 255
             b = 0
         else:
             # Higher layers: yellow -> white
@@ -64,17 +69,23 @@ class ClassicInvertedTheme(BaseTheme):
         return self._apply_brightness(r, g, b)
     
     def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0) -> Tuple[int, int, int]:
-        """Inverted overflow: Cyan -> White -> Bright cyan pulse."""
+        """Inverted overflow: continues naturally from cyan at top of base layer."""
         if layer == 0:
+            # Base layer uses theme colors (yellow -> magenta -> cyan)
             return self.get_color(height_ratio, column_ratio)
         elif layer == 1:
-            # Second layer: cyan -> white
-            r = int(255 * height_ratio)
+            # Layer 1: cyan -> light cyan (adding red gradually)
+            r = int(128 * height_ratio)  # 0 -> 128
+            g = 255
+            b = 255
+        elif layer == 2:
+            # Layer 2: light cyan -> white
+            r = int(128 + 127 * height_ratio)  # 128 -> 255
             g = 255
             b = 255
         else:
-            # Higher layers: white with cyan tint
-            r = int(200 + 55 * height_ratio)
+            # Higher layers: stay white
+            r = 255
             g = 255
             b = 255
         return self._apply_brightness(r, g, b)
@@ -320,17 +331,17 @@ class SunsetTheme(BaseTheme):
 
 
 class RainbowTheme(BaseTheme):
-    """Full spectrum based on bar position (column), brightness varies with height."""
+    """Full spectrum based on bar position (column), full brightness throughout."""
     
     name = "rainbow"
     description = "Full rainbow spectrum based on column position"
     
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
-        ratio = height_ratio
-        hue = column_ratio * 360
+        # Red on left, goes through spectrum, ends at magenta on right (no wrap back to red)
+        hue = column_ratio * 300  # 0-300 degrees: red -> yellow -> green -> cyan -> blue -> magenta
         
-        # HSV to RGB conversion (saturation=1, value=ratio)
-        c = ratio
+        # HSV to RGB conversion (saturation=1, value=1) - full brightness always
+        c = 1.0
         x = c * (1 - abs((hue / 60) % 2 - 1))
         
         if hue < 60:
@@ -355,7 +366,7 @@ class RainbowTheme(BaseTheme):
             return self.get_color(height_ratio, column_ratio)
         else:
             # Higher layers: rainbow colors washed toward white
-            hue = column_ratio * 360
+            hue = column_ratio * 300  # Match base layer
             # More white blend as layers increase
             white_blend = min(0.3 + layer * 0.2, 0.8)
             c = 1.0
