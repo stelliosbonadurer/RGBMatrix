@@ -11,6 +11,9 @@ from themes.gradients import (
     PurpleTheme,
     SunsetTheme,
     RainbowTheme,
+    NeonTheme,
+    AuroraTheme,
+    PlasmaTheme,
 )
 from themes.registry import get_theme, register_theme, list_themes
 
@@ -22,6 +25,9 @@ __all__ = [
     'PurpleTheme',
     'SunsetTheme',
     'RainbowTheme',
+    'NeonTheme',
+    'AuroraTheme',
+    'PlasmaTheme',
     'get_theme',
     'register_theme',
     'list_themes',
