@@ -58,7 +58,7 @@ class PeakSettings:
 @dataclass
 class ColorSettings:
     """Color theme configuration."""
-    # Available themes: 'warm', 'fire', 'ocean', 'forest', 'purple', 'sunset', 'rainbow',
+    # Available themes: 'warm', 'ocean', 'forest', 'sunset', 'rainbow',
     #                   'neon', 'aurora', 'plasma'
     theme: str = 'ocean'
     brightness_boost: float = 1.0  # Overall brightness multiplier
