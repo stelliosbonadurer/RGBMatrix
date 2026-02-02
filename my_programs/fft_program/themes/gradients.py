@@ -42,13 +42,22 @@ class FireTheme(BaseTheme):
     """Like Warm but entire column color scales with bar height."""
     
     name = "fire"
-    description = "Uniform column color based on bar height (red -> orange)"
+    description = "Uniform column color based on bar height (red -> orange -> white)"
     
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
-        # Same as Warm: red -> orange
-        r = 255
-        g = int(165 * height_ratio)  # 0 -> 165 (orange)
-        b = 0
+        # Bright red (bottom) -> orange (mid) -> white (top)
+        if height_ratio < 0.5:
+            # Red -> Orange (0-50%)
+            t = height_ratio * 2  # 0 to 1
+            r = 255
+            g = int(165 * t)  # 0 -> 165
+            b = 0
+        else:
+            # Orange -> White (50-100%)
+            t = (height_ratio - 0.5) * 2  # 0 to 1
+            r = 255
+            g = int(165 + 90 * t)  # 165 -> 255
+            b = int(255 * t)  # 0 -> 255
         return self._apply_brightness(r, g, b)
     
     def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
@@ -57,9 +66,18 @@ class FireTheme(BaseTheme):
             # Entire column uses color based on total bar height (bar_ratio)
             # Clamp to 1.0 for the base layer color calculation
             color_ratio = min(1.0, bar_ratio)
-            r = 255
-            g = int(165 * color_ratio)  # 0 -> 165 (orange) based on bar height
-            b = 0
+            if color_ratio < 0.5:
+                # Red -> Orange
+                t = color_ratio * 2
+                r = 255
+                g = int(165 * t)
+                b = 0
+            else:
+                # Orange -> White
+                t = (color_ratio - 0.5) * 2
+                r = 255
+                g = int(165 + 90 * t)
+                b = int(255 * t)
             return self._apply_brightness(r, g, b)
         elif layer == 1:
             # Second layer: orange -> yellow
@@ -223,27 +241,34 @@ class RainbowTheme(BaseTheme):
     name = "rainbow"
     description = "Full rainbow spectrum based on column position"
     
-    def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
-        # Red on left, goes through spectrum, ends at magenta on right (no wrap back to red)
-        hue = column_ratio * 300  # 0-300 degrees: red -> yellow -> green -> cyan -> blue -> magenta
-        
-        # HSV to RGB conversion (saturation=1, value=1) - full brightness always
+    def _adjusted_hue(self, column_ratio: float) -> float:
+        """Apply non-linear mapping to stretch red region and compress green/blue."""
+        # Use power curve: lower exponent = more red space, higher = more compressed rest
+        # column_ratio^0.6 stretches the red/orange region (left side)
+        adjusted = column_ratio ** 0.9
+        return adjusted * 300  # 0-300 degrees: red -> yellow -> green -> cyan -> blue -> magenta
+    
+    def _hue_to_rgb(self, hue: float) -> Tuple[float, float, float]:
+        """Convert hue (0-300) to RGB components (0-1 range)."""
         c = 1.0
         x = c * (1 - abs((hue / 60) % 2 - 1))
         
         if hue < 60:
-            r, g, b = c, x, 0
+            return c, x, 0
         elif hue < 120:
-            r, g, b = x, c, 0
+            return x, c, 0
         elif hue < 180:
-            r, g, b = 0, c, x
+            return 0, c, x
         elif hue < 240:
-            r, g, b = 0, x, c
+            return 0, x, c
         elif hue < 300:
-            r, g, b = x, 0, c
+            return x, 0, c
         else:
-            r, g, b = c, 0, x
-        
+            return c, 0, x
+    
+    def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
+        hue = self._adjusted_hue(column_ratio)
+        r, g, b = self._hue_to_rgb(hue)
         r, g, b = int(r * 255), int(g * 255), int(b * 255)
         return self._apply_brightness(r, g, b)
     
@@ -253,24 +278,10 @@ class RainbowTheme(BaseTheme):
             return self.get_color(height_ratio, column_ratio)
         else:
             # Higher layers: rainbow colors washed toward white
-            hue = column_ratio * 300  # Match base layer
+            hue = self._adjusted_hue(column_ratio)
             # More white blend as layers increase
             white_blend = min(0.3 + layer * 0.2, 0.8)
-            c = 1.0
-            x = c * (1 - abs((hue / 60) % 2 - 1))
-            
-            if hue < 60:
-                r, g, b = c, x, 0
-            elif hue < 120:
-                r, g, b = x, c, 0
-            elif hue < 180:
-                r, g, b = 0, c, x
-            elif hue < 240:
-                r, g, b = 0, x, c
-            elif hue < 300:
-                r, g, b = x, 0, c
-            else:
-                r, g, b = c, 0, x
+            r, g, b = self._hue_to_rgb(hue)
             
             # Blend toward white
             r = int((r * (1 - white_blend) + white_blend) * 255)

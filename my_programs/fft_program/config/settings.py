@@ -60,7 +60,7 @@ class ColorSettings:
     """Color theme configuration."""
     # Available themes: 'warm', 'fire', 'ocean', 'forest', 'purple', 'sunset', 'rainbow',
     #                   'neon', 'aurora', 'plasma'
-    theme: str = 'neon'
+    theme: str = 'ocean'
     brightness_boost: float = 1.0  # Overall brightness multiplier
 
 
@@ -93,8 +93,8 @@ class ScalingSettings:
 @dataclass
 class SmoothingSettings:
     """Bar smoothing configuration."""
-    rise: float = 0.55   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
-    fall: float = 0.125  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
+    rise: float = 0.4   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
+    fall: float = 0.1  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
     
     #rise: float = 0.55   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
     #fall: float = 0.125  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)

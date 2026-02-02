@@ -160,28 +160,35 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             return
         
         if self.gradient_mode:
-            # Per-pixel gradient within each layer
-            pixels_drawn = 0
-            layer = 0
+            # Optimized: draw each pixel exactly once
+            # Only at most 2 layers are ever visible on screen
+            visible_pixels = min(total_pixels, height)
             
-            while pixels_drawn < total_pixels:
-                pixels_this_layer = min(height, total_pixels - pixels_drawn)
+            # Calculate which layers are visible
+            top_layer = (total_pixels - 1) // height
+            remainder = total_pixels % height
+            # boundary = where top layer ends (pixels 0 to boundary-1 are top layer)
+            boundary = remainder if remainder > 0 else height
+            
+            for j in range(visible_pixels):
+                y = height - 1 - j
+                layer_ratio = j / height
                 
-                for j in range(pixels_this_layer):
-                    y = height - 1 - j
-                    if 0 <= y < height:
-                        layer_ratio = j / height
-                        r, g, b = self.theme.get_overflow_color(
-                            layer, layer_ratio, column_ratio, self.frame_count, raw_ratio
-                        )
-                        canvas.SetPixel(col, y, r, g, b)
-                        
-                        if shadow_enabled:
-                            self.shadow_buffer[col, j] = 1.0
-                            self.shadow_colors[col, j] = (r, g, b)
+                if j < boundary:
+                    # This pixel shows the top layer
+                    layer = top_layer
+                else:
+                    # This pixel shows the layer below
+                    layer = top_layer - 1
                 
-                pixels_drawn += pixels_this_layer
-                layer += 1
+                r, g, b = self.theme.get_overflow_color(
+                    layer, layer_ratio, column_ratio, self.frame_count, raw_ratio
+                )
+                canvas.SetPixel(col, y, r, g, b)
+                
+                if shadow_enabled:
+                    self.shadow_buffer[col, j] = 1.0
+                    self.shadow_colors[col, j] = (r, g, b)
         else:
             # Uniform color mode: entire bar is one color
             # Color = what the top pixel would be in gradient mode
