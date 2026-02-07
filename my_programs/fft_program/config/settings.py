@@ -10,11 +10,12 @@ from typing import Tuple, Literal
 @dataclass
 class AudioSettings:
     """Audio input configuration."""
+    #device: int = 0  # USB PnP Sound Device (sounddevice index 0)
     device: str = 'iMM-6C'  # Use device name instead of index
     block_size: int = 512   # Actual audio samples per callback (~23ms at 44kHz)
     fft_size: int = 8192    # Zero-pad to this size for better freq resolution
     channel: int = 0
-    sleep_delay: float = 0.004  # Delay between frames (lower = smoother but more CPU)
+    sleep_delay: float = 0.01  # Delay between frames (lower = smoother but more CPU)
 
 
 @dataclass

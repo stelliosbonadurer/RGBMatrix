@@ -99,55 +99,41 @@ class ForestTheme(BaseTheme):
 
 
 class SunsetTheme(BaseTheme):
-    """Deep purple (low) -> Pink/Orange (mid) -> Yellow/White (high) - sunset/sunrise."""
+    """Purple -> Magenta -> Orange -> Yellow across layers."""
     
     name = "sunset"
-    description = "Sunset gradient: purple -> pink -> orange -> yellow"
+    description = "Sunset gradient: purple -> magenta -> orange -> yellow"
     
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
-        ratio = height_ratio
-        
-        if ratio < 0.25:
-            # Bottom quarter: deep purple/indigo
-            intensity = ratio * 4
-            r = int(75)# * intensity)
-            g = int(0)# * intensity)
-            b = int(130)# * intensity)
-        elif ratio < 0.5:
-            # Second quarter: purple -> hot pink/magenta
-            intensity = (ratio - 0.25) * 4
-            r = int(75 + (255 - 75) * intensity)
-            g = int(0 + (20 - 0) * intensity)
-            b = int(130 + (147 - 130) * intensity)
-        elif ratio < 0.75:
-            # Third quarter: pink -> orange
-            intensity = (ratio - 0.5) * 4
-            r = 255
-            g = int(20 + (140 - 20) * intensity)
-            b = int(147 - 147 * intensity)
-        else:
-            # Top quarter: orange -> bright yellow/gold
-            intensity = (ratio - 0.75) * 4
-            r = 255
-            g = int(140 + (220 - 140) * intensity)
-            b = int(0 + (50 * intensity))  # Slight warmth at peak
-        
+        # Layer 0: purple (bottom) -> hot pink/magenta (top)
+        # Purple: (128, 0, 128), Magenta: (255, 0, 255)
+        t = height_ratio
+        r = int(128 + 127 * t)  # 128 -> 255
+        g = 0
+        b = int(128 + 127 * t)  # 128 -> 255
         return self._apply_brightness(r, g, b)
     
     def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
-        """Sunset overflow: Yellow -> White -> Bright sun core."""
+        """Sunset overflow: Purple->Magenta, Pink->Orange, Orange->Yellow."""
+        t = height_ratio
+        
         if layer == 0:
-            return self.get_color(height_ratio, column_ratio)
+            # Purple -> Magenta
+            r = int(128 + 127 * t)  # 128 -> 255
+            g = 0
+            b = int(128 + 127 * t)  # 128 -> 255
         elif layer == 1:
-            # Second layer: yellow/gold -> white-yellow
+            # Pink -> Orange
+            # Pink: (255, 105, 180), Orange: (255, 165, 0)
             r = 255
-            g = int(220 + 35 * height_ratio)
-            b = int(50 + 180 * height_ratio)
+            g = int(105 + 60 * t)   # 105 -> 165
+            b = int(180 - 180 * t)  # 180 -> 0
         else:
-            # Higher layers: bright white sun
+            # Orange -> Bright Yellow
+            # Orange: (255, 165, 0), Yellow: (255, 255, 50)
             r = 255
-            g = 255
-            b = int(230 + 25 * height_ratio)
+            g = int(165 + 90 * t)   # 165 -> 255
+            b = int(50 * t)         # 0 -> 50
         return self._apply_brightness(r, g, b)
 
 
