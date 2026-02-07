@@ -144,8 +144,10 @@ class LayerConfig:
     name: str                              # Layer identifier (e.g., 'bass', 'treble')
     freq_range: Tuple[int, int]            # (min_freq, max_freq) in Hz
     theme_name: str = 'ocean'              # Theme for this layer
+    bars_enabled: bool = True              # Draw bars for this layer
     gradient_enabled: bool = False         # Per-pixel gradient vs uniform color
     overflow_enabled: bool = True          # Allow bars to exceed height
+    peak_enabled: bool = False             # Show floating peak indicators
     visible: bool = True                   # Whether layer is drawn
     boost: float = 1.0                     # Sensitivity multiplier
     bins: int = 64                         # Number of frequency bins (always 64 for now)

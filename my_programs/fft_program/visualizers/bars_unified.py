@@ -20,8 +20,10 @@ class LayerState:
     """Runtime state for a single layer."""
     theme: Any = None           # Theme instance
     theme_name: str = 'ocean'   # Theme name
+    bars_enabled: bool = True
     gradient_enabled: bool = False
     overflow_enabled: bool = True
+    peak_enabled: bool = False
     visible: bool = True
     boost: float = 1.0
 
@@ -58,6 +60,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self.active_layer = 0           # Which layer is being edited (0-indexed)
         self.layer_states: List[LayerState] = []  # Per-layer state
         self.layer_scalers: List[Any] = []        # Per-layer ScalingProcessor (set from main.py)
+        self.draw_order: List[int] = []           # Order to draw layers (indices into layer_states)
     
     def toggle_gradient(self) -> bool:
         """Toggle gradient mode for the active layer. Returns new state."""
@@ -77,10 +80,23 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             self.overflow_mode = not self.overflow_mode
             return self.overflow_mode
     
+    def toggle_peak(self) -> bool:
+        """Toggle peak mode for the active layer. Returns new state."""
+        if self.layers_enabled and self.layer_states:
+            self.layer_states[self.active_layer].peak_enabled = not self.layer_states[self.active_layer].peak_enabled
+            return self.layer_states[self.active_layer].peak_enabled
+        else:
+            # For non-layered mode, return False (handled by global settings.peak.enabled)
+            return False
+    
     def toggle_bars(self) -> bool:
-        """Toggle bar drawing. Returns new state."""
-        self.bars_enabled = not self.bars_enabled
-        return self.bars_enabled
+        """Toggle bar drawing for the active layer. Returns new state."""
+        if self.layers_enabled and self.layer_states:
+            self.layer_states[self.active_layer].bars_enabled = not self.layer_states[self.active_layer].bars_enabled
+            return self.layer_states[self.active_layer].bars_enabled
+        else:
+            self.bars_enabled = not self.bars_enabled
+            return self.bars_enabled
     
     def toggle_full(self) -> bool:
         """Toggle full mode. Returns new state."""
@@ -109,8 +125,10 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             state = LayerState(
                 theme=get_theme(config.theme_name, brightness_boost=brightness_boost),
                 theme_name=config.theme_name,
+                bars_enabled=config.bars_enabled,
                 gradient_enabled=config.gradient_enabled,
                 overflow_enabled=config.overflow_enabled,
+                peak_enabled=config.peak_enabled,
                 visible=config.visible,
                 boost=config.boost
             )
@@ -118,6 +136,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         
         self.layers_enabled = True
         self.active_layer = 0
+        self.draw_order = list(range(len(self.layer_states)))  # Default: [0, 1, ...]
         
         # Also set base theme to layer 0's theme for non-layered methods
         if self.layer_states:
@@ -158,6 +177,45 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             return self.layer_states[layer_index].visible
         return False
     
+    def swap_draw_order(self, direction: int) -> Optional[Tuple[int, int]]:
+        """
+        Move the active layer's draw position (z-order).
+        
+        Args:
+            direction: -1 to move toward background (drawn earlier),
+                       +1 to move toward foreground (drawn later)
+        
+        Returns:
+            Tuple of (old_position, new_position) in draw order, or None if at boundary
+        """
+        if not self.layers_enabled or not self.draw_order:
+            return None
+        
+        # Find where active_layer is in draw_order
+        try:
+            current_pos = self.draw_order.index(self.active_layer)
+        except ValueError:
+            return None
+        
+        new_pos = current_pos + direction
+        
+        # Check bounds
+        if new_pos < 0 or new_pos >= len(self.draw_order):
+            return None
+        
+        # Swap positions in draw_order
+        self.draw_order[current_pos], self.draw_order[new_pos] = \
+            self.draw_order[new_pos], self.draw_order[current_pos]
+        
+        return (current_pos, new_pos)
+    
+    def get_layer_draw_position(self, layer_index: int) -> int:
+        """Get the draw position (z-order) of a layer. 0=background, higher=foreground."""
+        try:
+            return self.draw_order.index(layer_index)
+        except ValueError:
+            return -1
+    
     def set_layer_theme(self, theme_name: str, brightness_boost: float = 1.0) -> None:
         """Set theme for the active layer."""
         if self.layers_enabled and self.layer_states:
@@ -173,19 +231,22 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             return {
                 'index': self.active_layer,
                 'theme': state.theme_name,
+                'bars': state.bars_enabled,
                 'gradient': state.gradient_enabled,
                 'overflow': state.overflow_enabled,
+                'peak': state.peak_enabled,
                 'visible': state.visible,
                 'boost': state.boost
             }
-        return {'index': 0, 'theme': 'default', 'gradient': self.gradient_mode, 'overflow': self.overflow_mode}
+        return {'index': 0, 'theme': 'default', 'bars': self.bars_enabled, 'gradient': self.gradient_mode, 'overflow': self.overflow_mode, 'peak': False}
     
     def draw(
         self,
         canvas,
         smoothed_bars: np.ndarray,
         peak_heights: Optional[np.ndarray] = None,
-        layer_bars: Optional[List[np.ndarray]] = None
+        layer_bars: Optional[List[np.ndarray]] = None,
+        layer_peaks: Optional[List[np.ndarray]] = None
     ) -> None:
         """
         Draw vertical bars with configurable gradient and overflow.
@@ -193,8 +254,9 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         Args:
             canvas: RGB matrix canvas to draw on
             smoothed_bars: Normalized bar values (0-1) for single-layer mode
-            peak_heights: Optional peak indicator positions (0-1)
+            peak_heights: Optional peak indicator positions (0-1) for single-layer mode
             layer_bars: Optional list of bar arrays for multi-layer mode
+            layer_peaks: Optional list of peak arrays for multi-layer mode
         """
         if self.theme is None and not self.layers_enabled:
             raise RuntimeError("Theme not set. Call set_theme() before draw().")
@@ -228,7 +290,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         
         # Multi-layer mode: draw each layer
         if self.layers_enabled and layer_bars is not None:
-            self._draw_layers(canvas, layer_bars, height, shadow_enabled)
+            self._draw_layers(canvas, layer_bars, layer_peaks, height, shadow_enabled)
         else:
             # Single-layer mode: original behavior
             num_bins = len(smoothed_bars)
@@ -247,16 +309,21 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self,
         canvas,
         layer_bars: List[np.ndarray],
+        layer_peaks: Optional[List[np.ndarray]],
         height: int,
         shadow_enabled: bool
     ) -> None:
         """
-        Draw all visible layers from bottom to top.
+        Draw all visible layers in draw_order (first = background, last = foreground).
         
-        Layers are drawn in order (index 0 first, then 1, etc.).
-        Higher layers overwrite lower layers where they have values.
+        Layers are drawn according to self.draw_order, which maps draw position to layer index.
+        Later-drawn layers overwrite earlier ones where they have values.
         """
-        for layer_idx, bars in enumerate(layer_bars):
+        for draw_pos, layer_idx in enumerate(self.draw_order):
+            if layer_idx >= len(layer_bars) or layer_idx >= len(self.layer_states):
+                continue
+            
+            bars = layer_bars[layer_idx]
             state = self.layer_states[layer_idx]
             
             # Skip invisible layers
@@ -265,22 +332,56 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             
             num_bins = len(bars)
             
-            for i, raw_ratio in enumerate(bars):
-                if np.isnan(raw_ratio):
-                    raw_ratio = 0.0
-                
-                column_ratio = i / num_bins
-                
-                if state.overflow_enabled:
-                    self._draw_bar_overflow_layer(
-                        canvas, i, raw_ratio, column_ratio, height,
-                        state, shadow_enabled
-                    )
-                else:
-                    self._draw_bar_standard_layer(
-                        canvas, i, raw_ratio, column_ratio, height,
-                        state, shadow_enabled
-                    )
+            # Draw bars if enabled for this layer
+            if state.bars_enabled:
+                for i, raw_ratio in enumerate(bars):
+                    if np.isnan(raw_ratio):
+                        raw_ratio = 0.0
+                    
+                    column_ratio = i / num_bins
+                    
+                    if state.overflow_enabled:
+                        self._draw_bar_overflow_layer(
+                            canvas, i, raw_ratio, column_ratio, height,
+                            state, shadow_enabled
+                        )
+                    else:
+                        self._draw_bar_standard_layer(
+                            canvas, i, raw_ratio, column_ratio, height,
+                            state, shadow_enabled
+                        )
+            
+            # Draw peaks for this layer if enabled
+            if state.peak_enabled and layer_peaks is not None and layer_idx < len(layer_peaks):
+                self._draw_layer_peaks(canvas, layer_peaks[layer_idx], state, height)
+    
+    def _draw_layer_peaks(
+        self,
+        canvas,
+        peak_heights: np.ndarray,
+        state: LayerState,
+        height: int
+    ) -> None:
+        """Draw peak indicators for a specific layer."""
+        num_bins = len(peak_heights)
+        color_mode = self.settings.peak.color_mode
+        theme = state.theme
+        
+        for i, peak_value in enumerate(peak_heights):
+            if np.isnan(peak_value):
+                peak_value = 0.0
+            
+            peak_y = max(0, int(min(peak_value, 1.0) * height))
+            y = height - 1 - peak_y
+            
+            if y < 0 or y >= height:
+                continue
+            
+            column_ratio = i / num_bins
+            reference_color = theme.get_color(peak_value, column_ratio)
+            pr, pg, pb = theme.get_peak_color(color_mode, reference_color, column_ratio)
+            
+            canvas.SetPixel(i, y, pr, pg, pb)
     
     def _draw_bar_standard_layer(
         self,

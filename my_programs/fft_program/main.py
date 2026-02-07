@@ -118,7 +118,8 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[d] Toggle debug mode (static gradient test)")
     print(f"[l] Toggle layered mode (multi-layer visualization)")
     print(f"[1/2] Select layer to edit (when layered mode on)")
-    print(f"[!/\"] Toggle layer 1/2 visibility (Shift+1/2)")
+    print(f"[!/@] Toggle layer 1/2 visibility (Shift+1/2)")
+    print(f"[</>] Move layer back/forward in draw order")
     print(f"[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
@@ -326,9 +327,13 @@ def main():
                     audio.update_frequency_range()
                     print(f"Zoom preset: {preset[0]} - {preset[1]} Hz")
                 elif key == 'b':
-                    # Toggle bars (to see peaks only)
+                    # Toggle bars for active layer (to see peaks only)
                     bars_on = visualizer.toggle_bars()
-                    print(f"Bars: {'ON' if bars_on else 'OFF (peaks only)'}")
+                    if visualizer.layers_enabled:
+                        info = visualizer.get_active_layer_info()
+                        print(f"Layer {info['index']+1} bars: {'ON' if bars_on else 'OFF'}")
+                    else:
+                        print(f"Bars: {'ON' if bars_on else 'OFF (peaks only)'}")
                 elif key == 'f':
                     # Toggle full mode (if visualizer supports it)
                     if hasattr(visualizer, 'toggle_full'):
@@ -389,6 +394,26 @@ def main():
                     if visualizer.layers_enabled:
                         visible = visualizer.toggle_layer_visibility(1)
                         print(f"Layer 2 visibility: {'ON' if visible else 'OFF'}")
+                elif key == '<':
+                    # Move active layer toward background (drawn earlier)
+                    if visualizer.layers_enabled:
+                        result = visualizer.swap_draw_order(-1)
+                        if result:
+                            old_pos, new_pos = result
+                            info = visualizer.get_active_layer_info()
+                            print(f"Layer '{info['theme']}' moved to z-position {new_pos} (toward background)")
+                        else:
+                            print("Layer already at background")
+                elif key == '>':
+                    # Move active layer toward foreground (drawn later)
+                    if visualizer.layers_enabled:
+                        result = visualizer.swap_draw_order(+1)
+                        if result:
+                            old_pos, new_pos = result
+                            info = visualizer.get_active_layer_info()
+                            print(f"Layer '{info['theme']}' moved to z-position {new_pos} (toward foreground)")
+                        else:
+                            print("Layer already at foreground")
                 elif key == 's':
                     # Toggle shadow mode
                     settings.shadow.enabled = not settings.shadow.enabled
@@ -401,9 +426,14 @@ def main():
                         visualizer.shadow_colors = None
                     print(f"Shadow: {'ON' if settings.shadow.enabled else 'OFF'}")
                 elif key == 'p':
-                    # Toggle peak mode
-                    settings.peak.enabled = not settings.peak.enabled
-                    print(f"Peak: {'ON' if settings.peak.enabled else 'OFF'}")
+                    # Toggle peak mode (for active layer if layered mode)
+                    if visualizer.layers_enabled:
+                        peak_on = visualizer.toggle_peak()
+                        info = visualizer.get_active_layer_info()
+                        print(f"Layer {info['index']+1} peak: {'ON' if peak_on else 'OFF'}")
+                    else:
+                        settings.peak.enabled = not settings.peak.enabled
+                        print(f"Peak: {'ON' if settings.peak.enabled else 'OFF'}")
                 elif key == 'P':
                     # Cycle peak color mode
                     peak_modes = ['white', 'bar', 'contrast', 'peak']
@@ -439,20 +469,23 @@ def main():
                 
                 # Process each layer through its own scaler
                 smoothed_layers = None
+                layer_peaks = None
                 if layer_bars_raw is not None and layer_scalers:
                     smoothed_layers = []
+                    layer_peaks = []
                     for i, (raw_bars, layer_scaler) in enumerate(zip(layer_bars_raw, layer_scalers)):
                         # Apply boost from layer config
                         boost = settings.layers.layers[i].boost
                         boosted = raw_bars * boost
                         
-                        # Process through layer's scaler
-                        _, layer_smoothed, _ = layer_scaler.process(
+                        # Process through layer's scaler (also tracks peaks)
+                        _, layer_smoothed, layer_peak = layer_scaler.process(
                             boosted,
                             peak_hold_frames=settings.peak.hold_frames,
                             peak_fall_speed=settings.peak.fall_speed
                         )
                         smoothed_layers.append(np.clip(layer_smoothed, 0, 1))
+                        layer_peaks.append(layer_peak)
                 
                 # Draw visualization
                 if smoothed_layers is not None and visualizer.layers_enabled:
@@ -460,7 +493,8 @@ def main():
                         app.canvas,
                         smoothed,
                         None,
-                        layer_bars=smoothed_layers
+                        layer_bars=smoothed_layers,
+                        layer_peaks=layer_peaks
                     )
                 else:
                     visualizer.draw(
@@ -469,8 +503,8 @@ def main():
                         None
                     )
                 
-                # Draw peaks as independent overlay
-                if settings.peak.enabled:
+                # Draw peaks as independent overlay (only for non-layered mode)
+                if settings.peak.enabled and not visualizer.layers_enabled:
                     draw_peaks(
                         app.canvas,
                         peaks,
