@@ -76,16 +76,13 @@ class AudioProcessor:
         # Stream (initialized in start())
         self._stream: Optional[sd.InputStream] = None
         
-        # Dual mode state (initialized in setup_dual())
-        self.dual_enabled: bool = False
-        self.dual_base_indices: Optional[List[np.ndarray]] = None
-        self.dual_base_weights: Optional[np.ndarray] = None
-        self.dual_base_empty: Optional[np.ndarray] = None
-        self.dual_top_indices: Optional[List[np.ndarray]] = None
-        self.dual_top_weights: Optional[np.ndarray] = None
-        self.dual_top_empty: Optional[np.ndarray] = None
-        self.dual_base_bins: int = 64
-        self.dual_top_bins: int = 32
+        # Layer mode state (initialized in setup_layers())
+        self.layers_enabled: bool = False
+        self.num_layers: int = 0
+        self.layer_indices: List[List[np.ndarray]] = []  # Per-layer bin indices
+        self.layer_weights: List[np.ndarray] = []        # Per-layer frequency weights
+        self.layer_empty: List[np.ndarray] = []          # Per-layer empty bin masks
+        self.layer_bins: List[int] = []                  # Per-layer bin counts
     
     def setup(self) -> int:
         """
@@ -154,85 +151,132 @@ class AudioProcessor:
         if empty_count > 0:
             print(f"Warning: {empty_count} bins have no frequency coverage.")
     
-    def setup_dual(
-        self,
-        base_range: Tuple[int, int],
-        top_range: Tuple[int, int],
-        base_bins: int = 64,
-        top_bins: int = 32
-    ) -> None:
+    def setup_layers(self, layer_configs: List) -> None:
         """
-        Set up dual-layer frequency bins for layered visualization.
+        Set up multi-layer frequency bins for layered visualization.
         
         Args:
-            base_range: (min, max) frequency for base/background layer
-            top_range: (min, max) frequency for top/foreground layer
-            base_bins: Number of bins for base layer
-            top_bins: Number of bins for top layer
+            layer_configs: List of LayerConfig objects defining each layer
         """
         if self.freqs is None:
-            raise RuntimeError("Call setup() before setup_dual()")
+            raise RuntimeError("Call setup() before setup_layers()")
         
-        self.dual_enabled = True
-        self.dual_base_bins = base_bins
-        self.dual_top_bins = top_bins
+        self.layers_enabled = True
+        self.num_layers = len(layer_configs)
+        self.layer_indices = []
+        self.layer_weights = []
+        self.layer_empty = []
+        self.layer_bins = []
         
-        # Create base layer bins
-        base_masks, base_weights = self._create_frequency_bins(
-            self.freqs, base_range[0], base_range[1], base_bins
-        )
-        self.dual_base_indices = [np.where(mask)[0] for mask in base_masks]
-        self.dual_base_weights = base_weights
-        self.dual_base_empty = np.array([len(idx) == 0 for idx in self.dual_base_indices])
+        # Global frequency range for proper weighting (20Hz - 20kHz audible spectrum)
+        global_fmin = 20.0
+        global_fmax = 20000.0
         
-        # Create top layer bins with GLOBAL frequency weighting
-        # (not relative to top_range, but to overall audible spectrum)
-        top_masks, top_weights = self._create_frequency_bins_global(
-            self.freqs, top_range[0], top_range[1], top_bins
-        )
-        self.dual_top_indices = [np.where(mask)[0] for mask in top_masks]
-        self.dual_top_weights = top_weights
-        self.dual_top_empty = np.array([len(idx) == 0 for idx in self.dual_top_indices])
-        
-        # Report setup
-        base_empty = np.sum(self.dual_base_empty)
-        top_empty = np.sum(self.dual_top_empty)
-        print(f"Dual mode: Base {base_range[0]}-{base_range[1]}Hz ({base_bins} bins, {base_empty} empty)")
-        print(f"           Top {top_range[0]}-{top_range[1]}Hz ({top_bins} bins, {top_empty} empty)")
+        for i, config in enumerate(layer_configs):
+            fmin, fmax = config.freq_range
+            bins = config.bins
+            
+            # Use global weighting for all layers to ensure proper treble boost
+            masks, weights = self._create_frequency_bins_global(
+                self.freqs, fmin, fmax, bins, global_fmin, global_fmax
+            )
+            
+            indices = [np.where(mask)[0] for mask in masks]
+            empty = np.array([len(idx) == 0 for idx in indices])
+            
+            self.layer_indices.append(indices)
+            self.layer_weights.append(weights)
+            self.layer_empty.append(empty)
+            self.layer_bins.append(bins)
+            
+            empty_count = np.sum(empty)
+            print(f"Layer {i} '{config.name}': {fmin}-{fmax}Hz ({bins} bins, {empty_count} empty)")
     
-    def get_dual_fft_magnitudes(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    def get_layer_magnitudes(self) -> Optional[List[np.ndarray]]:
         """
-        Compute FFT and return magnitudes for both dual layers.
+        Compute FFT and return magnitudes for all layers.
         
         Returns:
-            Tuple of (base_bars, top_bars) arrays, or None if no data
+            List of magnitude arrays (one per layer), or None if no data
         """
         if not self.have_data or self.latest_samples is None:
             return None
         
-        if not self.dual_enabled:
+        if not self.layers_enabled:
             return None
         
-        # Apply window and compute FFT with zero-padding (same as get_fft_magnitudes)
+        # Apply window and compute FFT with zero-padding (done ONCE)
         x = self.latest_samples * self.window
         X = np.fft.rfft(x, n=self.audio_settings.fft_size)
         mag = np.abs(X)
         
-        # Compute base layer bars
-        base_bars = np.zeros(self.dual_base_bins, dtype=np.float32)
-        for i, indices in enumerate(self.dual_base_indices):
-            if len(indices) > 0:
-                base_bars[i] = np.mean(mag[indices]) * self.dual_base_weights[i]
-        base_bars = np.maximum(0, base_bars - self.sensitivity_settings.noise_floor)
+        # Extract bins for each layer (cheap O(bins) per layer)
+        layer_bars = []
+        for layer_idx in range(self.num_layers):
+            indices_list = self.layer_indices[layer_idx]
+            weights = self.layer_weights[layer_idx]
+            num_bins = self.layer_bins[layer_idx]
+            
+            bars = np.zeros(num_bins, dtype=np.float32)
+            for i, indices in enumerate(indices_list):
+                if len(indices) > 0:
+                    bars[i] = np.mean(mag[indices]) * weights[i]
+            
+            bars = np.maximum(0, bars - self.sensitivity_settings.noise_floor)
+            layer_bars.append(bars)
         
-        # Compute top layer bars
-        top_bars = np.zeros(self.dual_top_bins, dtype=np.float32)
-        for i, indices in enumerate(self.dual_top_indices):
-            if len(indices) > 0:
-                top_bars[i] = np.mean(mag[indices]) * self.dual_top_weights[i]
-        top_bars = np.maximum(0, top_bars - self.sensitivity_settings.noise_floor)
+        return layer_bars
+    
+    def _create_frequency_bins_global(
+        self,
+        freqs: np.ndarray,
+        fmin: float,
+        fmax: float,
+        n: int,
+        global_fmin: float = 20.0,
+        global_fmax: float = 20000.0
+    ) -> tuple:
+        """
+        Create frequency bins with GLOBAL frequency weighting.
         
-        return base_bars, top_bars
+        Uses the full audible spectrum (20Hz-20kHz) as reference for weight calculation,
+        not just the layer's frequency range. This ensures treble frequencies get
+        proper boost even when extracted as a separate layer.
+        
+        Args:
+            freqs: Array of FFT frequency values
+            fmin: Minimum frequency for this layer
+            fmax: Maximum frequency for this layer
+            n: Number of bins
+            global_fmin: Global minimum frequency (20Hz)
+            global_fmax: Global maximum frequency (20kHz)
+        
+        Returns:
+            Tuple of (bin_masks, bin_weights)
+        """
+        edges = np.logspace(np.log10(fmin), np.log10(fmax), n + 1)
+        bins = []
+        weights = []
+        
+        low_weight = self.sensitivity_settings.low_freq_weight
+        high_weight = self.sensitivity_settings.high_freq_weight
+        
+        for i in range(n):
+            mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
+            bins.append(mask)
+            
+            # Calculate center frequency
+            center_freq = (edges[i] + edges[i + 1]) / 2
+            
+            # GLOBAL normalized position: 0 at 20Hz, 1 at 20kHz (log scale)
+            norm_pos = np.log10(center_freq / global_fmin) / np.log10(global_fmax / global_fmin)
+            norm_pos = np.clip(norm_pos, 0, 1)
+            
+            # Weight curve: interpolate from low to high weight
+            weight = low_weight + (high_weight - low_weight) * (norm_pos ** 1.5)
+            weights.append(weight)
+        
+        return bins, np.array(weights)
     
     def _create_frequency_bins(
         self,

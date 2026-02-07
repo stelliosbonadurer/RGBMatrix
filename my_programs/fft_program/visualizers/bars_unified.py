@@ -2,18 +2,33 @@
 Unified bar graph visualizer for FFT display.
 
 Combines standard and overflow modes with gradient toggle.
+Supports multi-layer visualization with independent settings per layer.
+
 Press 'g' to toggle gradient mode, 'o' to toggle overflow mode, 'f' for full mode, 'd' for debug mode.
+Press '1'/'2' to select layer for editing, Shift+1/2 to toggle layer visibility.
 """
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
+from dataclasses import dataclass
 import numpy as np  # type: ignore
 
 from .base import BaseVisualizer
 from themes import get_theme, list_themes
 
 
+@dataclass
+class LayerState:
+    """Runtime state for a single layer."""
+    theme: Any = None           # Theme instance
+    theme_name: str = 'ocean'   # Theme name
+    gradient_enabled: bool = False
+    overflow_enabled: bool = True
+    visible: bool = True
+    boost: float = 1.0
+
+
 class BarsUnifiedVisualizer(BaseVisualizer):
     """
-    Unified bar graph visualization with configurable modes.
+    Unified bar graph visualization with configurable modes and multi-layer support.
     
     Modes:
     - Gradient OFF (uniform): One color per bar based on total height
@@ -22,35 +37,45 @@ class BarsUnifiedVisualizer(BaseVisualizer):
     - Overflow ON: Bars can exceed height with layered colors
     - Full: Full screen with gradient scaled by FFT data
     - Debug: Full screen showing static color gradient for each column
+    - Layered: Multiple independent frequency layers with their own settings
     """
     
     name = "bars"
-    description = "Vertical bars (g=gradient, o=overflow, f=full, d=debug, l=dual)"
+    description = "Vertical bars (g=gradient, o=overflow, f=full, d=debug, 1/2=layer select, Shift+1/2=toggle)"
     
     def __init__(self, width: int, height: int, settings):
         super().__init__(width, height, settings)
-        # Modes - default from settings
+        
+        # Single-layer mode defaults (used when layers not enabled)
         self.gradient_mode = getattr(settings, 'gradient_enabled', False)
         self.overflow_mode = settings.overflow.enabled
         self.bars_enabled = True  # Can be toggled to show only peaks
-        self.full_mode = False  # Full mode: entire screen lit, gradient scaled by FFT
-        self.debug_mode = False  # Debug mode shows full screen gradient
+        self.full_mode = False    # Full mode: entire screen lit, gradient scaled by FFT
+        self.debug_mode = False   # Debug mode shows full screen gradient
         
-        # Dual mode settings
-        self.dual_enabled = False
-        self.top_color_options = ['overflow'] + list_themes()
-        self.top_color_index = 0
-        self.top_theme = None  # None = use overflow colors
+        # Multi-layer mode state
+        self.layers_enabled = False
+        self.active_layer = 0           # Which layer is being edited (0-indexed)
+        self.layer_states: List[LayerState] = []  # Per-layer state
+        self.layer_scalers: List[Any] = []        # Per-layer ScalingProcessor (set from main.py)
     
     def toggle_gradient(self) -> bool:
-        """Toggle gradient mode. Returns new state."""
-        self.gradient_mode = not self.gradient_mode
-        return self.gradient_mode
+        """Toggle gradient mode for the active layer. Returns new state."""
+        if self.layers_enabled and self.layer_states:
+            self.layer_states[self.active_layer].gradient_enabled = not self.layer_states[self.active_layer].gradient_enabled
+            return self.layer_states[self.active_layer].gradient_enabled
+        else:
+            self.gradient_mode = not self.gradient_mode
+            return self.gradient_mode
     
     def toggle_overflow(self) -> bool:
-        """Toggle overflow mode. Returns new state."""
-        self.overflow_mode = not self.overflow_mode
-        return self.overflow_mode
+        """Toggle overflow mode for the active layer. Returns new state."""
+        if self.layers_enabled and self.layer_states:
+            self.layer_states[self.active_layer].overflow_enabled = not self.layer_states[self.active_layer].overflow_enabled
+            return self.layer_states[self.active_layer].overflow_enabled
+        else:
+            self.overflow_mode = not self.overflow_mode
+            return self.overflow_mode
     
     def toggle_bars(self) -> bool:
         """Toggle bar drawing. Returns new state."""
@@ -67,62 +92,129 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self.debug_mode = not self.debug_mode
         return self.debug_mode
     
-    def toggle_dual(self) -> bool:
-        """Toggle dual mode. Returns new state."""
-        self.dual_enabled = not self.dual_enabled
-        return self.dual_enabled
+    # =========================================================================
+    # Layer Management
+    # =========================================================================
     
-    def cycle_top_color(self, forward: bool = True) -> str:
-        """Cycle top layer color mode. Returns new mode name."""
-        if forward:
-            self.top_color_index = (self.top_color_index + 1) % len(self.top_color_options)
-        else:
-            self.top_color_index = (self.top_color_index - 1) % len(self.top_color_options)
+    def setup_layers(self, layer_configs: List, brightness_boost: float = 1.0) -> None:
+        """
+        Initialize layer states from layer configurations.
         
-        mode = self.top_color_options[self.top_color_index]
-        if mode == 'overflow':
-            self.top_theme = None
-        else:
-            self.top_theme = get_theme(mode)
-        return mode
+        Args:
+            layer_configs: List of LayerConfig from settings
+            brightness_boost: Brightness multiplier for themes
+        """
+        self.layer_states = []
+        for config in layer_configs:
+            state = LayerState(
+                theme=get_theme(config.theme_name, brightness_boost=brightness_boost),
+                theme_name=config.theme_name,
+                gradient_enabled=config.gradient_enabled,
+                overflow_enabled=config.overflow_enabled,
+                visible=config.visible,
+                boost=config.boost
+            )
+            self.layer_states.append(state)
+        
+        self.layers_enabled = True
+        self.active_layer = 0
+        
+        # Also set base theme to layer 0's theme for non-layered methods
+        if self.layer_states:
+            self.theme = self.layer_states[0].theme
     
-    def get_top_color_mode(self) -> str:
-        """Get current top layer color mode name."""
-        return self.top_color_options[self.top_color_index]
+    def toggle_layers(self) -> bool:
+        """Toggle layered mode. Returns new state."""
+        self.layers_enabled = not self.layers_enabled
+        return self.layers_enabled
+    
+    def select_layer(self, layer_index: int) -> bool:
+        """
+        Select which layer to edit.
+        
+        Args:
+            layer_index: 0-based layer index
+            
+        Returns:
+            True if layer was selected, False if invalid index
+        """
+        if 0 <= layer_index < len(self.layer_states):
+            self.active_layer = layer_index
+            return True
+        return False
+    
+    def toggle_layer_visibility(self, layer_index: int) -> bool:
+        """
+        Toggle visibility of a specific layer.
+        
+        Args:
+            layer_index: 0-based layer index
+            
+        Returns:
+            New visibility state
+        """
+        if 0 <= layer_index < len(self.layer_states):
+            self.layer_states[layer_index].visible = not self.layer_states[layer_index].visible
+            return self.layer_states[layer_index].visible
+        return False
+    
+    def set_layer_theme(self, theme_name: str, brightness_boost: float = 1.0) -> None:
+        """Set theme for the active layer."""
+        if self.layers_enabled and self.layer_states:
+            self.layer_states[self.active_layer].theme = get_theme(theme_name, brightness_boost=brightness_boost)
+            self.layer_states[self.active_layer].theme_name = theme_name
+        else:
+            self.theme = get_theme(theme_name, brightness_boost=brightness_boost)
+    
+    def get_active_layer_info(self) -> Dict[str, Any]:
+        """Get info about the currently active layer."""
+        if self.layers_enabled and self.layer_states:
+            state = self.layer_states[self.active_layer]
+            return {
+                'index': self.active_layer,
+                'theme': state.theme_name,
+                'gradient': state.gradient_enabled,
+                'overflow': state.overflow_enabled,
+                'visible': state.visible,
+                'boost': state.boost
+            }
+        return {'index': 0, 'theme': 'default', 'gradient': self.gradient_mode, 'overflow': self.overflow_mode}
     
     def draw(
         self,
         canvas,
         smoothed_bars: np.ndarray,
         peak_heights: Optional[np.ndarray] = None,
-        top_bars: Optional[np.ndarray] = None
+        layer_bars: Optional[List[np.ndarray]] = None
     ) -> None:
         """
         Draw vertical bars with configurable gradient and overflow.
         
         Args:
             canvas: RGB matrix canvas to draw on
-            smoothed_bars: Normalized bar values (0-1, can exceed if overflow enabled)
+            smoothed_bars: Normalized bar values (0-1) for single-layer mode
             peak_heights: Optional peak indicator positions (0-1)
-            top_bars: Optional top layer bars for dual mode (0-1)
+            layer_bars: Optional list of bar arrays for multi-layer mode
         """
-        if self.theme is None:
+        if self.theme is None and not self.layers_enabled:
             raise RuntimeError("Theme not set. Call set_theme() before draw().")
         
         canvas.Clear()
         
-        num_bins = len(smoothed_bars)
         height = self.height
         shadow_enabled = self.settings.shadow.enabled and self.shadow_buffer is not None
         
         # Debug mode: draw full screen with static color gradient per column
         if self.debug_mode:
+            num_bins = len(smoothed_bars) if layer_bars is None else len(layer_bars[0])
             self._draw_debug(canvas, num_bins, height)
             return
         
         # Full mode: draw full screen with gradient scaled by FFT data
         if self.full_mode:
-            self._draw_full(canvas, smoothed_bars, num_bins, height)
+            num_bins = len(smoothed_bars) if layer_bars is None else len(layer_bars[0])
+            bars_to_use = smoothed_bars if layer_bars is None else layer_bars[0]
+            self._draw_full(canvas, bars_to_use, num_bins, height)
             return
         
         # Decay shadow buffer once per frame (vectorized)
@@ -134,66 +226,163 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         if not self.bars_enabled:
             return
         
-        for i, raw_ratio in enumerate(smoothed_bars):
-            # Guard against NaN values
-            if np.isnan(raw_ratio):
-                raw_ratio = 0.0
-            
-            column_ratio = i / num_bins
-            
-            if self.overflow_mode:
-                self._draw_bar_overflow(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
-            else:
-                self._draw_bar_standard(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
-        
-        # Draw top layer if dual mode enabled and data provided
-        if self.dual_enabled and top_bars is not None:
-            self._draw_top_layer(canvas, top_bars, height)
+        # Multi-layer mode: draw each layer
+        if self.layers_enabled and layer_bars is not None:
+            self._draw_layers(canvas, layer_bars, height, shadow_enabled)
+        else:
+            # Single-layer mode: original behavior
+            num_bins = len(smoothed_bars)
+            for i, raw_ratio in enumerate(smoothed_bars):
+                if np.isnan(raw_ratio):
+                    raw_ratio = 0.0
+                
+                column_ratio = i / num_bins
+                
+                if self.overflow_mode:
+                    self._draw_bar_overflow(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
+                else:
+                    self._draw_bar_standard(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
     
-    def _draw_top_layer(self, canvas, bars: np.ndarray, height: int) -> None:
-        """Draw the top (foreground) layer bars for dual mode."""
-        num_top_bins = len(bars)
-        bar_width = self.width // num_top_bins
+    def _draw_layers(
+        self,
+        canvas,
+        layer_bars: List[np.ndarray],
+        height: int,
+        shadow_enabled: bool
+    ) -> None:
+        """
+        Draw all visible layers from bottom to top.
         
-        for i, bar_value in enumerate(bars):
-            if np.isnan(bar_value):
-                bar_value = 0.0
+        Layers are drawn in order (index 0 first, then 1, etc.).
+        Higher layers overwrite lower layers where they have values.
+        """
+        for layer_idx, bars in enumerate(layer_bars):
+            state = self.layer_states[layer_idx]
             
-            bar_value = min(1.0, max(0.0, bar_value))
-            bar_height = int(bar_value * height)
-            
-            if bar_height <= 0:
+            # Skip invisible layers
+            if not state.visible:
                 continue
             
-            x_start = i * bar_width
-            x_end = min(x_start + bar_width, self.width)
-            column_ratio = i / num_top_bins
+            num_bins = len(bars)
             
-            for x in range(x_start, x_end):
-                if self.gradient_mode:
-                    for j in range(bar_height):
-                        y = height - 1 - j
-                        height_ratio = j / height
-                        r, g, b = self._get_top_color(height_ratio, column_ratio)
-                        canvas.SetPixel(x, y, r, g, b)
+            for i, raw_ratio in enumerate(bars):
+                if np.isnan(raw_ratio):
+                    raw_ratio = 0.0
+                
+                column_ratio = i / num_bins
+                
+                if state.overflow_enabled:
+                    self._draw_bar_overflow_layer(
+                        canvas, i, raw_ratio, column_ratio, height,
+                        state, shadow_enabled
+                    )
                 else:
-                    r, g, b = self._get_top_color(bar_value, column_ratio)
-                    for j in range(bar_height):
-                        y = height - 1 - j
-                        canvas.SetPixel(x, y, r, g, b)
+                    self._draw_bar_standard_layer(
+                        canvas, i, raw_ratio, column_ratio, height,
+                        state, shadow_enabled
+                    )
     
-    def _get_top_color(self, height_ratio: float, column_ratio: float) -> tuple:
-        """Get color for top layer pixel (overflow or alternate theme)."""
-        if self.top_theme is not None:
-            return self.top_theme.get_color(height_ratio, column_ratio)
+    def _draw_bar_standard_layer(
+        self,
+        canvas,
+        col: int,
+        bar_value: float,
+        column_ratio: float,
+        height: int,
+        state: LayerState,
+        shadow_enabled: bool
+    ) -> None:
+        """Draw a standard bar for a specific layer (clamped to display height)."""
+        bar_value = min(1.0, max(0.0, bar_value))
+        bar_height = int(bar_value * height)
+        
+        if bar_height <= 0:
+            return
+        
+        theme = state.theme
+        
+        if state.gradient_enabled:
+            # Per-pixel gradient
+            for j in range(bar_height):
+                y = height - 1 - j
+                height_ratio = j / height
+                r, g, b = theme.get_color(height_ratio, column_ratio)
+                canvas.SetPixel(col, y, r, g, b)
+                
+                if shadow_enabled:
+                    self.shadow_buffer[col, j] = 1.0
+                    self.shadow_colors[col, j] = (r, g, b)
         else:
-            return self.theme.get_overflow_color(
-                layer=1,
-                height_ratio=height_ratio,
-                column_ratio=column_ratio,
-                frame=self.frame_count,
-                bar_ratio=height_ratio
+            # Uniform color based on bar height
+            r, g, b = theme.get_color(bar_value, column_ratio)
+            
+            for j in range(bar_height):
+                y = height - 1 - j
+                canvas.SetPixel(col, y, r, g, b)
+                
+                if shadow_enabled:
+                    self.shadow_buffer[col, j] = 1.0
+                    self.shadow_colors[col, j] = (r, g, b)
+    
+    def _draw_bar_overflow_layer(
+        self,
+        canvas,
+        col: int,
+        raw_ratio: float,
+        column_ratio: float,
+        height: int,
+        state: LayerState,
+        shadow_enabled: bool
+    ) -> None:
+        """Draw a bar with overflow stacking for a specific layer."""
+        overflow = self.settings.overflow
+        total_pixels = int(raw_ratio * height * overflow.multiplier)
+        
+        if total_pixels <= 0:
+            return
+        
+        theme = state.theme
+        
+        if state.gradient_enabled:
+            visible_pixels = min(total_pixels, height)
+            top_layer = (total_pixels - 1) // height
+            remainder = total_pixels % height
+            boundary = remainder if remainder > 0 else height
+            
+            for j in range(visible_pixels):
+                y = height - 1 - j
+                layer_ratio = j / height
+                
+                if j < boundary:
+                    layer = top_layer
+                else:
+                    layer = top_layer - 1
+                
+                r, g, b = theme.get_overflow_color(
+                    layer, layer_ratio, column_ratio, self.frame_count, raw_ratio
+                )
+                canvas.SetPixel(col, y, r, g, b)
+                
+                if shadow_enabled:
+                    self.shadow_buffer[col, j] = 1.0
+                    self.shadow_colors[col, j] = (r, g, b)
+        else:
+            top_layer = (total_pixels - 1) // height
+            top_position_in_layer = (total_pixels - 1) % height
+            top_ratio = top_position_in_layer / height
+            
+            r, g, b = theme.get_overflow_color(
+                top_layer, top_ratio, column_ratio, self.frame_count, raw_ratio
             )
+            
+            visible_pixels = min(total_pixels, height)
+            for j in range(visible_pixels):
+                y = height - 1 - j
+                canvas.SetPixel(col, y, r, g, b)
+                
+                if shadow_enabled:
+                    self.shadow_buffer[col, j] = 1.0
+                    self.shadow_colors[col, j] = (r, g, b)
     
     def _draw_full(self, canvas, smoothed_bars: np.ndarray, num_bins: int, height: int) -> None:
         """

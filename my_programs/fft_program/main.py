@@ -116,8 +116,9 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[o] Toggle overflow mode (bars can exceed height)")
     print(f"[f] Toggle full mode (full screen with crossfade)")
     print(f"[d] Toggle debug mode (static gradient test)")
-    print(f"[l] Toggle dual mode (bass background + treble foreground)")
-    print(f"[L] Cycle dual mode top layer color (overflow → themes)")
+    print(f"[l] Toggle layered mode (multi-layer visualization)")
+    print(f"[1/2] Select layer to edit (when layered mode on)")
+    print(f"[!/\"] Toggle layer 1/2 visibility (Shift+1/2)")
     print(f"[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
@@ -237,23 +238,28 @@ def main():
             brightness_boost=settings.color.brightness_boost
         )
         
-        # Setup dual mode if using dual visualizer
-        top_scaler = None
-        if visualizer_name == 'bars_dual' or settings.dual.enabled:
-            audio.setup_dual(
-                base_range=settings.dual.base_range,
-                top_range=settings.dual.top_range,
-                base_bins=settings.dual.base_bins,
-                top_bins=settings.dual.top_bins
+        # Setup layers if enabled in settings
+        layer_scalers = []
+        if settings.layers.enabled:
+            # Setup audio processor for layers
+            audio.setup_layers(settings.layers.layers)
+            
+            # Setup visualizer for layers
+            visualizer.setup_layers(
+                settings.layers.layers,
+                brightness_boost=settings.color.brightness_boost
             )
-            # Create second scaler for top layer smoothing
-            top_scaler = ScalingProcessor(
-                scaling_settings=settings.scaling,
-                sensitivity_settings=settings.sensitivity,
-                smoothing_settings=settings.smoothing,
-                num_bins=settings.dual.top_bins,
-                frame_rate=1.0 / settings.audio.sleep_delay
-            )
+            
+            # Create a scaler for each layer
+            for layer_config in settings.layers.layers:
+                layer_scaler = ScalingProcessor(
+                    scaling_settings=settings.scaling,
+                    sensitivity_settings=settings.sensitivity,
+                    smoothing_settings=settings.smoothing,
+                    num_bins=layer_config.bins,
+                    frame_rate=1.0 / settings.audio.sleep_delay
+                )
+                layer_scalers.append(layer_scaler)
         
     except Exception as e:
         print(f"Initialization error: {e}")
@@ -268,23 +274,47 @@ def main():
                 # Check for keyboard input
                 key = keyboard.get_key()
                 if key == 't':
-                    # Next theme
+                    # Next theme (for active layer if layered mode)
                     new_theme = theme_cycler.next_theme()
-                    visualizer.set_theme(new_theme)
-                    print(f"Theme: {theme_cycler.current_theme_name}")
+                    if visualizer.layers_enabled:
+                        visualizer.set_layer_theme(
+                            theme_cycler.current_theme_name,
+                            brightness_boost=settings.color.brightness_boost
+                        )
+                        info = visualizer.get_active_layer_info()
+                        print(f"Layer {info['index']+1} theme: {theme_cycler.current_theme_name}")
+                    else:
+                        visualizer.set_theme(new_theme)
+                        print(f"Theme: {theme_cycler.current_theme_name}")
                 elif key == 'T':
-                    # Previous theme
+                    # Previous theme (for active layer if layered mode)
                     new_theme = theme_cycler.prev_theme()
-                    visualizer.set_theme(new_theme)
-                    print(f"Theme: {theme_cycler.current_theme_name}")
+                    if visualizer.layers_enabled:
+                        visualizer.set_layer_theme(
+                            theme_cycler.current_theme_name,
+                            brightness_boost=settings.color.brightness_boost
+                        )
+                        info = visualizer.get_active_layer_info()
+                        print(f"Layer {info['index']+1} theme: {theme_cycler.current_theme_name}")
+                    else:
+                        visualizer.set_theme(new_theme)
+                        print(f"Theme: {theme_cycler.current_theme_name}")
                 elif key == 'g':
-                    # Toggle gradient mode
+                    # Toggle gradient mode (for active layer if layered mode)
                     gradient_on = visualizer.toggle_gradient()
-                    print(f"Gradient: {'ON (per-pixel)' if gradient_on else 'OFF (uniform)'}")
+                    if visualizer.layers_enabled:
+                        info = visualizer.get_active_layer_info()
+                        print(f"Layer {info['index']+1} gradient: {'ON' if gradient_on else 'OFF'}")
+                    else:
+                        print(f"Gradient: {'ON (per-pixel)' if gradient_on else 'OFF (uniform)'}")
                 elif key == 'o':
-                    # Toggle overflow mode
+                    # Toggle overflow mode (for active layer if layered mode)
                     overflow_on = visualizer.toggle_overflow()
-                    print(f"Overflow: {'ON' if overflow_on else 'OFF'}")
+                    if visualizer.layers_enabled:
+                        info = visualizer.get_active_layer_info()
+                        print(f"Layer {info['index']+1} overflow: {'ON' if overflow_on else 'OFF'}")
+                    else:
+                        print(f"Overflow: {'ON' if overflow_on else 'OFF'}")
                 elif key == 'r':
                     # Next zoom preset
                     preset = settings.frequency.next_zoom_preset()
@@ -310,32 +340,55 @@ def main():
                         debug_on = visualizer.toggle_debug()
                         print(f"Debug: {'ON (static gradient)' if debug_on else 'OFF'}")
                 elif key == 'l':
-                    # Toggle dual mode (if visualizer supports it)
-                    if hasattr(visualizer, 'toggle_dual'):
-                        dual_on = visualizer.toggle_dual()
-                        print(f"Dual mode: {'ON' if dual_on else 'OFF'}")
-                        # Setup dual bins and scaler if not already done
-                        if dual_on and not audio.dual_enabled:
-                            audio.setup_dual(
-                                base_range=settings.dual.base_range,
-                                top_range=settings.dual.top_range,
-                                base_bins=settings.dual.base_bins,
-                                top_bins=settings.dual.top_bins
+                    # Toggle layered mode
+                    if hasattr(visualizer, 'toggle_layers'):
+                        layers_on = visualizer.toggle_layers()
+                        print(f"Layered mode: {'ON' if layers_on else 'OFF'}")
+                        
+                        # Setup layers if not already done
+                        if layers_on and not audio.layers_enabled:
+                            audio.setup_layers(settings.layers.layers)
+                            visualizer.setup_layers(
+                                settings.layers.layers,
+                                brightness_boost=settings.color.brightness_boost
                             )
-                        # Create top_scaler if needed
-                        if dual_on and top_scaler is None:
-                            top_scaler = ScalingProcessor(
-                                scaling_settings=settings.scaling,
-                                sensitivity_settings=settings.sensitivity,
-                                smoothing_settings=settings.smoothing,
-                                num_bins=settings.dual.top_bins,
-                                frame_rate=1.0 / settings.audio.sleep_delay
-                            )
-                elif key == 'L':
-                    # Cycle top layer color mode (if visualizer supports it)
-                    if hasattr(visualizer, 'cycle_top_color'):
-                        mode = visualizer.cycle_top_color()
-                        print(f"Top layer color: {mode}")
+                            # Create scalers for each layer if needed
+                            if not layer_scalers:
+                                for layer_config in settings.layers.layers:
+                                    layer_scaler = ScalingProcessor(
+                                        scaling_settings=settings.scaling,
+                                        sensitivity_settings=settings.sensitivity,
+                                        smoothing_settings=settings.smoothing,
+                                        num_bins=layer_config.bins,
+                                        frame_rate=1.0 / settings.audio.sleep_delay
+                                    )
+                                    layer_scalers.append(layer_scaler)
+                        
+                        if layers_on:
+                            info = visualizer.get_active_layer_info()
+                            print(f"  Editing layer {info['index']+1}: {info['theme']}")
+                elif key == '1':
+                    # Select layer 1 (index 0)
+                    if visualizer.layers_enabled:
+                        visualizer.select_layer(0)
+                        info = visualizer.get_active_layer_info()
+                        print(f"Editing layer 1: {info['theme']} (g={info['gradient']}, o={info['overflow']})")
+                elif key == '2':
+                    # Select layer 2 (index 1)
+                    if visualizer.layers_enabled:
+                        visualizer.select_layer(1)
+                        info = visualizer.get_active_layer_info()
+                        print(f"Editing layer 2: {info['theme']} (g={info['gradient']}, o={info['overflow']})")
+                elif key == '!':
+                    # Toggle layer 1 visibility (Shift+1)
+                    if visualizer.layers_enabled:
+                        visible = visualizer.toggle_layer_visibility(0)
+                        print(f"Layer 1 visibility: {'ON' if visible else 'OFF'}")
+                elif key == '@':
+                    # Toggle layer 2 visibility (Shift+2)
+                    if visualizer.layers_enabled:
+                        visible = visualizer.toggle_layer_visibility(1)
+                        print(f"Layer 2 visibility: {'ON' if visible else 'OFF'}")
                 elif key == 's':
                     # Toggle shadow mode
                     settings.shadow.enabled = not settings.shadow.enabled
@@ -367,52 +420,53 @@ def main():
                 
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()
-                top_bars = None
+                layer_bars_raw = None
                 
-                # Get dual mode data if enabled
-                if audio.dual_enabled and hasattr(visualizer, 'dual_enabled') and visualizer.dual_enabled:
-                    dual_data = audio.get_dual_fft_magnitudes()
-                    if dual_data is not None:
-                        bars, top_bars = dual_data
+                # Get layer data if enabled
+                if audio.layers_enabled and visualizer.layers_enabled:
+                    layer_bars_raw = audio.get_layer_magnitudes()
                 
-                if bars is None:
+                if bars is None and layer_bars_raw is None:
                     time.sleep(0.001)
                     continue
                 
-                # Process through scaler
+                # Process through scaler (for single-layer mode or fallback)
                 normalized, smoothed, peaks = scaler.process(
-                    bars,
+                    bars if bars is not None else np.zeros(app.width),
                     peak_hold_frames=settings.peak.hold_frames,
                     peak_fall_speed=settings.peak.fall_speed
                 )
                 
-                # Process top bars if present - use dedicated scaler for smoothing
-                smoothed_top = None
-                if top_bars is not None and top_scaler is not None:
-                    # Apply boost before processing
-                    top_boost = settings.dual.top_boost
-                    boosted_top = top_bars * top_boost
-                    # Process through top scaler for smoothing
-                    _, smoothed_top, _ = top_scaler.process(
-                        boosted_top,
-                        peak_hold_frames=settings.peak.hold_frames,
-                        peak_fall_speed=settings.peak.fall_speed
-                    )
-                    smoothed_top = np.clip(smoothed_top, 0, 1)
+                # Process each layer through its own scaler
+                smoothed_layers = None
+                if layer_bars_raw is not None and layer_scalers:
+                    smoothed_layers = []
+                    for i, (raw_bars, layer_scaler) in enumerate(zip(layer_bars_raw, layer_scalers)):
+                        # Apply boost from layer config
+                        boost = settings.layers.layers[i].boost
+                        boosted = raw_bars * boost
+                        
+                        # Process through layer's scaler
+                        _, layer_smoothed, _ = layer_scaler.process(
+                            boosted,
+                            peak_hold_frames=settings.peak.hold_frames,
+                            peak_fall_speed=settings.peak.fall_speed
+                        )
+                        smoothed_layers.append(np.clip(layer_smoothed, 0, 1))
                 
                 # Draw visualization
-                if hasattr(visualizer, 'dual_enabled') and top_bars is not None:
+                if smoothed_layers is not None and visualizer.layers_enabled:
                     visualizer.draw(
                         app.canvas,
                         smoothed,
                         None,
-                        top_bars=smoothed_top
+                        layer_bars=smoothed_layers
                     )
                 else:
                     visualizer.draw(
                         app.canvas,
                         smoothed,
-                        None  # Peaks are drawn separately now
+                        None
                     )
                 
                 # Draw peaks as independent overlay

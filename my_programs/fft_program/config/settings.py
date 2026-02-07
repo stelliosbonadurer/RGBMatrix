@@ -4,7 +4,7 @@ Configuration settings for FFT visualizer.
 All user-configurable parameters are defined here as dataclasses.
 """
 from dataclasses import dataclass, field
-from typing import Tuple, Literal
+from typing import Tuple, Literal, List
 
 
 @dataclass
@@ -135,22 +135,54 @@ class ShadowSettings:
 
 
 @dataclass
-class DualModeSettings:
-    """Dual-layer visualization settings."""
-    enabled: bool = False
+class LayerConfig:
+    """
+    Configuration for a single visualization layer.
     
-    # Base layer (background) - bass/mid frequencies
-    base_range: Tuple[int, int] = (80, 1950)
-    base_bins: int = 64  # Number of bins for base layer
+    Each layer has its own frequency range, theme, and display settings.
+    """
+    name: str                              # Layer identifier (e.g., 'bass', 'treble')
+    freq_range: Tuple[int, int]            # (min_freq, max_freq) in Hz
+    theme_name: str = 'ocean'              # Theme for this layer
+    gradient_enabled: bool = False         # Per-pixel gradient vs uniform color
+    overflow_enabled: bool = True          # Allow bars to exceed height
+    visible: bool = True                   # Whether layer is drawn
+    boost: float = 1.0                     # Sensitivity multiplier
+    bins: int = 64                         # Number of frequency bins (always 64 for now)
+
+
+@dataclass
+class LayeredVisualizerSettings:
+    """
+    Multi-layer visualization settings.
     
-    # Top layer (foreground) - higher frequencies  
-    top_range: Tuple[int, int] = (2000, 6300)
-    top_bins: int = 64  # Number of bins for top layer
-    top_boost: float = 3.0  # Sensitivity boost for top layer (treble has less energy)
+    Layers are drawn in order (index 0 = bottom/background, higher = foreground).
+    """
+    enabled: bool = False                  # True = use layered mode
     
-    # Top layer color mode: 'overflow' uses base theme's overflow colors,
-    # or specify a theme name to use that theme
-    top_color_mode: str = 'warm'  # 'overflow' or theme name like 'warm', 'ocean'
+    # Default two layers: bass/mid background, treble foreground
+    layers: List[LayerConfig] = field(default_factory=lambda: [
+        LayerConfig(
+            name='bass',
+            freq_range=(80, 1950),
+            theme_name='ocean',
+            gradient_enabled=False,
+            overflow_enabled=True,
+            visible=True,
+            boost=1.0
+        ),
+        LayerConfig(
+            name='treble',
+            freq_range=(2000, 6300),
+            theme_name='warm',
+            gradient_enabled=False,
+            overflow_enabled=False,
+            visible=True,
+            boost=3.0
+        ),
+    ])
+    
+    active_layer: int = 0  # Which layer is currently being edited (0 or 1)
 
 
 @dataclass
@@ -165,7 +197,7 @@ class Settings:
     scaling: ScalingSettings = field(default_factory=ScalingSettings)
     smoothing: SmoothingSettings = field(default_factory=SmoothingSettings)
     shadow: ShadowSettings = field(default_factory=ShadowSettings)
-    dual: DualModeSettings = field(default_factory=DualModeSettings)
+    layers: LayeredVisualizerSettings = field(default_factory=LayeredVisualizerSettings)
 
 
 def get_default_settings() -> Settings:
