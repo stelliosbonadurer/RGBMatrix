@@ -2,7 +2,7 @@
 Unified bar graph visualizer for FFT display.
 
 Combines standard and overflow modes with gradient toggle.
-Press 'g' to toggle gradient mode, 'o' to toggle overflow mode.
+Press 'g' to toggle gradient mode, 'o' to toggle overflow mode, 'd' for debug mode.
 """
 from typing import Optional, Tuple
 import numpy as np  # type: ignore
@@ -19,10 +19,11 @@ class BarsUnifiedVisualizer(BaseVisualizer):
     - Gradient ON: Per-pixel gradient within each bar
     - Overflow OFF: Bars clamped to display height
     - Overflow ON: Bars can exceed height with layered colors
+    - Debug: Full screen showing color gradient for each column
     """
     
     name = "bars"
-    description = "Vertical bars (g=gradient, o=overflow)"
+    description = "Vertical bars (g=gradient, o=overflow, d=debug)"
     
     def __init__(self, width: int, height: int, settings):
         super().__init__(width, height, settings)
@@ -30,6 +31,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self.gradient_mode = getattr(settings, 'gradient_enabled', False)
         self.overflow_mode = settings.overflow.enabled
         self.bars_enabled = True  # Can be toggled to show only peaks
+        self.debug_mode = False  # Debug mode shows full screen gradient
     
     def toggle_gradient(self) -> bool:
         """Toggle gradient mode. Returns new state."""
@@ -45,6 +47,11 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         """Toggle bar drawing. Returns new state."""
         self.bars_enabled = not self.bars_enabled
         return self.bars_enabled
+    
+    def toggle_debug(self) -> bool:
+        """Toggle debug mode. Returns new state."""
+        self.debug_mode = not self.debug_mode
+        return self.debug_mode
     
     def draw(
         self,
@@ -69,6 +76,11 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         height = self.height
         shadow_enabled = self.settings.shadow.enabled and self.shadow_buffer is not None
         
+        # Debug mode: draw full screen with color gradient per column
+        if self.debug_mode:
+            self._draw_debug(canvas, num_bins, height)
+            return
+        
         # Decay shadow buffer once per frame (vectorized)
         if shadow_enabled:
             self.decay_shadow()
@@ -89,6 +101,27 @@ class BarsUnifiedVisualizer(BaseVisualizer):
                 self._draw_bar_overflow(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
             else:
                 self._draw_bar_standard(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
+    
+    def _draw_debug(self, canvas, num_bins: int, height: int) -> None:
+        """
+        Draw debug mode: full screen with color gradient per column.
+        
+        Each column shows the full color scale from base color (bottom)
+        to top color (top), using non-gradient mode coloring (uniform
+        color based on height ratio).
+        """
+        for col in range(num_bins):
+            column_ratio = col / num_bins
+            
+            for j in range(height):
+                y = height - 1 - j
+                # height_ratio represents how high this pixel is (0=bottom, 1=top)
+                height_ratio = j / (height - 1) if height > 1 else 0.0
+                
+                # Use the same coloring as non-gradient mode:
+                # color is based on total bar height, which equals height_ratio here
+                r, g, b = self.theme.get_color(height_ratio, column_ratio)
+                canvas.SetPixel(col, y, r, g, b)
     
     def _draw_shadows(self, canvas, height: int) -> None:
         """Draw shadow pixels using sparse iteration."""

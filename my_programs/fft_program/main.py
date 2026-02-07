@@ -265,6 +265,11 @@ def main():
                     # Toggle bars (to see peaks only)
                     bars_on = visualizer.toggle_bars()
                     print(f"Bars: {'ON' if bars_on else 'OFF (peaks only)'}")
+                elif key == 'd':
+                    # Toggle debug mode (if visualizer supports it)
+                    if hasattr(visualizer, 'toggle_debug'):
+                        debug_on = visualizer.toggle_debug()
+                        print(f"Debug: {'ON (full screen gradient)' if debug_on else 'OFF'}")
                 elif key == 's':
                     # Toggle shadow mode
                     settings.shadow.enabled = not settings.shadow.enabled
