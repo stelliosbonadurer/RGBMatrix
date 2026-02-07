@@ -261,6 +261,16 @@ def main():
                     # Toggle overflow mode
                     overflow_on = visualizer.toggle_overflow()
                     print(f"Overflow: {'ON' if overflow_on else 'OFF'}")
+                elif key == 'r':
+                    # Next zoom preset
+                    preset = settings.frequency.next_zoom_preset()
+                    audio.update_frequency_range()
+                    print(f"Zoom preset: {preset[0]} - {preset[1]} Hz")
+                elif key == 'R':
+                    # Previous zoom preset
+                    preset = settings.frequency.prev_zoom_preset()
+                    audio.update_frequency_range()
+                    print(f"Zoom preset: {preset[0]} - {preset[1]} Hz")
                 elif key == 'b':
                     # Toggle bars (to see peaks only)
                     bars_on = visualizer.toggle_bars()

@@ -24,8 +24,24 @@ class FrequencySettings:
     min_freq: int = 60       # Lower bound for full range
     max_freq: int = 14000    # Upper bound for full range
     zoom_mode: bool = True   # True = use zoom frequencies
-    zoom_min_freq: int = 100  # Zoom mode lower bound
-    zoom_max_freq: int = 6300 # Zoom mode upper bound
+    
+    # Zoom presets: list of (min, max) tuples - cycle with r/R
+    zoom_presets: list = field(default_factory=lambda: [
+        (100, 6300),   # Wide range
+        (80, 1950),    # Bass/mid focus
+        (60,14000),    # Full Range
+    ])
+    zoom_preset_index: int = 0  # Current preset index
+    
+    @property
+    def zoom_min_freq(self) -> int:
+        """Get current zoom minimum frequency from preset."""
+        return self.zoom_presets[self.zoom_preset_index][0]
+    
+    @property
+    def zoom_max_freq(self) -> int:
+        """Get current zoom maximum frequency from preset."""
+        return self.zoom_presets[self.zoom_preset_index][1]
     
     @property
     def active_min_freq(self) -> int:
@@ -36,6 +52,16 @@ class FrequencySettings:
     def active_max_freq(self) -> int:
         """Get the currently active maximum frequency."""
         return self.zoom_max_freq if self.zoom_mode else self.max_freq
+    
+    def next_zoom_preset(self) -> Tuple[int, int]:
+        """Cycle to next zoom preset. Returns (min, max) tuple."""
+        self.zoom_preset_index = (self.zoom_preset_index + 1) % len(self.zoom_presets)
+        return self.zoom_presets[self.zoom_preset_index]
+    
+    def prev_zoom_preset(self) -> Tuple[int, int]:
+        """Cycle to previous zoom preset. Returns (min, max) tuple."""
+        self.zoom_preset_index = (self.zoom_preset_index - 1) % len(self.zoom_presets)
+        return self.zoom_presets[self.zoom_preset_index]
 
 
 @dataclass

@@ -121,6 +121,28 @@ class AudioProcessor:
         
         return self.sample_rate
     
+    def update_frequency_range(self) -> None:
+        """
+        Update frequency bins after changing frequency settings.
+        
+        Call this after modifying freq_settings (e.g., changing zoom preset).
+        """
+        freq_min = self.freq_settings.active_min_freq
+        freq_max = self.freq_settings.active_max_freq
+        
+        self.bin_masks, self.bin_weights = self._create_frequency_bins(
+            self.freqs, freq_min, freq_max, self.num_bins
+        )
+        
+        # Re-compute bin indices
+        self.bin_indices = [np.where(mask)[0] for mask in self.bin_masks]
+        self.empty_bins = np.array([len(idx) == 0 for idx in self.bin_indices])
+        
+        # Warn about empty bins
+        empty_count = np.sum(self.empty_bins)
+        if empty_count > 0:
+            print(f"Warning: {empty_count} bins have no frequency coverage.")
+    
     def _create_frequency_bins(
         self,
         freqs: np.ndarray,
