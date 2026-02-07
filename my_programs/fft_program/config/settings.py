@@ -15,7 +15,7 @@ class AudioSettings:
     block_size: int = 512   # Actual audio samples per callback (~23ms at 44kHz)
     fft_size: int = 8192    # Zero-pad to this size for better freq resolution
     channel: int = 0
-    sleep_delay: float = 0.01  # Delay between frames (lower = smoother but more CPU)
+    sleep_delay: float = 0.005  # Delay between frames (lower = smoother but more CPU)
 
 
 @dataclass
@@ -59,8 +59,7 @@ class PeakSettings:
 @dataclass
 class ColorSettings:
     """Color theme configuration."""
-    # Available themes: 'warm', 'ocean', 'forest', 'sunset', 'rainbow',
-    #                   'neon', 'aurora', 'plasma'
+    # Available themes: 'warm', 'ocean', 'forest', 'rainbow'
     theme: str = 'ocean'
     brightness_boost: float = 1.0  # Overall brightness multiplier
 
