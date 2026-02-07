@@ -162,7 +162,7 @@ class LayeredVisualizerSettings:
     """
     enabled: bool = False                  # True = use layered mode
     
-    # Default two layers: bass/mid background, treble foreground
+    # Default three layers: bass, mid-treble, high-treble
     layers: List[LayerConfig] = field(default_factory=lambda: [
         LayerConfig(
             name='bass',
@@ -174,17 +174,26 @@ class LayeredVisualizerSettings:
             boost=1.0
         ),
         LayerConfig(
-            name='treble',
-            freq_range=(2000, 6300),
+            name='mid',
+            freq_range=(2000, 4000),
             theme_name='warm',
             gradient_enabled=False,
             overflow_enabled=False,
             visible=True,
-            boost=3.0
+            boost=2.5
         ),
+        # LayerConfig(
+        #     name='treble',
+        #     freq_range=(4000, 8000),
+        #     theme_name='forest',
+        #     gradient_enabled=False,
+        #     overflow_enabled=False,
+        #     visible=True,
+        #     boost=4.0
+        # ),
     ])
     
-    active_layer: int = 0  # Which layer is currently being edited (0 or 1)
+    active_layer: int = 0  # Which layer is currently being edited
 
 
 @dataclass

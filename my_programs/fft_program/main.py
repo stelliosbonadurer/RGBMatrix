@@ -117,8 +117,8 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[f] Toggle full mode (full screen with crossfade)")
     print(f"[d] Toggle debug mode (static gradient test)")
     print(f"[l] Toggle layered mode (multi-layer visualization)")
-    print(f"[1/2] Select layer to edit (when layered mode on)")
-    print(f"[!/@] Toggle layer 1/2 visibility (Shift+1/2)")
+    print(f"[1/2/3] Select layer to edit (when layered mode on)")
+    print(f"[!/@/#] Toggle layer 1/2/3 visibility (Shift+1/2/3)")
     print(f"[</>] Move layer back/forward in draw order")
     print(f"[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
@@ -394,6 +394,22 @@ def main():
                     if visualizer.layers_enabled:
                         visible = visualizer.toggle_layer_visibility(1)
                         print(f"Layer 2 visibility: {'ON' if visible else 'OFF'}")
+                elif key == '3':
+                    # Select layer 3 (index 2)
+                    if visualizer.layers_enabled:
+                        if visualizer.select_layer(2):
+                            info = visualizer.get_active_layer_info()
+                            print(f"Editing layer 3: {info['theme']} (g={info['gradient']}, o={info['overflow']})")
+                        else:
+                            print("Layer 3 not available")
+                elif key == '#':
+                    # Toggle layer 3 visibility (Shift+3)
+                    if visualizer.layers_enabled:
+                        visible = visualizer.toggle_layer_visibility(2)
+                        if visible is not False:
+                            print(f"Layer 3 visibility: {'ON' if visible else 'OFF'}")
+                        else:
+                            print("Layer 3 not available")
                 elif key == '<':
                     # Move active layer toward background (drawn earlier)
                     if visualizer.layers_enabled:
@@ -467,13 +483,20 @@ def main():
                     peak_fall_speed=settings.peak.fall_speed
                 )
                 
-                # Process each layer through its own scaler
+                # Process each layer through its own scaler (skip invisible layers)
                 smoothed_layers = None
                 layer_peaks = None
-                if layer_bars_raw is not None and layer_scalers:
+                if layer_bars_raw is not None and layer_scalers and visualizer.layers_enabled:
                     smoothed_layers = []
                     layer_peaks = []
                     for i, (raw_bars, layer_scaler) in enumerate(zip(layer_bars_raw, layer_scalers)):
+                        # Skip processing if layer is not visible
+                        if i < len(visualizer.layer_states) and not visualizer.layer_states[i].visible:
+                            # Append None placeholders to maintain index alignment
+                            smoothed_layers.append(None)
+                            layer_peaks.append(None)
+                            continue
+                        
                         # Apply boost from layer config
                         boost = settings.layers.layers[i].boost
                         boosted = raw_bars * boost

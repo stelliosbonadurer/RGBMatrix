@@ -318,15 +318,21 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         
         Layers are drawn according to self.draw_order, which maps draw position to layer index.
         Later-drawn layers overwrite earlier ones where they have values.
+        Layers with None bar data are skipped (invisible layers aren't processed).
         """
         for draw_pos, layer_idx in enumerate(self.draw_order):
             if layer_idx >= len(layer_bars) or layer_idx >= len(self.layer_states):
                 continue
             
             bars = layer_bars[layer_idx]
+            
+            # Skip if bar data is None (layer was skipped in processing)
+            if bars is None:
+                continue
+            
             state = self.layer_states[layer_idx]
             
-            # Skip invisible layers
+            # Skip invisible layers (redundant but safe)
             if not state.visible:
                 continue
             
@@ -351,9 +357,11 @@ class BarsUnifiedVisualizer(BaseVisualizer):
                             state, shadow_enabled
                         )
             
-            # Draw peaks for this layer if enabled
+            # Draw peaks for this layer if enabled (check for None peak data)
             if state.peak_enabled and layer_peaks is not None and layer_idx < len(layer_peaks):
-                self._draw_layer_peaks(canvas, layer_peaks[layer_idx], state, height)
+                peak_data = layer_peaks[layer_idx]
+                if peak_data is not None:
+                    self._draw_layer_peaks(canvas, peak_data, state, height)
     
     def _draw_layer_peaks(
         self,
