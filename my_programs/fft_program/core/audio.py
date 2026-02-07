@@ -279,58 +279,6 @@ class AudioProcessor:
         
         return bins, np.array(weights)
     
-    def _create_frequency_bins_global(
-        self,
-        freqs: np.ndarray,
-        fmin: float,
-        fmax: float,
-        n: int
-    ) -> tuple:
-        """
-        Create frequency bins with weights based on GLOBAL frequency position.
-        
-        Unlike _create_frequency_bins which interpolates weights from low to high
-        across the given range, this uses the global audible spectrum (20-20000Hz)
-        to determine weights. This ensures high frequencies get appropriate boost
-        even when they're at the "bottom" of a sub-range.
-        
-        Args:
-            freqs: Array of FFT frequency values
-            fmin: Minimum frequency of sub-range
-            fmax: Maximum frequency of sub-range
-            n: Number of bins
-        
-        Returns:
-            Tuple of (bin_masks, bin_weights)
-        """
-        # Global reference range (full audible spectrum)
-        global_fmin = 20.0
-        global_fmax = 20000.0
-        
-        edges = np.logspace(np.log10(fmin), np.log10(fmax), n + 1)
-        bins = []
-        weights = []
-        
-        low_weight = self.sensitivity_settings.low_freq_weight
-        high_weight = self.sensitivity_settings.high_freq_weight
-        
-        for i in range(n):
-            mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
-            bins.append(mask)
-            
-            # Calculate center frequency
-            center_freq = (edges[i] + edges[i + 1]) / 2
-            
-            # Normalized position relative to GLOBAL spectrum (not sub-range)
-            norm_pos = np.log10(center_freq / global_fmin) / np.log10(global_fmax / global_fmin)
-            norm_pos = np.clip(norm_pos, 0, 1)
-            
-            # Weight curve: interpolate from low to high weight
-            weight = low_weight + (high_weight - low_weight) * (norm_pos ** 1.5)
-            weights.append(weight)
-        
-        return bins, np.array(weights)
-    
     def _audio_callback(self, indata, frames, time_info, status):
         """Callback function for audio input stream."""
         if status:
