@@ -4,10 +4,11 @@ Unified bar graph visualizer for FFT display.
 Combines standard and overflow modes with gradient toggle.
 Press 'g' to toggle gradient mode, 'o' to toggle overflow mode, 'f' for full mode, 'd' for debug mode.
 """
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import numpy as np  # type: ignore
 
 from .base import BaseVisualizer
+from themes import get_theme, list_themes
 
 
 class BarsUnifiedVisualizer(BaseVisualizer):
@@ -24,7 +25,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
     """
     
     name = "bars"
-    description = "Vertical bars (g=gradient, o=overflow, f=full, d=debug)"
+    description = "Vertical bars (g=gradient, o=overflow, f=full, d=debug, l=dual)"
     
     def __init__(self, width: int, height: int, settings):
         super().__init__(width, height, settings)
@@ -34,6 +35,12 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self.bars_enabled = True  # Can be toggled to show only peaks
         self.full_mode = False  # Full mode: entire screen lit, gradient scaled by FFT
         self.debug_mode = False  # Debug mode shows full screen gradient
+        
+        # Dual mode settings
+        self.dual_enabled = False
+        self.top_color_options = ['overflow'] + list_themes()
+        self.top_color_index = 0
+        self.top_theme = None  # None = use overflow colors
     
     def toggle_gradient(self) -> bool:
         """Toggle gradient mode. Returns new state."""
@@ -60,11 +67,35 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self.debug_mode = not self.debug_mode
         return self.debug_mode
     
+    def toggle_dual(self) -> bool:
+        """Toggle dual mode. Returns new state."""
+        self.dual_enabled = not self.dual_enabled
+        return self.dual_enabled
+    
+    def cycle_top_color(self, forward: bool = True) -> str:
+        """Cycle top layer color mode. Returns new mode name."""
+        if forward:
+            self.top_color_index = (self.top_color_index + 1) % len(self.top_color_options)
+        else:
+            self.top_color_index = (self.top_color_index - 1) % len(self.top_color_options)
+        
+        mode = self.top_color_options[self.top_color_index]
+        if mode == 'overflow':
+            self.top_theme = None
+        else:
+            self.top_theme = get_theme(mode)
+        return mode
+    
+    def get_top_color_mode(self) -> str:
+        """Get current top layer color mode name."""
+        return self.top_color_options[self.top_color_index]
+    
     def draw(
         self,
         canvas,
         smoothed_bars: np.ndarray,
-        peak_heights: Optional[np.ndarray] = None
+        peak_heights: Optional[np.ndarray] = None,
+        top_bars: Optional[np.ndarray] = None
     ) -> None:
         """
         Draw vertical bars with configurable gradient and overflow.
@@ -73,6 +104,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             canvas: RGB matrix canvas to draw on
             smoothed_bars: Normalized bar values (0-1, can exceed if overflow enabled)
             peak_heights: Optional peak indicator positions (0-1)
+            top_bars: Optional top layer bars for dual mode (0-1)
         """
         if self.theme is None:
             raise RuntimeError("Theme not set. Call set_theme() before draw().")
@@ -113,6 +145,55 @@ class BarsUnifiedVisualizer(BaseVisualizer):
                 self._draw_bar_overflow(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
             else:
                 self._draw_bar_standard(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
+        
+        # Draw top layer if dual mode enabled and data provided
+        if self.dual_enabled and top_bars is not None:
+            self._draw_top_layer(canvas, top_bars, height)
+    
+    def _draw_top_layer(self, canvas, bars: np.ndarray, height: int) -> None:
+        """Draw the top (foreground) layer bars for dual mode."""
+        num_top_bins = len(bars)
+        bar_width = self.width // num_top_bins
+        
+        for i, bar_value in enumerate(bars):
+            if np.isnan(bar_value):
+                bar_value = 0.0
+            
+            bar_value = min(1.0, max(0.0, bar_value))
+            bar_height = int(bar_value * height)
+            
+            if bar_height <= 0:
+                continue
+            
+            x_start = i * bar_width
+            x_end = min(x_start + bar_width, self.width)
+            column_ratio = i / num_top_bins
+            
+            for x in range(x_start, x_end):
+                if self.gradient_mode:
+                    for j in range(bar_height):
+                        y = height - 1 - j
+                        height_ratio = j / height
+                        r, g, b = self._get_top_color(height_ratio, column_ratio)
+                        canvas.SetPixel(x, y, r, g, b)
+                else:
+                    r, g, b = self._get_top_color(bar_value, column_ratio)
+                    for j in range(bar_height):
+                        y = height - 1 - j
+                        canvas.SetPixel(x, y, r, g, b)
+    
+    def _get_top_color(self, height_ratio: float, column_ratio: float) -> tuple:
+        """Get color for top layer pixel (overflow or alternate theme)."""
+        if self.top_theme is not None:
+            return self.top_theme.get_color(height_ratio, column_ratio)
+        else:
+            return self.theme.get_overflow_color(
+                layer=1,
+                height_ratio=height_ratio,
+                column_ratio=column_ratio,
+                frame=self.frame_count,
+                bar_ratio=height_ratio
+            )
     
     def _draw_full(self, canvas, smoothed_bars: np.ndarray, num_bins: int, height: int) -> None:
         """

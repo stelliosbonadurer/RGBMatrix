@@ -135,6 +135,25 @@ class ShadowSettings:
 
 
 @dataclass
+class DualModeSettings:
+    """Dual-layer visualization settings."""
+    enabled: bool = False
+    
+    # Base layer (background) - bass/mid frequencies
+    base_range: Tuple[int, int] = (80, 1950)
+    base_bins: int = 64  # Number of bins for base layer
+    
+    # Top layer (foreground) - higher frequencies  
+    top_range: Tuple[int, int] = (2000, 6300)
+    top_bins: int = 64  # Number of bins for top layer
+    top_boost: float = 3.0  # Sensitivity boost for top layer (treble has less energy)
+    
+    # Top layer color mode: 'overflow' uses base theme's overflow colors,
+    # or specify a theme name to use that theme
+    top_color_mode: str = 'warm'  # 'overflow' or theme name like 'warm', 'ocean'
+
+
+@dataclass
 class Settings:
     """Master settings container."""
     audio: AudioSettings = field(default_factory=AudioSettings)
@@ -146,6 +165,7 @@ class Settings:
     scaling: ScalingSettings = field(default_factory=ScalingSettings)
     smoothing: SmoothingSettings = field(default_factory=SmoothingSettings)
     shadow: ShadowSettings = field(default_factory=ShadowSettings)
+    dual: DualModeSettings = field(default_factory=DualModeSettings)
 
 
 def get_default_settings() -> Settings:

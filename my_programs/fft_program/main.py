@@ -26,6 +26,7 @@ import time
 import select
 import tty
 import termios
+import numpy as np  # type: ignore
 
 # Ensure the fft_program package is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -113,10 +114,15 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     
     print(f"\n[g] Toggle gradient mode (per-pixel vs uniform color)")
     print(f"[o] Toggle overflow mode (bars can exceed height)")
+    print(f"[f] Toggle full mode (full screen with crossfade)")
+    print(f"[d] Toggle debug mode (static gradient test)")
+    print(f"[l] Toggle dual mode (bass background + treble foreground)")
+    print(f"[L] Cycle dual mode top layer color (overflow → themes)")
     print(f"[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
     print(f"[P] Cycle peak color: white → bar → contrast → peak")
+    print(f"[r/R] Cycle zoom presets (frequency range)")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
 
@@ -231,6 +237,24 @@ def main():
             brightness_boost=settings.color.brightness_boost
         )
         
+        # Setup dual mode if using dual visualizer
+        top_scaler = None
+        if visualizer_name == 'bars_dual' or settings.dual.enabled:
+            audio.setup_dual(
+                base_range=settings.dual.base_range,
+                top_range=settings.dual.top_range,
+                base_bins=settings.dual.base_bins,
+                top_bins=settings.dual.top_bins
+            )
+            # Create second scaler for top layer smoothing
+            top_scaler = ScalingProcessor(
+                scaling_settings=settings.scaling,
+                sensitivity_settings=settings.sensitivity,
+                smoothing_settings=settings.smoothing,
+                num_bins=settings.dual.top_bins,
+                frame_rate=1.0 / settings.audio.sleep_delay
+            )
+        
     except Exception as e:
         print(f"Initialization error: {e}")
         sys.exit(1)
@@ -285,12 +309,38 @@ def main():
                     if hasattr(visualizer, 'toggle_debug'):
                         debug_on = visualizer.toggle_debug()
                         print(f"Debug: {'ON (static gradient)' if debug_on else 'OFF'}")
+                elif key == 'l':
+                    # Toggle dual mode (if visualizer supports it)
+                    if hasattr(visualizer, 'toggle_dual'):
+                        dual_on = visualizer.toggle_dual()
+                        print(f"Dual mode: {'ON' if dual_on else 'OFF'}")
+                        # Setup dual bins and scaler if not already done
+                        if dual_on and not audio.dual_enabled:
+                            audio.setup_dual(
+                                base_range=settings.dual.base_range,
+                                top_range=settings.dual.top_range,
+                                base_bins=settings.dual.base_bins,
+                                top_bins=settings.dual.top_bins
+                            )
+                        # Create top_scaler if needed
+                        if dual_on and top_scaler is None:
+                            top_scaler = ScalingProcessor(
+                                scaling_settings=settings.scaling,
+                                sensitivity_settings=settings.sensitivity,
+                                smoothing_settings=settings.smoothing,
+                                num_bins=settings.dual.top_bins,
+                                frame_rate=1.0 / settings.audio.sleep_delay
+                            )
+                elif key == 'L':
+                    # Cycle top layer color mode (if visualizer supports it)
+                    if hasattr(visualizer, 'cycle_top_color'):
+                        mode = visualizer.cycle_top_color()
+                        print(f"Top layer color: {mode}")
                 elif key == 's':
                     # Toggle shadow mode
                     settings.shadow.enabled = not settings.shadow.enabled
                     # Re-initialize shadow buffers in visualizer
                     if settings.shadow.enabled:
-                        import numpy as np # type: ignore
                         visualizer.shadow_buffer = np.zeros((app.width, app.height), dtype=np.float32)
                         visualizer.shadow_colors = np.zeros((app.width, app.height, 3), dtype=np.uint8)
                     else:
@@ -317,6 +367,13 @@ def main():
                 
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()
+                top_bars = None
+                
+                # Get dual mode data if enabled
+                if audio.dual_enabled and hasattr(visualizer, 'dual_enabled') and visualizer.dual_enabled:
+                    dual_data = audio.get_dual_fft_magnitudes()
+                    if dual_data is not None:
+                        bars, top_bars = dual_data
                 
                 if bars is None:
                     time.sleep(0.001)
@@ -329,12 +386,34 @@ def main():
                     peak_fall_speed=settings.peak.fall_speed
                 )
                 
+                # Process top bars if present - use dedicated scaler for smoothing
+                smoothed_top = None
+                if top_bars is not None and top_scaler is not None:
+                    # Apply boost before processing
+                    top_boost = settings.dual.top_boost
+                    boosted_top = top_bars * top_boost
+                    # Process through top scaler for smoothing
+                    _, smoothed_top, _ = top_scaler.process(
+                        boosted_top,
+                        peak_hold_frames=settings.peak.hold_frames,
+                        peak_fall_speed=settings.peak.fall_speed
+                    )
+                    smoothed_top = np.clip(smoothed_top, 0, 1)
+                
                 # Draw visualization
-                visualizer.draw(
-                    app.canvas,
-                    smoothed,
-                    None  # Peaks are drawn separately now
-                )
+                if hasattr(visualizer, 'dual_enabled') and top_bars is not None:
+                    visualizer.draw(
+                        app.canvas,
+                        smoothed,
+                        None,
+                        top_bars=smoothed_top
+                    )
+                else:
+                    visualizer.draw(
+                        app.canvas,
+                        smoothed,
+                        None  # Peaks are drawn separately now
+                    )
                 
                 # Draw peaks as independent overlay
                 if settings.peak.enabled:
