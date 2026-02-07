@@ -2,7 +2,7 @@
 Unified bar graph visualizer for FFT display.
 
 Combines standard and overflow modes with gradient toggle.
-Press 'g' to toggle gradient mode, 'o' to toggle overflow mode, 'd' for debug mode.
+Press 'g' to toggle gradient mode, 'o' to toggle overflow mode, 'f' for full mode, 'd' for debug mode.
 """
 from typing import Optional, Tuple
 import numpy as np  # type: ignore
@@ -19,11 +19,12 @@ class BarsUnifiedVisualizer(BaseVisualizer):
     - Gradient ON: Per-pixel gradient within each bar
     - Overflow OFF: Bars clamped to display height
     - Overflow ON: Bars can exceed height with layered colors
-    - Debug: Full screen showing color gradient for each column
+    - Full: Full screen with gradient scaled by FFT data
+    - Debug: Full screen showing static color gradient for each column
     """
     
     name = "bars"
-    description = "Vertical bars (g=gradient, o=overflow, d=debug)"
+    description = "Vertical bars (g=gradient, o=overflow, f=full, d=debug)"
     
     def __init__(self, width: int, height: int, settings):
         super().__init__(width, height, settings)
@@ -31,6 +32,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         self.gradient_mode = getattr(settings, 'gradient_enabled', False)
         self.overflow_mode = settings.overflow.enabled
         self.bars_enabled = True  # Can be toggled to show only peaks
+        self.full_mode = False  # Full mode: entire screen lit, gradient scaled by FFT
         self.debug_mode = False  # Debug mode shows full screen gradient
     
     def toggle_gradient(self) -> bool:
@@ -47,6 +49,11 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         """Toggle bar drawing. Returns new state."""
         self.bars_enabled = not self.bars_enabled
         return self.bars_enabled
+    
+    def toggle_full(self) -> bool:
+        """Toggle full mode. Returns new state."""
+        self.full_mode = not self.full_mode
+        return self.full_mode
     
     def toggle_debug(self) -> bool:
         """Toggle debug mode. Returns new state."""
@@ -76,9 +83,14 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         height = self.height
         shadow_enabled = self.settings.shadow.enabled and self.shadow_buffer is not None
         
-        # Debug mode: draw full screen with color gradient per column
+        # Debug mode: draw full screen with static color gradient per column
         if self.debug_mode:
             self._draw_debug(canvas, num_bins, height)
+            return
+        
+        # Full mode: draw full screen with gradient scaled by FFT data
+        if self.full_mode:
+            self._draw_full(canvas, smoothed_bars, num_bins, height)
             return
         
         # Decay shadow buffer once per frame (vectorized)
@@ -102,9 +114,57 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             else:
                 self._draw_bar_standard(canvas, i, raw_ratio, column_ratio, height, shadow_enabled)
     
+    def _draw_full(self, canvas, smoothed_bars: np.ndarray, num_bins: int, height: int) -> None:
+        """
+        Draw full mode: entire screen lit with crossfade at bar height.
+        
+        - Top color from top of screen down to (bar_height + 10)
+        - Crossfade zone from (bar_height + 10) to (bar_height - 10)
+        - Base color from (bar_height - 10) to bottom
+        """
+        fade_radius = 10  # pixels above and below bar height for crossfade
+        
+        # Clean and clamp bar values once
+        bar_values = np.nan_to_num(smoothed_bars, nan=0.0)
+        bar_values = np.clip(bar_values, 0.0, 1.0)
+        
+        for col in range(num_bins):
+            bar_value = bar_values[col]
+            column_ratio = col / num_bins
+            
+            # Get top and base colors for this column
+            top_r, top_g, top_b = self.theme.get_color(1.0, column_ratio)
+            base_r, base_g, base_b = self.theme.get_color(0.0, column_ratio)
+            
+            # Calculate bar height in pixels (j index, 0=bottom)
+            bar_height_px = int(bar_value * (height - 1))
+            
+            # Define crossfade zone boundaries (in j coordinates, 0=bottom)
+            fade_top = bar_height_px + fade_radius  # above this = top color
+            fade_bottom = bar_height_px - fade_radius  # below this = base color
+            
+            for j in range(height):
+                y = height - 1 - j  # screen y coordinate
+                
+                if j >= fade_top:
+                    # Above crossfade zone: top color
+                    r, g, b = top_r, top_g, top_b
+                elif j <= fade_bottom:
+                    # Below crossfade zone: base color
+                    r, g, b = base_r, base_g, base_b
+                else:
+                    # In crossfade zone: blend between base and top
+                    # fade_t goes from 0 (at fade_bottom) to 1 (at fade_top)
+                    fade_t = (j - fade_bottom) / (fade_top - fade_bottom)
+                    r = int(base_r + (top_r - base_r) * fade_t)
+                    g = int(base_g + (top_g - base_g) * fade_t)
+                    b = int(base_b + (top_b - base_b) * fade_t)
+                
+                canvas.SetPixel(col, y, r, g, b)
+    
     def _draw_debug(self, canvas, num_bins: int, height: int) -> None:
         """
-        Draw debug mode: full screen with color gradient per column.
+        Draw debug mode: full screen with static color gradient per column.
         
         Each column shows the full color scale from base color (bottom)
         to top color (top), using non-gradient mode coloring (uniform
