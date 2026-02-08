@@ -1,6 +1,6 @@
 # Visualizers Guide
 
-The visualizer renders FFT data to the LED matrix. There is one unified visualizer with multiple toggleable modes.
+The visualizer renders FFT data to the LED matrix. There is one unified visualizer with multiple toggleable modes, including multi-layer support.
 
 ## Display Modes
 
@@ -11,6 +11,9 @@ The unified `bars` visualizer supports these toggleable modes:
 | `g` | Gradient | ON = per-pixel color gradient, OFF = uniform color per bar |
 | `o` | Overflow | ON = bars can exceed height with layered colors, OFF = clamped to height |
 | `b` | Bars | ON = show bars, OFF = show only peaks |
+| `f` | Full | ON = entire screen lit with crossfade at bar height |
+| `d` | Debug | ON = static gradient test pattern |
+| `l` | Layered | ON = multi-layer mode with independent frequency bands |
 
 ## Mode Combinations
 
@@ -20,6 +23,42 @@ The unified `bars` visualizer supports these toggleable modes:
 | ON | OFF | Per-pixel gradient within bar, clamped to height |
 | OFF | ON | Uniform color based on total bar height (color changes as bar grows) |
 | ON | ON | Per-pixel gradient with overflow layer colors |
+
+## Multi-Layer Mode
+
+Press `l` to enable layered mode. Each layer has its own:
+
+- **Frequency range** (e.g., bass 80-1950 Hz, mid 2000-4000 Hz)
+- **Theme** (ocean, warm, forest, etc.)
+- **Settings** (gradient, overflow, peaks, bars, visibility)
+- **Scaler** (independent smoothing and normalization)
+
+### Layer Controls
+
+| Key | Action |
+| --- | ------ |
+| `1` / `2` / `3` | Select layer for editing |
+| `!` / `@` / `#` | Toggle layer visibility (Shift+1/2/3) |
+| `<` / `>` | Move layer backward/forward in draw order |
+| `t` / `T` | Change theme for selected layer |
+| `g` | Toggle gradient for selected layer |
+| `o` | Toggle overflow for selected layer |
+| `p` | Toggle peaks for selected layer |
+| `b` | Toggle bars for selected layer |
+
+### Draw Order
+
+Layers are drawn in `draw_order` sequence:
+- First layer drawn = background (can be covered by later layers)
+- Last layer drawn = foreground (always visible on top)
+
+Use `<` and `>` to reorder which layer appears in front.
+
+### Performance
+
+- Invisible layers (`visible=False`) skip processing entirely
+- FFT is computed once and shared by all layers
+- Each layer has its own scaler to preserve independent dynamics
 
 ## Command Line Options
 
@@ -130,7 +169,9 @@ def draw(
     self,
     canvas,
     smoothed_bars: np.ndarray,
-    peak_heights: Optional[np.ndarray] = None
+    peak_heights: Optional[np.ndarray] = None,
+    layer_bars: Optional[List[np.ndarray]] = None,
+    layer_peaks: Optional[List[np.ndarray]] = None
 ) -> None:
 ```
 
@@ -139,10 +180,12 @@ __Parameters:__
 - `canvas`: Matrix canvas object with:
   - `canvas.Clear()` - Clear display
   - `canvas.SetPixel(x, y, r, g, b)` - Set pixel color
-- `smoothed_bars`: Array of normalized values
+- `smoothed_bars`: Array of normalized values (single-layer mode)
   - Length = matrix width (one per column)
   - Values 0-1 normally, can exceed 1.0 in overflow mode
 - `peak_heights`: Optional array of peak positions (0-1)
+- `layer_bars`: List of smoothed bar arrays (one per layer, may contain None for invisible layers)
+- `layer_peaks`: List of peak arrays (one per layer, may contain None)
 
 ### Available in self
 
@@ -150,6 +193,9 @@ __Parameters:__
 - `self.height` - Matrix height in pixels
 - `self.settings` - Full Settings object
 - `self.theme` - Active theme instance (use `self.theme.get_color()`)
+- `self.layers_enabled` - Whether multi-layer mode is active
+- `self.layer_states` - List of LayerState objects (when layered)
+- `self.draw_order` - List of layer indices for z-ordering
 
 ### Optional: on_settings_changed()
 

@@ -177,9 +177,9 @@ In practice, if you're extracting 64 bins from the range covering ~300 FFT bins:
 
 The FFT is doing **99.1%** of the computational work!
 
-### Why This Matters for Dual Mode
+### Why This Matters for Multi-Layer Mode
 
-When we run dual-layer visualization:
+When we run multi-layer visualization (e.g., 3 layers: bass, mid, treble):
 
 ```
 ┌─────────────────────────────────────────┐
@@ -187,23 +187,22 @@ When we run dual-layer visualization:
 │         O(N log N) = O(2048 × 11)       │
 └─────────────────────────────────────────┘
                     │
-                    ▼
-        ┌───────────┴───────────┐
-        │                       │
-        ▼                       ▼
-┌───────────────┐       ┌───────────────┐
-│  Base Layer   │       │  Top Layer    │
-│  64 bins      │       │  64 bins      │
-│  80-2000 Hz   │       │  2000-6000 Hz │
-│  ~100 ops     │       │  ~100 ops     │
-└───────────────┘       └───────────────┘
+        ┌───────────┼───────────┬───────────┐
+        ▼           ▼           ▼           ▼
+┌────────────┐ ┌────────────┐ ┌────────────┐
+│ Layer 0    │ │ Layer 1    │ │ Layer 2    │
+│ Bass       │ │ Mid        │ │ Treble     │
+│ 64 bins    │ │ 64 bins    │ │ 64 bins    │
+│ 80-1950 Hz │ │ 2000-4000Hz│ │ 4000-8000Hz│
+│ ~100 ops   │ │ ~100 ops   │ │ ~100 ops   │
+└────────────┘ └────────────┘ └────────────┘
 ```
 
-**Total**: 22,500 + 100 + 100 = 22,700 ops
+**Total**: 22,500 + 100 + 100 + 100 = 22,800 ops (3 layers)
 
-vs. running two separate FFTs: 22,500 + 22,500 = 45,000 ops
+vs. running three separate FFTs: 22,500 × 3 = 67,500 ops
 
-**Dual mode overhead: 0.9%** 🎉
+**Multi-layer mode overhead: ~1.3%** 🎉
 
 ---
 
@@ -288,7 +287,9 @@ This compensates for:
 
 The FFT is the computational bottleneck. Everything else—including fancy multi-layer visualizations with different frequency ranges—is essentially free in comparison.
 
-This is why we can run dual-mode, or even a hypothetical 10-layer system, with minimal performance impact: **the FFT is computed once, and we just slice it differently for each layer.**
+This is why we can run multi-layer mode, or even a hypothetical 10-layer system, with minimal performance impact: **the FFT is computed once, and we just slice it differently for each layer.**
+
+Additional optimization: **Invisible layers skip even the bin extraction and scaling**, so hiding a layer saves its processing cost entirely.
 
 ---
 

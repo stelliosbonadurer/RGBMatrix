@@ -183,3 +183,67 @@ Built-in presets are available in `config/presets.py`:
 - `edm` - Intense fire theme, heavy bass, overflow enabled
 - `classical` - Ocean theme, smooth movement, wide dynamics
 - `podcast` - Voice frequencies, simple green theme
+
+## Multi-Layer Configuration
+
+The `LayeredVisualizerSettings` enables multiple independent frequency layers, each with its own theme and settings.
+
+### LayerConfig
+
+Each layer is defined with a `LayerConfig`:
+
+```python
+@dataclass
+class LayerConfig:
+    name: str                    # Layer identifier (e.g., 'bass', 'treble')
+    freq_range: Tuple[int, int]  # (min_freq, max_freq) in Hz
+    theme_name: str = 'ocean'    # Theme for this layer
+    bars_enabled: bool = True    # Draw bars for this layer
+    gradient_enabled: bool = False
+    overflow_enabled: bool = True
+    peak_enabled: bool = False   # Show floating peaks
+    visible: bool = True         # Whether layer is drawn
+    boost: float = 1.0           # Sensitivity multiplier
+    bins: int = 64               # Number of frequency bins
+```
+
+### Default Layer Setup
+
+The default configuration has 2 layers (3rd is commented out):
+
+```python
+layers: List[LayerConfig] = [
+    LayerConfig(
+        name='bass',
+        freq_range=(80, 1950),
+        theme_name='ocean',
+        overflow_enabled=True,
+        boost=1.0
+    ),
+    LayerConfig(
+        name='mid',
+        freq_range=(2000, 4000),
+        theme_name='warm',
+        overflow_enabled=False,
+        boost=2.5  # Higher boost for quieter frequencies
+    ),
+    # Uncomment to add a third layer:
+    # LayerConfig(
+    #     name='treble',
+    #     freq_range=(4000, 8000),
+    #     theme_name='forest',
+    #     boost=4.0
+    # ),
+]
+```
+
+### Layer Tips
+
+- **Frequency ranges should not overlap** - Each layer extracts different frequency bands
+- **Higher frequencies need more boost** - Treble has less energy, use `boost > 1.0`
+- **draw_order** - Layers are drawn in index order (0 = background), can be swapped at runtime with `<`/`>`
+- **Invisible layers skip processing** - Set `visible=False` to save CPU for unused layers
+
+### Enabling Layers
+
+Set `layers.enabled = True` in settings, or press `l` at runtime to toggle.

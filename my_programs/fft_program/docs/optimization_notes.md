@@ -201,3 +201,42 @@ The sparse approach is always equal or better, with the biggest gains when shado
 ### Lesson
 
 When iterating a large array looking for "active" elements, use NumPy's `nonzero()` to get indices directly instead of checking every element in Python loops.
+
+---
+
+## Multi-Layer Mode Optimizations
+
+### Invisible Layer Skipping
+
+When a layer is hidden (visibility toggled off), we skip:
+1. **FFT bin extraction for that layer** - Array slicing still occurs but is cheap
+2. **Scaling/smoothing** - The most expensive per-layer operation
+3. **Drawing** - No SetPixel calls for hidden layers
+
+Implementation in main.py:
+```python
+for i, (raw_bars, layer_scaler) in enumerate(zip(layer_bars_raw, layer_scalers)):
+    # Skip processing if layer is not visible
+    if i < len(visualizer.layer_states) and not visualizer.layer_states[i].visible:
+        smoothed_layers.append(None)  # Placeholder to maintain index alignment
+        layer_peaks.append(None)
+        continue
+    # ... process visible layer
+```
+
+### Single-Pass vs Layer-by-Layer Rendering
+
+We tested a "single-pass" rendering approach that iterates each pixel once and checks layers front-to-back. **It was slower** than the simpler layer-by-layer approach because:
+
+1. **Pre-computation overhead**: Building color lookup structures for each layer
+2. **Per-pixel conditionals**: Checking multiple layers for every pixel
+3. **Cache locality**: Layer-by-layer has better data locality
+
+The current layer-by-layer approach draws background layers first, with foreground layers overwriting. Simple and fast.
+
+### FFT Sharing
+
+The FFT computation (~22,500 ops) happens **once per frame**. All layers share this result and just extract different frequency ranges via array slicing (~100 ops per layer). See [FFT Math Explained](fft_math_explained.md) for details.
+
+Total overhead for 3-layer mode: ~1.3% vs single-layer.
+
