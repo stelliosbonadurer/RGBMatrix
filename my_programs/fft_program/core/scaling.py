@@ -53,8 +53,9 @@ class ScalingProcessor:
         self.buffer_count: int = 0  # Track how many values have been added
         self.buffer_sum: float = 0.0  # Running sum for O(1) mean calculation
         
-        # Current adaptive scale
-        self.current_scale = scaling_settings.min_scale
+        # Current adaptive scale - start higher to prevent initial maxout
+        # Will adapt down quickly via attack_speed if audio is quieter
+        self.current_scale = scaling_settings.initial_scale
         
         # Smoothed bar values
         self.smoothed_bars = np.zeros(num_bins, dtype=np.float32)

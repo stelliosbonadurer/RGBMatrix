@@ -94,7 +94,7 @@ class ColorSettings:
 class SensitivitySettings:
     """Audio sensitivity configuration."""
     noise_floor: float = 0.3      # Subtract from signal (0 = sensitive, 0.5 = cut noise)
-    low_freq_weight: float = 0.55  # Multiplier for bass frequencies
+    low_freq_weight: float = 0.45  # Multiplier for bass frequencies *.55 is good)
     high_freq_weight: float = 10.0 # Multiplier for treble frequencies
     silence_threshold: float = 0.0 # Below this peak = fade to black
 
@@ -113,6 +113,7 @@ class ScalingSettings:
     attack_speed: float = 0.1          # How fast scale adapts to LOUDER audio
     decay_speed: float = 0.06          # How fast scale adapts to QUIETER audio
     min_scale: float = 0.05            # Minimum scale to prevent infinite gain
+    initial_scale: float = 0.25        # Starting scale (higher = quieter start, prevents initial maxout)
     sensitivity_scalar: float = 1.0    # Manual sensitivity boost on top of auto-scaling
 
 
