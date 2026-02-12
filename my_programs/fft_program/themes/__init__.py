@@ -9,6 +9,7 @@ from themes.gradients import (
     OceanTheme,
     ForestTheme,
     RainbowTheme,
+    AutumnTheme,
 )
 from themes.registry import get_theme, register_theme, list_themes
 
@@ -18,6 +19,7 @@ __all__ = [
     'OceanTheme',
     'ForestTheme',
     'RainbowTheme',
+    'AutumnTheme',
     'get_theme',
     'register_theme',
     'list_themes',

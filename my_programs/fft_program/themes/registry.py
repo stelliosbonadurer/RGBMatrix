@@ -14,6 +14,7 @@ from themes.gradients import (
     OceanTheme,
     ForestTheme,
     RainbowTheme,
+    AutumnTheme,
 )
 
 # Global theme registry
@@ -27,6 +28,7 @@ def _register_builtin_themes():
         OceanTheme,
         ForestTheme,
         RainbowTheme,
+        AutumnTheme,
     ]
     for theme_class in builtin_themes:
         _THEME_REGISTRY[theme_class.name] = theme_class

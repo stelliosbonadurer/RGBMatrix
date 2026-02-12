@@ -166,3 +166,50 @@ class RainbowTheme(BaseTheme):
             return self._apply_brightness(r, g, b)
 
 
+class AutumnTheme(BaseTheme):
+    """Deep brown (low) -> Burnt orange -> Golden yellow (high) with red accents - autumn foliage."""
+
+    name = "autumn"
+    description = "Deep brown (low) -> Burnt orange -> Golden yellow (high) - autumn foliage"
+
+    def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
+        ratio = height_ratio
+
+        if ratio < 0.33:
+            # Deep brown -> Burnt red-brown
+            norm = ratio / 0.33
+            r = int(100 + 55 * norm)   # 100 -> 155
+            g = int(40 + 20 * norm)    # 40 -> 60
+            b = int(10 + 5 * norm)     # 10 -> 15
+        elif ratio < 0.66:
+            # Burnt red-brown -> Burnt orange with red touch
+            norm = (ratio - 0.33) / 0.33
+            r = int(155 + 85 * norm)   # 155 -> 240
+            g = int(60 + 60 * norm)    # 60 -> 120
+            b = int(15 - 10 * norm)    # 15 -> 5
+        else:
+            # Burnt orange -> Golden yellow
+            norm = (ratio - 0.66) / 0.34
+            r = int(240 + 15 * norm)   # 240 -> 255
+            g = int(120 + 100 * norm)  # 120 -> 220
+            b = int(5 + 15 * norm)     # 5 -> 20
+
+        return self._apply_brightness(r, g, b)
+
+    def get_overflow_color(self, layer: int, height_ratio: float, column_ratio: float = 0.0, frame: int = 0, bar_ratio: float = 0.0) -> Tuple[int, int, int]:
+        """Autumn overflow: Crimson red -> Bright gold -> Warm white."""
+        if layer == 0:
+            return self.get_color(height_ratio, column_ratio)
+        elif layer == 1:
+            # Second layer: crimson red -> bright gold
+            r = 255
+            g = int(50 + 170 * height_ratio)   # 50 -> 220
+            b = int(20 * height_ratio)          # 0 -> 20
+        else:
+            # Higher layers: bright gold -> warm white
+            r = 255
+            g = int(220 + 35 * height_ratio)    # 220 -> 255
+            b = int(20 + 180 * height_ratio)    # 20 -> 200
+        return self._apply_brightness(r, g, b)
+
+
