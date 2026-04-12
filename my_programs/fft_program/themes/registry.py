@@ -16,6 +16,7 @@ from themes.gradients import (
     RainbowTheme,
     AutumnTheme,
     DynamicTheme,
+    DynamicLateralGradientTheme,
 )
 
 # Global theme registry
@@ -31,6 +32,7 @@ def _register_builtin_themes():
         RainbowTheme,
         AutumnTheme,
         DynamicTheme,
+        DynamicLateralGradientTheme,
     ]
     for theme_class in builtin_themes:
         _THEME_REGISTRY[theme_class.name] = theme_class

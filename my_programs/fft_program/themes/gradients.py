@@ -216,11 +216,11 @@ class AutumnTheme(BaseTheme):
         return self._apply_brightness(r, g, b)
 
 
-class DynamicTheme(BaseTheme):
-    """Unrestricted animated color theme that continuously cycles the full spectrum."""
+class DynamicLateralGradientTheme(BaseTheme):
+    """Animated full-spectrum theme with horizontal and vertical hue spread."""
 
-    name = "dynamic"
-    description = "Continuously cycles through the full color spectrum"
+    name = "dynamic_lateral_gradient"
+    description = "Animated full-spectrum cycling with lateral gradient drift"
 
     def __init__(
         self,
@@ -233,7 +233,7 @@ class DynamicTheme(BaseTheme):
         height_spread: float = 0.15,
     ):
         """
-        Initialize dynamic theme.
+        Initialize dynamic lateral gradient theme.
 
         Args:
             brightness_boost: Overall brightness multiplier.
@@ -307,5 +307,31 @@ class DynamicTheme(BaseTheme):
         hue = self._animated_hue(height_ratio, column_ratio, layer_shift=layer * 0.12)
         r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, self.saturation, self.value)
         return self._apply_brightness(int(r_f * 255), int(g_f * 255), int(b_f * 255))
+
+
+class DynamicTheme(DynamicLateralGradientTheme):
+    """Animated full-spectrum theme with horizontal consistency (no column hue drift)."""
+
+    name = "dynamic"
+    description = "Animated full-spectrum cycling with horizontally consistent color"
+
+    def __init__(
+        self,
+        brightness_boost: float = 1.0,
+        start_hue: float | None = None,
+        cycle_speed: float = 0.06,
+        saturation: float = 1.0,
+        value: float = 1.0,
+        height_spread: float = 0.15,
+    ):
+        super().__init__(
+            brightness_boost=brightness_boost,
+            start_hue=start_hue,
+            cycle_speed=cycle_speed,
+            saturation=saturation,
+            value=value,
+            column_spread=0.0,
+            height_spread=height_spread,
+        )
 
 
