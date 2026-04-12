@@ -3,7 +3,10 @@ Gradient-based color themes for FFT visualizer.
 
 Direct color calculation for best performance on LED matrices.
 """
+import colorsys
 import math
+import random
+import time
 from typing import Tuple
 from .base import BaseTheme
 
@@ -211,5 +214,98 @@ class AutumnTheme(BaseTheme):
             g = int(220 + 35 * height_ratio)    # 220 -> 255
             b = int(20 + 180 * height_ratio)    # 20 -> 200
         return self._apply_brightness(r, g, b)
+
+
+class DynamicTheme(BaseTheme):
+    """Unrestricted animated color theme that continuously cycles the full spectrum."""
+
+    name = "dynamic"
+    description = "Continuously cycles through the full color spectrum"
+
+    def __init__(
+        self,
+        brightness_boost: float = 1.0,
+        start_hue: float | None = None,
+        cycle_speed: float = 0.06,
+        saturation: float = 1.0,
+        value: float = 1.0,
+        column_spread: float = 0.35,
+        height_spread: float = 0.15,
+    ):
+        """
+        Initialize dynamic theme.
+
+        Args:
+            brightness_boost: Overall brightness multiplier.
+            start_hue: Initial hue 0.0-1.0 (None picks random start color).
+            cycle_speed: Hue cycles per second.
+            saturation: HSV saturation 0.0-1.0.
+            value: HSV value/brightness 0.0-1.0 before boost.
+            column_spread: Extra hue shift across columns (0.0-1.0).
+            height_spread: Extra hue shift across bar height (0.0-1.0).
+        """
+        super().__init__(brightness_boost=brightness_boost)
+        self.start_hue = random.random() if start_hue is None else start_hue % 1.0
+        self.cycle_speed = max(0.0, cycle_speed)
+        self.saturation = min(1.0, max(0.0, saturation))
+        self.value = min(1.0, max(0.0, value))
+        self.column_spread = column_spread
+        self.height_spread = height_spread
+        self._start_time = time.perf_counter()
+        self._elapsed_offset = 0.0
+        self.frozen = False
+
+    def _elapsed_seconds(self) -> float:
+        """Return animation elapsed time, respecting freeze state."""
+        if self.frozen:
+            return self._elapsed_offset
+        return self._elapsed_offset + (time.perf_counter() - self._start_time)
+
+    def adjust_cycle_speed(self, delta: float) -> float:
+        """Adjust cycle speed and return the new speed."""
+        self.cycle_speed = max(0.0, self.cycle_speed + delta)
+        return self.cycle_speed
+
+    def reseed_start_hue(self, start_hue: float | None = None) -> float:
+        """Set a new start hue (or random) while preserving current freeze/running state."""
+        self.start_hue = random.random() if start_hue is None else start_hue % 1.0
+        self._start_time = time.perf_counter()
+        self._elapsed_offset = 0.0
+        return self.start_hue
+
+    def toggle_frozen(self) -> bool:
+        """Toggle animation freeze state and return new state."""
+        if self.frozen:
+            self.frozen = False
+            self._start_time = time.perf_counter()
+        else:
+            self._elapsed_offset = self._elapsed_seconds()
+            self.frozen = True
+        return self.frozen
+
+    def _animated_hue(self, height_ratio: float, column_ratio: float, layer_shift: float = 0.0) -> float:
+        """Compute hue for the current time and spatial position."""
+        elapsed = self._elapsed_seconds()
+        base = self.start_hue + (elapsed * self.cycle_speed)
+        spatial = (column_ratio * self.column_spread) + (height_ratio * self.height_spread)
+        return (base + spatial + layer_shift) % 1.0
+
+    def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
+        hue = self._animated_hue(height_ratio, column_ratio)
+        r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, self.saturation, self.value)
+        return self._apply_brightness(int(r_f * 255), int(g_f * 255), int(b_f * 255))
+
+    def get_overflow_color(
+        self,
+        layer: int,
+        height_ratio: float,
+        column_ratio: float = 0.0,
+        frame: int = 0,
+        bar_ratio: float = 0.0,
+    ) -> Tuple[int, int, int]:
+        # Shift each overflow layer to keep stacked layers visually distinct.
+        hue = self._animated_hue(height_ratio, column_ratio, layer_shift=layer * 0.12)
+        r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, self.saturation, self.value)
+        return self._apply_brightness(int(r_f * 255), int(g_f * 255), int(b_f * 255))
 
 

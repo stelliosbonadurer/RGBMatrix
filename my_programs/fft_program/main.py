@@ -124,6 +124,9 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
     print(f"[P] Cycle peak color: white → bar → contrast → peak")
+    print(f"[] / [ ] Dynamic speed -/+ (active theme)")
+    print(f"[c] Reseed dynamic start color (active theme)")
+    print(f"[x] Freeze/unfreeze dynamic animation (active theme)")
     print(f"[r/R] Cycle zoom presets (frequency range)")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
@@ -274,6 +277,17 @@ def main():
             while True:
                 # Check for keyboard input
                 key = keyboard.get_key()
+
+                def get_active_theme_instance():
+                    if visualizer.layers_enabled and visualizer.layer_states:
+                        return visualizer.layer_states[visualizer.active_layer].theme
+                    return visualizer.theme
+
+                def get_active_layer_prefix() -> str:
+                    if visualizer.layers_enabled and visualizer.layer_states:
+                        return f"Layer {visualizer.active_layer + 1} "
+                    return ""
+
                 if key == 't':
                     # Next theme (for active layer if layered mode)
                     new_theme = theme_cycler.next_theme()
@@ -463,6 +477,34 @@ def main():
                         'peak': 'peak (color at max height)'
                     }
                     print(f"Peak color: {mode_descriptions[settings.peak.color_mode]}")
+                elif key == '[':
+                    active_theme = get_active_theme_instance()
+                    if hasattr(active_theme, 'adjust_cycle_speed'):
+                        new_speed = active_theme.adjust_cycle_speed(-0.01)
+                        print(f"{get_active_layer_prefix()}dynamic speed: {new_speed:.3f} cycles/sec")
+                    else:
+                        print(f"{get_active_layer_prefix()}theme is not dynamic")
+                elif key == ']':
+                    active_theme = get_active_theme_instance()
+                    if hasattr(active_theme, 'adjust_cycle_speed'):
+                        new_speed = active_theme.adjust_cycle_speed(0.01)
+                        print(f"{get_active_layer_prefix()}dynamic speed: {new_speed:.3f} cycles/sec")
+                    else:
+                        print(f"{get_active_layer_prefix()}theme is not dynamic")
+                elif key == 'c':
+                    active_theme = get_active_theme_instance()
+                    if hasattr(active_theme, 'reseed_start_hue'):
+                        new_hue = active_theme.reseed_start_hue()
+                        print(f"{get_active_layer_prefix()}dynamic reseed: start_hue={new_hue:.3f}")
+                    else:
+                        print(f"{get_active_layer_prefix()}theme is not dynamic")
+                elif key == 'x':
+                    active_theme = get_active_theme_instance()
+                    if hasattr(active_theme, 'toggle_frozen'):
+                        is_frozen = active_theme.toggle_frozen()
+                        print(f"{get_active_layer_prefix()}dynamic: {'FROZEN' if is_frozen else 'RUNNING'}")
+                    else:
+                        print(f"{get_active_layer_prefix()}theme is not dynamic")
                 
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()
