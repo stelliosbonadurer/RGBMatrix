@@ -26,6 +26,7 @@ import time
 import select
 import tty
 import termios
+import json
 import numpy as np  # type: ignore
 
 # Ensure the fft_program package is importable
@@ -35,6 +36,90 @@ from config import Settings, load_settings
 from core import MatrixApp, AudioProcessor, ScalingProcessor
 from themes import get_theme, list_themes
 from visualizers import get_visualizer, draw_peaks
+
+
+STATE_VERSION = 1
+RUNTIME_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime_state.json")
+
+
+def _extract_dynamic_theme_state(theme) -> dict:
+    """Extract dynamic-theme runtime parameters if supported by this theme."""
+    if theme is None or not hasattr(theme, 'cycle_speed'):
+        return {}
+
+    return {
+        'start_hue': getattr(theme, 'start_hue', None),
+        'cycle_speed': getattr(theme, 'cycle_speed', None),
+        'saturation': getattr(theme, 'saturation', None),
+        'value': getattr(theme, 'value', None),
+        'column_spread': getattr(theme, 'column_spread', None),
+        'height_spread': getattr(theme, 'height_spread', None),
+        'frozen': getattr(theme, 'frozen', False),
+    }
+
+
+def _apply_dynamic_theme_state(theme, dynamic_state: dict) -> None:
+    """Apply serialized dynamic-theme runtime parameters to a theme instance."""
+    if theme is None or not isinstance(dynamic_state, dict) or not hasattr(theme, 'cycle_speed'):
+        return
+
+    start_hue = dynamic_state.get('start_hue', None)
+    if hasattr(theme, 'reseed_start_hue'):
+        theme.reseed_start_hue(start_hue)
+    elif start_hue is not None:
+        theme.start_hue = start_hue % 1.0
+
+    for key in ('cycle_speed', 'saturation', 'value', 'column_spread', 'height_spread'):
+        value = dynamic_state.get(key)
+        if value is not None and hasattr(theme, key):
+            setattr(theme, key, value)
+
+    target_frozen = bool(dynamic_state.get('frozen', False))
+    if hasattr(theme, 'toggle_frozen') and bool(getattr(theme, 'frozen', False)) != target_frozen:
+        theme.toggle_frozen()
+
+
+def load_runtime_state(path: str = RUNTIME_STATE_PATH) -> dict | None:
+    """Load persisted runtime state from disk."""
+    if not os.path.exists(path):
+        return None
+
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        print(f"Warning: could not read prior runtime state: {e}")
+        return None
+
+    if state.get('version') != STATE_VERSION:
+        return None
+    return state
+
+
+def save_runtime_state(state: dict, path: str = RUNTIME_STATE_PATH) -> None:
+    """Persist runtime state to disk using atomic replace."""
+    tmp_path = f"{path}.tmp"
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp_path, path)
+    except OSError as e:
+        print(f"Warning: could not save runtime state: {e}")
+
+
+def should_reload_prior_state(prior_state: dict | None) -> bool:
+    """Prompt user to reload prior runtime state if available."""
+    if prior_state is None:
+        return False
+
+    if not sys.stdin.isatty():
+        return False
+
+    try:
+        answer = input("Prior runtime state found. Reload it? [y/N]: ").strip().lower()
+        return answer in {'y', 'yes'}
+    except EOFError:
+        return False
 
 
 class KeyboardHandler:
@@ -187,6 +272,31 @@ def main():
     gradient_enabled = getattr(args, 'gradient', False)
     if args.overflow:
         settings.overflow.enabled = True
+
+    # Optional crash-resume state restore
+    prior_state = load_runtime_state()
+    reload_prior_state = should_reload_prior_state(prior_state)
+    if reload_prior_state and prior_state is not None:
+        persisted_settings = prior_state.get('settings', {})
+        persisted_visualizer = prior_state.get('visualizer', {})
+
+        if 'shadow_enabled' in persisted_settings:
+            settings.shadow.enabled = bool(persisted_settings['shadow_enabled'])
+        if 'peak_enabled' in persisted_settings:
+            settings.peak.enabled = bool(persisted_settings['peak_enabled'])
+        if 'peak_color_mode' in persisted_settings:
+            settings.peak.color_mode = persisted_settings['peak_color_mode']
+
+        zoom_idx = persisted_settings.get('zoom_preset_index')
+        if isinstance(zoom_idx, int) and settings.frequency.zoom_presets:
+            settings.frequency.zoom_preset_index = zoom_idx % len(settings.frequency.zoom_presets)
+
+        if 'layers_enabled' in persisted_visualizer:
+            settings.layers.enabled = bool(persisted_visualizer['layers_enabled'])
+
+        persisted_theme = persisted_visualizer.get('single_theme_name')
+        if isinstance(persisted_theme, str) and persisted_theme:
+            settings.color.theme = persisted_theme
     
     # Always use the unified visualizer
     visualizer_name = "bars"
@@ -247,28 +357,147 @@ def main():
             brightness_boost=settings.color.brightness_boost
         )
         
-        # Setup layers if enabled in settings
         layer_scalers = []
-        if settings.layers.enabled:
-            # Setup audio processor for layers
-            audio.setup_layers(settings.layers.layers)
-            
-            # Setup visualizer for layers
-            visualizer.setup_layers(
-                settings.layers.layers,
-                brightness_boost=settings.color.brightness_boost
-            )
-            
-            # Create a scaler for each layer
-            for layer_config in settings.layers.layers:
-                layer_scaler = ScalingProcessor(
-                    scaling_settings=settings.scaling,
-                    sensitivity_settings=settings.sensitivity,
-                    smoothing_settings=settings.smoothing,
-                    num_bins=layer_config.bins,
-                    frame_rate=1.0 / settings.audio.sleep_delay
+
+        def ensure_layer_pipeline() -> None:
+            """Ensure audio/layer visualizer/scalers are initialized for layered mode."""
+            nonlocal layer_scalers
+
+            if not audio.layers_enabled:
+                audio.setup_layers(settings.layers.layers)
+
+            if not visualizer.layer_states:
+                visualizer.setup_layers(
+                    settings.layers.layers,
+                    brightness_boost=settings.color.brightness_boost
                 )
-                layer_scalers.append(layer_scaler)
+
+            if len(layer_scalers) != len(settings.layers.layers):
+                layer_scalers = []
+                for layer_config in settings.layers.layers:
+                    layer_scaler = ScalingProcessor(
+                        scaling_settings=settings.scaling,
+                        sensitivity_settings=settings.sensitivity,
+                        smoothing_settings=settings.smoothing,
+                        num_bins=layer_config.bins,
+                        frame_rate=1.0 / settings.audio.sleep_delay
+                    )
+                    layer_scalers.append(layer_scaler)
+
+        if settings.layers.enabled:
+            ensure_layer_pipeline()
+
+        def apply_persisted_runtime_state(state: dict) -> None:
+            """Apply persisted visualizer/runtime state to initialized components."""
+            persisted_settings = state.get('settings', {})
+            persisted_visualizer = state.get('visualizer', {})
+
+            if 'peak_color_mode' in persisted_settings:
+                settings.peak.color_mode = persisted_settings['peak_color_mode']
+
+            # Global/single-mode visualizer flags
+            for attr in ('gradient_mode', 'overflow_mode', 'bars_enabled', 'full_mode', 'debug_mode'):
+                if attr in persisted_visualizer and hasattr(visualizer, attr):
+                    setattr(visualizer, attr, bool(persisted_visualizer[attr]))
+
+            target_layers_enabled = bool(persisted_visualizer.get('layers_enabled', visualizer.layers_enabled))
+
+            if target_layers_enabled:
+                ensure_layer_pipeline()
+                visualizer.layers_enabled = True
+
+                layer_states_data = persisted_visualizer.get('layer_states', [])
+                for idx, state_data in enumerate(layer_states_data):
+                    if idx >= len(visualizer.layer_states):
+                        break
+
+                    theme_name = state_data.get('theme_name')
+                    if isinstance(theme_name, str):
+                        visualizer.select_layer(idx)
+                        visualizer.set_layer_theme(
+                            theme_name,
+                            brightness_boost=settings.color.brightness_boost
+                        )
+
+                    layer_state = visualizer.layer_states[idx]
+                    for attr in ('bars_enabled', 'gradient_enabled', 'overflow_enabled', 'peak_enabled', 'visible'):
+                        if attr in state_data:
+                            setattr(layer_state, attr, bool(state_data[attr]))
+
+                    if 'boost' in state_data:
+                        layer_state.boost = float(state_data['boost'])
+
+                    _apply_dynamic_theme_state(layer_state.theme, state_data.get('dynamic', {}))
+
+                draw_order = persisted_visualizer.get('draw_order')
+                if isinstance(draw_order, list) and len(draw_order) == len(visualizer.layer_states):
+                    visualizer.draw_order = [int(i) for i in draw_order]
+
+                active_layer = persisted_visualizer.get('active_layer')
+                if isinstance(active_layer, int):
+                    visualizer.select_layer(active_layer)
+            else:
+                visualizer.layers_enabled = False
+
+            single_theme_name = persisted_visualizer.get('single_theme_name')
+            if isinstance(single_theme_name, str):
+                restored_theme = get_theme(
+                    single_theme_name,
+                    brightness_boost=settings.color.brightness_boost
+                )
+                visualizer.set_theme(restored_theme)
+                _apply_dynamic_theme_state(restored_theme, persisted_visualizer.get('single_dynamic', {}))
+
+                if single_theme_name in theme_cycler.themes:
+                    theme_cycler.current_index = theme_cycler.themes.index(single_theme_name)
+
+        def build_runtime_state() -> dict:
+            """Capture the current runtime/session state as a serializable dict."""
+            layer_states = []
+            if visualizer.layer_states:
+                for state_obj in visualizer.layer_states:
+                    layer_states.append({
+                        'theme_name': state_obj.theme_name,
+                        'bars_enabled': state_obj.bars_enabled,
+                        'gradient_enabled': state_obj.gradient_enabled,
+                        'overflow_enabled': state_obj.overflow_enabled,
+                        'peak_enabled': state_obj.peak_enabled,
+                        'visible': state_obj.visible,
+                        'boost': state_obj.boost,
+                        'dynamic': _extract_dynamic_theme_state(state_obj.theme),
+                    })
+
+            single_theme_name = settings.color.theme
+            if visualizer.theme is not None and hasattr(visualizer.theme, 'name'):
+                single_theme_name = visualizer.theme.name
+
+            return {
+                'version': STATE_VERSION,
+                'timestamp': time.time(),
+                'settings': {
+                    'shadow_enabled': settings.shadow.enabled,
+                    'peak_enabled': settings.peak.enabled,
+                    'peak_color_mode': settings.peak.color_mode,
+                    'zoom_preset_index': settings.frequency.zoom_preset_index,
+                },
+                'visualizer': {
+                    'layers_enabled': visualizer.layers_enabled,
+                    'gradient_mode': getattr(visualizer, 'gradient_mode', False),
+                    'overflow_mode': getattr(visualizer, 'overflow_mode', False),
+                    'bars_enabled': getattr(visualizer, 'bars_enabled', True),
+                    'full_mode': getattr(visualizer, 'full_mode', False),
+                    'debug_mode': getattr(visualizer, 'debug_mode', False),
+                    'active_layer': getattr(visualizer, 'active_layer', 0),
+                    'draw_order': list(getattr(visualizer, 'draw_order', [])),
+                    'single_theme_name': single_theme_name,
+                    'single_dynamic': _extract_dynamic_theme_state(visualizer.theme),
+                    'layer_states': layer_states,
+                }
+            }
+
+        if reload_prior_state and prior_state is not None:
+            apply_persisted_runtime_state(prior_state)
+            print(f"Reloaded prior runtime state from: {RUNTIME_STATE_PATH}")
         
     except Exception as e:
         print(f"Initialization error: {e}")
@@ -278,10 +507,13 @@ def main():
     try:
         with audio, KeyboardHandler() as keyboard:
             time.sleep(0.5)  # Let audio stream settle
+            last_state_save_time = 0.0
+            state_save_interval = 2.0
             
             while True:
                 # Check for keyboard input
                 key = keyboard.get_key()
+                state_dirty = key is not None
 
                 def get_active_theme_instance():
                     if visualizer.layers_enabled and visualizer.layer_states:
@@ -367,26 +599,12 @@ def main():
                     # Toggle layered mode
                     if hasattr(visualizer, 'toggle_layers'):
                         layers_on = visualizer.toggle_layers()
+                        settings.layers.enabled = layers_on
                         print(f"Layered mode: {'ON' if layers_on else 'OFF'}")
                         
                         # Setup layers if not already done
-                        if layers_on and not audio.layers_enabled:
-                            audio.setup_layers(settings.layers.layers)
-                            visualizer.setup_layers(
-                                settings.layers.layers,
-                                brightness_boost=settings.color.brightness_boost
-                            )
-                            # Create scalers for each layer if needed
-                            if not layer_scalers:
-                                for layer_config in settings.layers.layers:
-                                    layer_scaler = ScalingProcessor(
-                                        scaling_settings=settings.scaling,
-                                        sensitivity_settings=settings.sensitivity,
-                                        smoothing_settings=settings.smoothing,
-                                        num_bins=layer_config.bins,
-                                        frame_rate=1.0 / settings.audio.sleep_delay
-                                    )
-                                    layer_scalers.append(layer_scaler)
+                        if layers_on:
+                            ensure_layer_pipeline()
                         
                         if layers_on:
                             info = visualizer.get_active_layer_info()
@@ -520,6 +738,10 @@ def main():
                     layer_bars_raw = audio.get_layer_magnitudes()
                 
                 if bars is None and layer_bars_raw is None:
+                    now = time.time()
+                    if state_dirty or (now - last_state_save_time) >= state_save_interval:
+                        save_runtime_state(build_runtime_state())
+                        last_state_save_time = now
                     time.sleep(0.001)
                     continue
                 
@@ -588,6 +810,11 @@ def main():
                 
                 # Frame delay
                 time.sleep(settings.audio.sleep_delay)
+
+                now = time.time()
+                if state_dirty or (now - last_state_save_time) >= state_save_interval:
+                    save_runtime_state(build_runtime_state())
+                    last_state_save_time = now
                 
     except KeyboardInterrupt:
         print("\nExiting...")
@@ -595,6 +822,10 @@ def main():
         print(f"Runtime error: {e}")
         raise
     finally:
+        try:
+            save_runtime_state(build_runtime_state())
+        except Exception:
+            pass
         app.clear()
 
 
