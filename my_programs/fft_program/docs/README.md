@@ -50,6 +50,8 @@ When layered mode is active, `t`, `g`, `o`, `b`, and `p` affect only the selecte
 - [Themes Guide](themes.md) - Available themes and how to create custom ones
 - [Visualizers Guide](visualizers.md) - Display modes and creating new ones
 - [Architecture Overview](architecture.md) - Code structure for developers
+- [Web Control Panel Plan](web_control_panel_plan.md) - Standalone performance-first plan for future GUI controls
+- [Mobile Onboarding Strategy](mobile_onboarding_strategy.md) - Phone-friendly control UX and phone-only customer setup plan
 - [FFT Math Explained](fft_math_explained.md) - Mathematical foundations
 - [Optimization Notes](optimization_notes.md) - Performance lessons learned
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
