@@ -1,5 +1,8 @@
 current ip 192.168.1.16
+29
 mac address: 2c:cf:67:50:bf:6e
+
+
 
 sudo ./demo -D0 --led-rows=32 --led-cols=32
 

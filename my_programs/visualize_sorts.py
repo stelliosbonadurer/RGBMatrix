@@ -1,6 +1,4 @@
 #!/usr/bin/env python
-from array import array
-from tkinter import font
 from samplebase import SampleBase
 from rgbmatrix import graphics
 import sorts
