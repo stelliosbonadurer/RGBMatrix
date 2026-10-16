@@ -1,31 +1,96 @@
 #!/usr/bin/env python
-from samplebase import SampleBase
-from rgbmatrix import graphics
-import sorts
-import random
-import time
+"""Interactive and service-safe sorting visualizations for the RGB matrix."""
 
-# Registry of available sorts: (Display Name, VisualizeSorts method name)
+from __future__ import annotations
+
+import random
+import signal
+import sys
+import time
+from pathlib import Path
+
+
+# This program historically lived beside the upstream samples and imported
+# ``samplebase`` by filename. In this repository it lives in my_programs/, so make
+# the existing untracked driver checkout explicit until the runtime owns its own
+# matrix adapter. The application code itself remains in this repository.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROGRAM_DIRECTORY = Path(__file__).resolve().parent
+UPSTREAM_SAMPLE_CANDIDATES = (
+    PROJECT_ROOT / "rpi-rgb-led-matrix" / "bindings" / "python" / "samples",
+    Path.home() / "rpi-rgb-led-matrix" / "bindings" / "python" / "samples",
+)
+for import_root in (PROJECT_ROOT, PROGRAM_DIRECTORY, *UPSTREAM_SAMPLE_CANDIDATES):
+    import_root_string = str(import_root)
+    if import_root_string not in sys.path:
+        sys.path.insert(0, import_root_string)
+
+from matrix_controller.definitions import application_parameters
+from samplebase import SampleBase
+import sorts
+
+# Registry of available sorts: (stable ID, display name, method name). The stable ID
+# is shared with the CLI/web parameter contract; display text can change safely.
 SORTS = [
-    ("Insertion", "do_insertion_sort"),
-    ("Selection", "do_selection_sort"),
-    ("Bubble", "do_bubble_sort"),
-    ("Quick", "do_quick_sort"),
+    ("insertion", "Insertion", "do_insertion_sort"),
+    ("selection", "Selection", "do_selection_sort"),
+    ("bubble", "Bubble", "do_bubble_sort"),
+    ("quick", "Quick", "do_quick_sort"),
 ]
+
 
 class VisualizeSorts(SampleBase):
     def __init__(self, *args, **kwargs):
         super(VisualizeSorts, self).__init__(*args, **kwargs)
 
-    #Main Program Run
+        # ``mode=None`` preserves the existing terminal menu. A service always passes
+        # an explicit allowlisted mode, and a non-TTY direct launch safely falls back
+        # to continuous random sorts instead of blocking forever on input().
+        direct_defaults = {
+            "mode": None,
+            "sort": "quick",
+            "delay": 0.05,
+            "seed": None,
+            "max_runs": 0,
+        }
+        for parameter in application_parameters("sorts"):
+            parameter.add_to_argparse(
+                self.parser,
+                argument_default=direct_defaults[parameter.name],
+            )
+
     def run(self):
-        offset_canvas = self.matrix.CreateFrameCanvas()
+        """Select the interactive menu or a non-interactive service mode."""
+
+        self._offset_canvas = self.matrix.CreateFrameCanvas()
         length = self.matrix.width
+        rng = random.Random(self.args.seed)
+
+        # Keep clearing in this program rather than relying on process teardown. It
+        # guarantees a controlled stop or finite one-shot sort does not leave the last
+        # frame displayed indefinitely.
+        try:
+            mode = self.args.mode
+            if mode is None:
+                mode = "interactive" if sys.stdin.isatty() else "random"
+
+            if mode == "interactive":
+                self._run_interactive(length, rng)
+            else:
+                self._run_automatic(mode, length, rng)
+        finally:
+            self._offset_canvas.Clear()
+            self._offset_canvas = self.matrix.SwapOnVSync(self._offset_canvas)
+
+    def _run_interactive(self, length: int, rng: random.Random) -> None:
+        """Preserve the original numbered terminal menu for direct CLI users."""
 
         while True:
-            # Build dynamic menu from SORTS + extra options
             sort_count = len(SORTS)
-            numbered = [f"{i+1} for {name.lower()}" for i, (name, _) in enumerate(SORTS)]
+            numbered = [
+                f"{index + 1} for {display_name.lower()}"
+                for index, (_, display_name, _) in enumerate(SORTS)
+            ]
             extra = [
                 f"{sort_count+1} to loop through all sorts",
                 f"{sort_count+2} for continuous random sorts",
@@ -40,67 +105,123 @@ class VisualizeSorts(SampleBase):
             if user_input == 0:
                 print("Exiting...")
                 break
-            array = generate_array(length)
             if 1 <= user_input <= sort_count:
-                # Run selected sort
-                _, method_name = SORTS[user_input - 1]
-                getattr(self, method_name)(array, offset_canvas, length)
+                sort_id, _, _ = SORTS[user_input - 1]
+                self._run_named_sort(sort_id, length, rng)
             elif user_input == sort_count + 1:
-                # Loop through all sorts once
-                for _, method_name in SORTS:
-                    getattr(self, method_name)(generate_array(length), offset_canvas, length)
+                for sort_id, _, _ in SORTS:
+                    self._run_named_sort(sort_id, length, rng)
             elif user_input == sort_count + 2:
                 # Continuous random sorts
                 try:
                     while True:
-                        _, method_name = random.choice(SORTS)
-                        getattr(self, method_name)(generate_array(length), offset_canvas, length)
+                        sort_id, _, _ = rng.choice(SORTS)
+                        self._run_named_sort(sort_id, length, rng)
                 except KeyboardInterrupt:
                     print("\nStopped continuous random sorts.")
             else:
                 print("Invalid input. Please try again.")
 
+    def _run_automatic(self, mode: str, length: int, rng: random.Random) -> None:
+        """Run without stdin so systemd and the web supervisor cannot deadlock.
 
-    def do_insertion_sort(self, array, offset_canvas, length):
-        array = generate_array(length)
+        ``max_runs`` counts completed individual sorts. Zero means continuous for
+        ``all`` and ``random``. ``single`` intentionally performs exactly one sort so
+        it can be used as a finite diagnostic command.
+        """
+
+        if mode == "single":
+            self._run_named_sort(self.args.sort, length, rng)
+            return
+
+        completed = 0
+        while self.args.max_runs == 0 or completed < self.args.max_runs:
+            if mode == "all":
+                candidates = [item[0] for item in SORTS]
+            elif mode == "random":
+                candidates = [rng.choice(SORTS)[0]]
+            else:  # argparse/manifest validation should make this unreachable.
+                raise ValueError(f"unsupported sort mode: {mode}")
+
+            for sort_id in candidates:
+                if self.args.max_runs and completed >= self.args.max_runs:
+                    return
+                self._run_named_sort(sort_id, length, rng)
+                completed += 1
+
+    def _run_named_sort(
+        self,
+        sort_id: str,
+        length: int,
+        rng: random.Random,
+    ) -> None:
+        """Run one allowlisted sort with a fresh array and shared draw settings."""
+
+        try:
+            _, _, method_name = next(item for item in SORTS if item[0] == sort_id)
+        except StopIteration as exc:
+            raise ValueError(f"unknown sort: {sort_id}") from exc
+        array = generate_array(length, rng)
+        getattr(self, method_name)(array, length)
+
+    def _draw_frame(self, array, groups) -> None:
+        """Draw one frame and retain the back buffer returned by VSync.
+
+        The rgbmatrix binding returns the canvas that should be used for the next
+        frame. Keeping it on the visualization object avoids callbacks accidentally
+        drawing into a stale/front buffer after the first swap.
+        """
+
+        self._offset_canvas = draw_array(
+            array,
+            self._offset_canvas,
+            self.matrix.width,
+            self.matrix,
+            groups=groups,
+            sleep_delay=self.args.delay,
+        )
+
+    def do_insertion_sort(self, array, length):
         sorts.insertion_sort(
             array,
-            lambda arr, groups: draw_array(
-                arr, offset_canvas, length, self.matrix, groups=groups
-            )
+            self._draw_frame,
         )
 
-    def do_bubble_sort(self, array, offset_canvas, length):
-        array = generate_array(length)
+    def do_bubble_sort(self, array, length):
         sorts.bubble_sort(
             array,
-            lambda arr, groups: draw_array(
-                arr, offset_canvas, length, self.matrix, groups=groups
-            )
+            self._draw_frame,
         )
 
-    def do_selection_sort(self, array, offset_canvas, length):
-        array = generate_array(length)
+    def do_selection_sort(self, array, length):
         sorts.selection_sort(
             array,
-            lambda arr, groups: draw_array(
-                arr, offset_canvas, length, self.matrix, groups=groups
-            )
+            self._draw_frame,
         )
-    def do_quick_sort(self, array, offset_canvas, length):
-        array = generate_array(length)
+
+    def do_quick_sort(self, array, length):
         sorts.quick_sort(
             array,
-            lambda arr, groups: draw_array(
-                arr, offset_canvas, length, self.matrix, groups=groups
-            )
+            self._draw_frame,
         )
 
-def generate_array(length):
-    #Generate random array of integers between 1 and matrix size
-    return [random.randint(1, length) for _ in range(length)]
 
-def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5),sleep_delay=0.05):
+def generate_array(length: int, rng: random.Random | None = None) -> list[int]:
+    """Generate a sortable array using an injectable RNG for repeatable runs."""
+
+    source = rng or random
+    return [source.randint(1, length) for _ in range(length)]
+
+
+def draw_array(
+    arr,
+    canvas,
+    length,
+    matrix,
+    groups=None,
+    base_color=(150, 5, 5),
+    sleep_delay=0.05,
+):
     """
       - groups: list of tuples (indices_list, (r, g, b)).
                 Each indices_list is a list of column indices to color with the given RGB.
@@ -132,11 +253,23 @@ def draw_array(arr, canvas, length, matrix, groups=None, base_color=(150, 5, 5),
     canvas = matrix.SwapOnVSync(canvas)
     return canvas
 
-# Main function
+def _request_service_exit(_signum, _frame) -> None:
+    """Route supervisor SIGTERM through VisualizeSorts' ``finally`` cleanup.
+
+    ``SystemExit`` is intentional: the interactive random-mode menu catches
+    ``KeyboardInterrupt`` so Ctrl+C can return to its menu, but a service stop must
+    exit rather than become stuck waiting for the next menu selection.
+    """
+
+    raise SystemExit(0)
+
+
 if __name__ == "__main__":
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, _request_service_exit)
     visualize_sorts = VisualizeSorts()
-    if (not visualize_sorts.process()):
-        visualize_sorts.print_help()
-
-
-
+    try:
+        if not visualize_sorts.process():
+            visualize_sorts.print_help()
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)

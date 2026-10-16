@@ -9,7 +9,9 @@ numpy>=1.20.0
 sounddevice>=0.4.0
 ```
 
-`sounddevice` also requires a functioning PortAudio/input-device setup. `rgbmatrix` must be built and installed separately. The planned repeatable Pi provisioning flow has not been implemented; read `documentation/Plans-Todo/pi_provisioning_and_golden_image_plan.md` before doing deployment work.
+`sounddevice` also requires a functioning PortAudio/input-device setup. `rgbmatrix`
+must be built and installed separately. Repeatable portable provisioning is deferred;
+read [plans/portable-deployment.md](plans/portable-deployment.md) before resuming it.
 
 Imports in the current app are script-oriented: `main.py` adds its directory to `sys.path`, and internal modules use top-level names such as `config`, `core`, and `themes`. Running the file directly works; importing it as a conventional package from the repository root may not.
 
@@ -33,7 +35,13 @@ python3 launch_rgbmatrix.py \
 Compile-check tracked Python code without importing hardware/audio modules:
 
 ```bash
-python3 -m compileall -q launch_rgbmatrix.py my_programs/fft_program my_programs/*.py
+python3 -m compileall -q launch_rgbmatrix.py matrix_controller tests my_programs/fft_program my_programs/*.py
+```
+
+Run the hardware-free contract, supervisor, and loopback HTTP tests:
+
+```bash
+python3 -m unittest discover -s tests -v
 ```
 
 On a configured Pi, the normal launch is:
@@ -52,14 +60,22 @@ sudo -E python3 my_programs/fft_program/main.py \
   --led-slowdown-gpio=2
 ```
 
-`--list-themes` still imports NumPy and `sounddevice`, but exits before matrix initialization. There is no supported `--visualizer`, `--list-visualizers`, `--preset`, or headless flag in `main.py`.
+`--list-themes` still imports NumPy and `sounddevice`, but exits before matrix
+initialization. `--non-interactive` is supported for supervised FFT execution. There
+is no supported `--visualizer`, `--list-visualizers`, or `--preset` flag in `main.py`.
+
+For web-service/API commands and boot installation, use
+[web-service-operations.md](web-service-operations.md).
 
 ## Validation expectations
 
-There is no automated test suite or CI configuration in the tracked project. Match validation to the change:
+There is a focused standard-library unit test suite for the new controller, but no CI
+configuration and no hardware integration suite. Match validation to the change:
 
 - Pure Python edits: run `compileall` and focused import/function checks where dependencies allow.
 - Launcher edits: run `--list` plus representative `--dry-run` commands, including passthrough arguments.
+- Registry/API edits: run all `tests/`; maintain strict types, unknown-field rejection,
+  fixed argv construction, single-child ownership, and HTTP authorization tests.
 - Settings edits: round-trip a temporary JSON file and verify nested dataclasses, tuple conversion, and omitted groups.
 - Theme/visualizer edits: use a fake canvas with `Clear()` and `SetPixel()` and deterministic NumPy bar arrays; then test on the actual 64x64 panel.
 - Audio changes: test bin coverage at the target device's native sample rate and confirm behavior with silence and clipped input.
@@ -91,7 +107,9 @@ When changing layers:
 
 ## Repository hygiene
 
-- Preserve the distinction between `docs/` (agent orientation), `my_programs/fft_program/docs/` (feature/user docs), and `documentation/` (hardware assets and plans).
+- Preserve the distinction between `docs_agents/` (agent context and plans),
+  `my_programs/fft_program/docs/` (feature/user docs), and `docs_external/` (hardware
+  assets and historical host notes).
 - Do not commit native build outputs or the ignored upstream driver checkout without an explicit repository-structure decision.
 - Treat `runtime_state.json` as local mutable state. If work causes it to appear, do not commit it casually.
 - Existing `.DS_Store` and bytecode artifacts are historical; avoid creating more tracked artifacts.

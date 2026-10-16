@@ -27,19 +27,33 @@ import select
 import tty
 import termios
 import json
+import signal
 import numpy as np  # type: ignore
 
 # Ensure the fft_program package is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Direct script execution normally places only fft_program/ on sys.path. Add the
+# repository root so this legacy entry point can consume the same parameter contract
+# as the web supervisor. A future packaging pass should replace both path adjustments
+# with an installed package and module entry point.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from config import Settings, load_settings
 from core import MatrixApp, AudioProcessor, ScalingProcessor
 from themes import get_theme, list_themes
 from visualizers import get_visualizer, draw_peaks
+from matrix_controller.definitions import application_parameters
 
 
 STATE_VERSION = 1
-RUNTIME_STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "runtime_state.json")
+RUNTIME_STATE_DIRECTORY = os.environ.get(
+    "RGBMATRIX_STATE_DIR",
+    os.path.dirname(os.path.abspath(__file__)),
+)
+RUNTIME_STATE_PATH = os.path.join(RUNTIME_STATE_DIRECTORY, "runtime_state.json")
 
 
 def _extract_dynamic_theme_state(theme) -> dict:
@@ -100,6 +114,10 @@ def save_runtime_state(state: dict, path: str = RUNTIME_STATE_PATH) -> None:
     """Persist runtime state to disk using atomic replace."""
     tmp_path = f"{path}.tmp"
     try:
+        # Services should set RGBMATRIX_STATE_DIR to a writable state directory such
+        # as /var/lib/rgb-matrix-controller. Keeping directory creation here makes a
+        # first boot deterministic while atomic replace protects against power loss.
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=2)
         os.replace(tmp_path, path)
@@ -123,15 +141,22 @@ def should_reload_prior_state(prior_state: dict | None) -> bool:
 
 
 class KeyboardHandler:
-    """Non-blocking keyboard input handler for Unix/macOS."""
+    """Optional non-blocking keyboard input handler for Unix/macOS.
+
+    A systemd child has no controlling terminal. Treating keyboard input as an
+    optional adapter keeps direct CLI controls intact without making the render loop
+    depend on a TTY.
+    """
     
-    def __init__(self):
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled and sys.stdin.isatty()
         self.old_settings = None
     
     def __enter__(self):
         """Set terminal to raw mode for single keypress detection."""
-        self.old_settings = termios.tcgetattr(sys.stdin)
-        tty.setcbreak(sys.stdin.fileno())
+        if self.enabled:
+            self.old_settings = termios.tcgetattr(sys.stdin)
+            tty.setcbreak(sys.stdin.fileno())
         return self
     
     def __exit__(self, *args):
@@ -146,9 +171,35 @@ class KeyboardHandler:
         Returns:
             Single character if key pressed, None otherwise
         """
-        if select.select([sys.stdin], [], [], 0)[0]:
+        if self.enabled and select.select([sys.stdin], [], [], 0)[0]:
             return sys.stdin.read(1)
         return None
+
+
+class ShutdownSignalHandler:
+    """Translate service termination into normal Python cleanup.
+
+    The default SIGTERM action exits immediately and can bypass the application's
+    ``finally`` block. The supervisor uses SIGTERM for normal switching, so raising
+    ``KeyboardInterrupt`` here deliberately follows the same tested cleanup path as
+    Ctrl+C: audio closes, runtime state is saved, and the matrix is cleared.
+    """
+
+    def __init__(self):
+        self.previous_sigterm = None
+
+    def __enter__(self):
+        self.previous_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def request_shutdown(_signum, _frame):
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, request_shutdown)
+        return self
+
+    def __exit__(self, *_args):
+        if self.previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, self.previous_sigterm)
 
 
 class ThemeCycler:
@@ -227,27 +278,24 @@ def main():
     # Initialize matrix application (handles argument parsing)
     app = MatrixApp()
     
-    # Add custom arguments
-    app.add_argument(
-        "--theme",
-        help=f"Color theme. Available: {', '.join(list_themes())}",
-        default=None,
-        type=str
-    )
+    # Application options come from the shared controller contract. Direct execution
+    # uses None for visual settings so a supplied JSON settings file remains the
+    # source of truth unless the user explicitly passes an override.
+    direct_defaults = {
+        "theme": None,
+        "gradient": None,
+        "overflow": None,
+        "non_interactive": False,
+    }
+    for parameter in application_parameters("fft"):
+        parameter.add_to_argparse(
+            app.parser,
+            argument_default=direct_defaults[parameter.name],
+        )
     app.add_argument(
         "--list-themes",
         action="store_true",
         help="List available themes and exit"
-    )
-    app.add_argument(
-        "--gradient",
-        action="store_true",
-        help="Start with gradient mode enabled (per-pixel colors)"
-    )
-    app.add_argument(
-        "--overflow",
-        action="store_true",
-        help="Start with overflow mode enabled (bars can exceed height)"
     )
     
     # Parse arguments
@@ -269,9 +317,9 @@ def main():
         settings.color.theme = args.theme
     
     # Override mode settings from command line
-    gradient_enabled = getattr(args, 'gradient', False)
-    if args.overflow:
-        settings.overflow.enabled = True
+    gradient_enabled = bool(args.gradient) if args.gradient is not None else False
+    if args.overflow is not None:
+        settings.overflow.enabled = bool(args.overflow)
 
     # Optional crash-resume state restore
     prior_state = load_runtime_state()
@@ -505,7 +553,8 @@ def main():
     
     # Main loop
     try:
-        with audio, KeyboardHandler() as keyboard:
+        keyboard_enabled = not args.non_interactive
+        with ShutdownSignalHandler(), audio, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
             time.sleep(0.5)  # Let audio stream settle
             last_state_save_time = 0.0
             state_save_interval = 2.0

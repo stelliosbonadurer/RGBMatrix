@@ -13,11 +13,14 @@ These observations were verified against the code when this guide was written. R
 
 ## Runtime edge cases
 
-- `KeyboardHandler` assumes stdin is a TTY. The program is not designed for service/non-interactive execution even though prior-state prompting itself checks `isatty()`.
+- The FFT service path is non-interactive, but most older standalone programs still
+  assume a TTY or upstream `SampleBase` lifecycle. Only `fft` and `sorts` are in the
+  managed allowlist.
 - The audio callback stores only one input channel because `InputStream` is opened with `channels=1`; setting `AudioSettings.channel` above zero will index past that array.
 - Layer `bins` defaults to 64 independently of actual matrix width. A non-64-column panel can produce layer arrays whose width does not match the canvas.
 - Pressing `r`/`R` rebuilds only the single-mode bin set. Layer frequency ranges are independent and remain unchanged.
-- Runtime state is written into the source directory every two seconds. This may fail on a read-only deployment, and the file is not covered explicitly by `.gitignore`.
+- Runtime state is written into the source directory by default for compatibility.
+  Services must set `RGBMATRIX_STATE_DIR`; the supplied systemd template does so.
 - `main.py` catches initialization errors and exits, but runtime errors are printed and re-raised. The `finally` block still attempts state save and matrix clear.
 - In single mode, the peak overlay receives `theme_cycler._get_current_theme()`, which creates a fresh theme object. For dynamic themes, peak colors may not share the renderer theme's exact animation state.
 
@@ -26,9 +29,32 @@ These observations were verified against the code when this guide was written. R
 - `.gitignore` excludes all of `rpi-rgb-led-matrix/`, and the parent repository tracks none of that directory. Local launcher results can include its samples, but a clean clone will not have them.
 - The ignored local driver tree contains compiled `cpython-311-aarch64-linux-gnu.so` files. Their presence says nothing about compatibility with the current host or a different Pi Python version.
 - Several standalone programs import `samplebase` by manipulating paths around the upstream samples layout. Moving them or installing only the parent repository can break imports.
-- `documentation/cheatsheet.txt` contains machine-specific addresses and paths. Confirm the current host instead of treating them as deployment constants.
-- The provisioning document records Python 3.12/Cython/distutils problems but is explicitly a TODO. There is no `provision.sh` yet.
+- `docs_external/cheatsheet.txt` contains machine-specific addresses and paths.
+  Confirm the current host instead of treating them as deployment constants.
+- Portable provisioning remains deferred. There is no `provision.sh` yet.
+
+## Web-service MVP limits
+
+- The MVP is JSON API only; the phone-focused UI is deferred.
+- Parameters are launch-time settings. Calling `run` again stops and restarts the child;
+  live FFT frame-boundary IPC is not implemented.
+- The systemd unit is installed and tested on the current Pi, but assumes its specific
+  checkout/interpreter paths and existing passwordless `sudo -n`; it is not yet a
+  portable installer.
+- POST actions use a bearer token over plain HTTP. Bind beyond loopback only on a
+  trusted LAN, and do not expose port 8080 to the internet.
+- GET status/list endpoints are intentionally unauthenticated in the MVP.
+- Registry matrix options cover the common launcher controls, not every obscure
+  upstream `SampleBase` flag.
+- A missing `iMM-6C` audio device will still make the FFT child fail; the service does
+  not substitute an input device.
 
 ## Testing gaps
 
-There are no tracked tests, mocks, lint configuration, packaging metadata, or CI workflow for the project application. Syntax compilation succeeds without proving that native imports, PortAudio, terminal mode, or GPIO output work. High-value future tests would cover settings round trips, frequency-bin construction, scaler state transitions, runtime-state serialization, launcher resolution, and renderer output against a fake canvas.
+Controller tests now cover schemas, allowlisting, argv construction, process switching,
+termination escalation, status reconciliation, HTTP parsing, and authentication with
+fake processes. There is still no CI, packaging metadata, or hardware test suite.
+Syntax/unit success does not prove native imports, PortAudio, sudo, systemd, terminal
+mode, or GPIO output. High-value future tests include settings round trips,
+frequency-bin construction, scaler state transitions, runtime-state serialization,
+launcher resolution, and renderer output against a fake canvas.

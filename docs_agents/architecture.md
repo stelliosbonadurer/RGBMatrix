@@ -1,8 +1,32 @@
 # Architecture
 
+## Control plane
+
+`matrix_controller` is deliberately hardware-independent. `Registry` exposes only the
+reviewed `fft` and `sorts` definitions. `ParameterSpec` normalizes JSON/CLI values and
+constructs fixed argument vectors. `VisualizationSupervisor` serializes lifecycle
+operations with one lock and owns at most one child process group. The HTTP layer only
+parses requests, checks the bearer token for POST operations, and delegates to the
+supervisor.
+
+```text
+HTTP request -> typed allowlist -> exclusive subprocess supervisor
+                                      |
+                         FFT or sorting child process
+                                      |
+                              native matrix binding
+```
+
+Changing an MVP parameter is a restart/switch operation. Live frame-boundary IPC is
+deferred. The service never invokes a shell or the heuristic developer launcher.
+
 ## Startup
 
-`main.py` creates `MatrixApp`, adds application flags (`--theme`, `--list-themes`, `--gradient`, and `--overflow`), and parses the matrix flags owned by `MatrixApp`. It loads defaults or a JSON file, optionally offers to restore `runtime_state.json`, then initializes the native RGB matrix.
+`main.py` creates `MatrixApp`, adds shared-contract application flags (`--theme`,
+`--[no-]gradient`, `--[no-]overflow`, and `--non-interactive`) plus
+`--list-themes`, and parses the matrix flags owned by `MatrixApp`. It loads defaults
+or a JSON file, optionally offers to restore `runtime_state.json`, then initializes
+the native RGB matrix.
 
 After the matrix exists, the program constructs:
 
@@ -12,7 +36,9 @@ After the matrix exists, the program constructs:
 - a theme and `ThemeCycler`;
 - layer audio bins, visual state, and one scaler per configured layer on demand.
 
-Both the audio stream and terminal keyboard mode are context-managed. The matrix is cleared and runtime state is saved during normal teardown.
+Both the audio stream and optional terminal keyboard mode are context-managed.
+SIGTERM is translated into the same cleanup path as Ctrl+C. The matrix is cleared and
+runtime state is saved during normal teardown.
 
 ## Per-frame path
 
@@ -62,7 +88,7 @@ There are three kinds of state:
 
 1. Dataclass defaults in `config/settings.py`.
 2. Optional startup JSON supplied with `--settings`.
-3. `runtime_state.json`, written atomically about every two seconds and on exit, then offered for interactive restore next launch.
+3. `runtime_state.json`, written atomically about every two seconds and on exit, then offered for interactive restore next launch. `RGBMATRIX_STATE_DIR` relocates this file for service deployments.
 
 Runtime state captures selected display flags, zoom index, themes, layer visibility/order, and dynamic-theme parameters. It does not serialize the full `Settings` object. In non-interactive stdin, prior state is never restored because the confirmation prompt is skipped.
 

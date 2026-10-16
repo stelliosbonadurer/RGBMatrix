@@ -1,0 +1,40 @@
+[Unit]
+Description=RGB Matrix web control service for %i
+Documentation=file:/home/%i/rgb_Matrix/docs_agents/web-service-operations.md
+After=network.target
+Wants=network.target
+ConditionPathExists=/home/%i/rgb_Matrix/matrix_controller/web_service.py
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+WorkingDirectory=/home/%i/rgb_Matrix
+
+# Keep mutable FFT state outside the checkout. systemd creates this directory with
+# ownership matching User=/Group= before ExecStart runs.
+StateDirectory=rgb-matrix-controller
+StateDirectoryMode=0750
+Environment=PYTHONUNBUFFERED=1
+Environment=RGBMATRIX_STATE_DIR=/var/lib/rgb-matrix-controller
+
+# The service itself remains unprivileged. --sudo applies only the fixed, allowlisted
+# visualization argv and requires passwordless non-interactive sudo for this account.
+# Change --python if the installed rgbmatrix/audio environment lives elsewhere.
+ExecStart=/usr/bin/python3 -m matrix_controller.web_service \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --token-file /home/%i/.config/rgb-matrix-controller/api-token \
+    --python /home/%i/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3 \
+    --sudo
+
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0077
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+
