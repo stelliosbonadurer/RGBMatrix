@@ -1,7 +1,10 @@
-# Known-Network and Fallback Access Point Plan
+# 03 — Known-Network and Fallback Access Point Plan
 
-Status: implemented for the current Bookworm/NetworkManager Pi on 2026-10-18;
-hardware fallback-transition acceptance remains pending
+Status: archived — controller, provisioning flow, and boot services implemented for
+the current Bookworm/NetworkManager Pi on 2026-10-18
+
+Physical fallback validation and recovery UX are tracked in
+[network-recovery-hardening.md](../plans/network-recovery-hardening.md).
 
 ## Goal
 
@@ -14,11 +17,11 @@ temporary outages, reboots, and power loss.
 
 ## Dependencies and boundaries
 
-- [Portable deployment](portable-deployment.md) chooses the supported OS and network
+- [Portable deployment](../plans/portable-deployment.md) chooses the supported OS and network
   manager and installs the required units.
-- [Web control](web-control-service.md) supplies the phone-facing control surface;
+- [Web control](02-web-control-service.md) supplies the phone-facing control surface;
   this plan supplies connectivity and a narrowly privileged provisioning path.
-- [Runtime architecture](runtime-architecture.md) must remain able to launch and run
+- [Runtime architecture](01-runtime-architecture.md) must remain able to launch and run
   without LAN or internet access.
 
 ## Scope and assumptions

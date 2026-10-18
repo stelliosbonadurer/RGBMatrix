@@ -15,9 +15,10 @@ target or packaging method visibly regresses.
 
 ## Dependencies and boundaries
 
-- [Runtime architecture](runtime-architecture.md) defines the application package and
+- [Archived runtime architecture](../plans_archvie/01-runtime-architecture.md) defines the application package and
   upstream-driver boundary that must be installed.
-- [Web control](web-control-service.md) and [network fallback](network-fallback-ap.md)
+- [Archived web control](../plans_archvie/02-web-control-service.md) and
+  [network fallback](../plans_archvie/03-network-fallback-ap.md)
   define system services to package after their contracts stabilize.
 - This plan owns build/install/upgrade reproducibility, not HTTP or Wi-Fi behavior.
 

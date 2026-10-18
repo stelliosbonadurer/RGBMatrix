@@ -1,6 +1,9 @@
-# Runtime Architecture Plan
+# 01 — Runtime Architecture Plan
 
-Status: initial runtime-contract milestone implemented; broader migration deferred
+Status: archived — architecture decision and initial runtime-contract milestone completed
+
+Remaining migration work is tracked in
+[runtime-modernization.md](../plans/runtime-modernization.md).
 
 ## Question
 
@@ -25,11 +28,11 @@ layered mode is an example to fix before considering a language rewrite.
 
 ## Dependencies and boundaries
 
-- [Web control](web-control-service.md) consumes this plan's registry and schema but
+- [Web control](02-web-control-service.md) consumes this plan's registry and schema but
   stays out of the render process.
-- [Portable deployment](portable-deployment.md) packages the chosen Python/native
+- [Portable deployment](../plans/portable-deployment.md) packages the chosen Python/native
   boundary when that deferred work resumes.
-- [Network fallback](network-fallback-ap.md) is operationally separate from the
+- [Network fallback](03-network-fallback-ap.md) is operationally separate from the
   rendering runtime.
 
 ## Target boundaries

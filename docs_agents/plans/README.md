@@ -1,75 +1,28 @@
-# Plans Index
+# Active Plans Index
 
-These documents capture both implemented milestones and future work. Check each
-plan's status and acceptance notes rather than assuming every phase is complete.
+This folder contains only unfinished work. Completed implementation plans are kept,
+in historical implementation order, under [`../plans_archvie/`](../plans_archvie/README.md).
+The archive directory intentionally retains the requested `plans_archvie` spelling.
 
-## Separate plans
+## Current order
 
-1. [Runtime architecture](runtime-architecture.md) — decide what should remain in
-   Python, remove application dependence on the upstream demo layout, and define a
-   common visualization contract.
-2. [Portable Raspberry Pi deployment](portable-deployment.md) — make installation
-   reproducible across supported Pi models and evaluate containers with measured
-   latency rather than assuming they help.
-3. [Web control service](web-control-service.md) — provide a phone-friendly service
-   that starts and stops visualizations and exposes their supported parameters while
-   preserving every CLI entry point.
-4. [Known-network and fallback access point](network-fallback-ap.md) — join known
-   Wi-Fi networks when possible and otherwise expose a setup SSID and provisioning
-   page.
+1. [Portable Raspberry Pi deployment](portable-deployment.md) — produce a repeatable
+   native install for explicitly supported Pi models before reconsidering containers.
+2. [Phone visualization controls](phone-visualization-ui.md) — add the mobile picker,
+   generated parameter controls, start/stop state, and useful errors on top of the
+   existing API.
+3. [Runtime modernization](runtime-modernization.md) — continue removing production
+   dependence on the upstream demo layout and address duplicate FFT work when useful.
+4. [Network recovery hardening](network-recovery-hardening.md) — physically validate
+   LAN-to-AP fallback and add a recovery input before treating failure recovery as
+   field-proven.
 
-## How the plans relate
+Current FFT latency is accepted as sufficient. Performance measurement is not a gate
+unless a new Pi or packaging method visibly regresses.
 
-The plans are independently scoped, but they share these interfaces:
+## Shared boundaries
 
-```text
-visualization definitions + parameter schemas
-                    |
-             runtime/CLI contract
-              /             \
-     web supervisor       portable install
-              \             /
-          systemd services on the Pi
-                    |
-       LAN mode or fallback setup AP
-```
-
-- The runtime plan should establish the visualization registry and typed parameter
-  schema before the full web UI is built.
-- The deployment plan should establish supported hardware/OS combinations before a
-  container or install image is selected.
-- The network plan may be prototyped separately, but its captive/setup page should
-  eventually be served by, or clearly linked to, the web service.
-- The web service and network manager are separate services. A failure in either
-  must not corrupt visualization configuration or leave an unmanaged child process.
-
-## Suggested implementation order
-
-The selected implementation sequence is:
-
-1. Inventory current behavior and record the existing FFT latency as acceptable. No
-   performance-measurement gate is required.
-2. Implement the shared typed runtime/CLI contract and service-safe execution for the
-   FFT and sorting visualizations.
-3. Implement the allowlisted web supervisor/API MVP and boot-service template.
-
-Those three steps are now implemented. The service is enabled on the current Pi, and
-the API plus finite sorting/native-matrix path have been validated. See
-[web-service-operations.md](../web-service-operations.md) for the exact boundary,
-deployment state, and commands. The FFT audio path was not launched during this
-deployment validation because its configured microphone was absent.
-
-The known-network/fallback-AP controller and minimal phone setup page are now
-implemented for the current NetworkManager-based Pi. See
-[network-fallback-operations.md](../network-fallback-operations.md); destructive
-radio-transition acceptance remains pending because SSH is the current access path.
-
-Saved for later, in this order unless priorities change:
-
-1. Portable native installation and additional Pi support.
-2. Phone-focused UI, live FFT IPC, presets, and pairing improvements.
-3. Physical network recovery input, captive-DNS polish, and remaining hardware tests.
-4. Optional container feasibility work.
-
-Current FFT latency is accepted as sufficient. Future work should not add a benchmark
-gate unless performance visibly regresses or a supported Pi fails to render acceptably.
+The visualization registry and typed CLI contract are already implemented. The web
+service consumes that allowlist, while the privileged network helper is a separate
+NetworkManager-only service. Portability work owns installation of both services but
+must not merge their privilege boundaries.

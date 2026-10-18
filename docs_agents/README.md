@@ -11,9 +11,10 @@ Read in this order:
 5. [managed-visualization-inventory.md](managed-visualization-inventory.md) — the
    reviewed web allowlist, CLI/service modes, and current MVP boundary.
 
-Implemented and future work is tracked under [`plans/`](plans/README.md). Read the
-plan index before continuing a milestone because it records the selected order,
-completed MVP boundary, deferred work, and shared contracts.
+Unfinished work is tracked under [`plans/`](plans/README.md); completed milestones
+are retained in numbered order under
+[`plans_archvie/`](plans_archvie/README.md). Read both indexes before continuing a
+milestone because they separate deployed boundaries from remaining work.
 
 ## Project in one paragraph
 
@@ -29,7 +30,8 @@ This is a Raspberry Pi/HUB75 RGB-matrix playground whose primary application is 
 - Web-service behavior and operations: [web-service-operations.md](web-service-operations.md).
 - Network fallback behavior and recovery: [network-fallback-operations.md](network-fallback-operations.md).
 - Detailed visualizer explanations: `my_programs/fft_program/docs/`, but verify claims against code; some pages describe removed CLI flags, old defaults, or intended behavior.
-- Deferred portability/network/container work: [`plans/`](plans/README.md).
+- Active portability, UI, runtime, and network-hardening work:
+  [`plans/`](plans/README.md).
 
 ## Scope discipline
 

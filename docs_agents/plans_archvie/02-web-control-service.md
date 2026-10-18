@@ -1,6 +1,9 @@
-# Web Control Service Plan
+# 02 — Web Control Service Plan
 
-Status: supervisor/API MVP implemented; phone UI and live control deferred
+Status: archived — supervised API, boot service, and network proxy milestone completed
+
+The visualization phone UI and live-control work are tracked in
+[phone-visualization-ui.md](../plans/phone-visualization-ui.md).
 
 ## Goal
 
@@ -18,11 +21,11 @@ This plan covers all managed visualizations, not only the FFT application.
 
 ## Dependencies and boundaries
 
-- [Runtime architecture](runtime-architecture.md) supplies the shared registry,
+- [Runtime architecture](01-runtime-architecture.md) supplies the shared registry,
   parameter schema, and service-safe lifecycle.
-- [Portable deployment](portable-deployment.md) supplies the supported environment
+- [Portable deployment](../plans/portable-deployment.md) supplies the supported environment
   and installs the service unit.
-- [Network fallback](network-fallback-ap.md) makes this service reachable on either a
+- [Network fallback](03-network-fallback-ap.md) makes this service reachable on either a
   normal LAN or setup AP, but does not own visualization processes.
 
 ## Current constraints
