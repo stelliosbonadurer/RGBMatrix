@@ -1,0 +1,36 @@
+[Unit]
+Description=RGB Matrix NetworkManager fallback controller for %i
+Documentation=file:/home/%i/rgb_Matrix/docs_agents/network-fallback-operations.md
+After=NetworkManager.service
+Wants=NetworkManager.service
+ConditionPathExists=/home/%i/rgb_Matrix/matrix_network/service.py
+
+[Service]
+Type=simple
+User=root
+Group=%i
+WorkingDirectory=/home/%i/rgb_Matrix
+
+# RuntimeDirectory owns the group-readable Unix socket; StateDirectory protects the
+# device-specific setup passphrase. NetworkManager itself remains the credential
+# store for saved Wi-Fi profiles.
+RuntimeDirectory=rgb-matrix-network
+RuntimeDirectoryMode=0750
+StateDirectory=rgb-matrix-network
+StateDirectoryMode=0700
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m matrix_network.service \
+    --socket /run/rgb-matrix-network/control.sock \
+    --admin-token-file /home/%i/.config/rgb-matrix-controller/api-token \
+    --state-directory /var/lib/rgb-matrix-network
+
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+UMask=0077
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

@@ -38,12 +38,30 @@ class FakeSupervisor:
         return self.status()
 
 
+class FakeNetworkClient:
+    def __init__(self):
+        self.requests = []
+
+    def request(self, operation, *, payload=None, token=None):
+        self.requests.append((operation, payload, token))
+        if operation == "status":
+            return {"mode": "lan", "state": "lan_connected", "ipv4": "10.0.0.9"}
+        if operation == "provision":
+            return {"job_id": "job-1", "state": "scheduled"}
+        return {}
+
+
 class WebServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.supervisor = FakeSupervisor()
+        self.network = FakeNetworkClient()
         self.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
-            build_handler(self.supervisor, api_token="secret-token"),
+            build_handler(
+                self.supervisor,
+                api_token="secret-token",
+                network_client=self.network,
+            ),
         )
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -93,6 +111,26 @@ class WebServiceTests(unittest.TestCase):
             self.request("/api/v1/run", payload=["fft"], token="secret-token")
         self.assertEqual(caught.exception.code, 400)
         caught.exception.close()
+
+    def test_network_status_is_proxied_without_token(self) -> None:
+        status, body = self.request("/api/v1/network/status")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["mode"], "lan")
+        self.assertEqual(self.network.requests[-1], ("status", None, None))
+
+    def test_network_provision_forwards_body_and_bearer_token(self) -> None:
+        payload = {
+            "ssid": "Home",
+            "passphrase": "password",
+            "hidden": False,
+            "confirm_disconnect": True,
+        }
+        status, body = self.request(
+            "/api/v1/network/provision", payload=payload, token="setup-token"
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(body["job_id"], "job-1")
+        self.assertEqual(self.network.requests[-1], ("provision", payload, "setup-token"))
 
 
 if __name__ == "__main__":

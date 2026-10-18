@@ -27,6 +27,7 @@ This is a Raspberry Pi/HUB75 RGB-matrix playground whose primary application is 
 - Managed/API parameter contract: `matrix_controller/definitions.py` and
   `matrix_controller/schema.py`.
 - Web-service behavior and operations: [web-service-operations.md](web-service-operations.md).
+- Network fallback behavior and recovery: [network-fallback-operations.md](network-fallback-operations.md).
 - Detailed visualizer explanations: `my_programs/fft_program/docs/`, but verify claims against code; some pages describe removed CLI flags, old defaults, or intended behavior.
 - Deferred portability/network/container work: [`plans/`](plans/README.md).
 

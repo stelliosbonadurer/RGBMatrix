@@ -1,8 +1,8 @@
 [Unit]
 Description=RGB Matrix web control service for %i
 Documentation=file:/home/%i/rgb_Matrix/docs_agents/web-service-operations.md
-After=network.target
-Wants=network.target
+After=network.target rgb-matrix-network@%i.service
+Wants=network.target rgb-matrix-network@%i.service
 ConditionPathExists=/home/%i/rgb_Matrix/matrix_controller/web_service.py
 
 [Service]
@@ -25,6 +25,7 @@ ExecStart=/usr/bin/python3 -m matrix_controller.web_service \
     --host 0.0.0.0 \
     --port 8080 \
     --token-file /home/%i/.config/rgb-matrix-controller/api-token \
+    --network-socket /run/rgb-matrix-network/control.sock \
     --python /home/%i/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3 \
     --sudo
 
@@ -37,4 +38,3 @@ PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
-

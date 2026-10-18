@@ -1,12 +1,12 @@
 # Web Service MVP Operations
 
-Status: implemented, deployed, enabled at boot, and API/sorting-path tested on the
-current Pi on 2026-10-16.
+Status: visualization control deployed and tested on 2026-10-16; network setup proxy
+and minimal mobile setup page added on 2026-10-18.
 
 ## Current Pi deployment
 
 - Hostname: `raspberrypi`
-- Last known address: `10.247.186.223` (DHCP; rediscover if it changes)
+- Last known address: `192.168.1.204` on `SpectrumSetup-5B` (DHCP; rediscover if it changes)
 - Application path: `/home/stelliosbonadurer/rgb_Matrix`
 - Unit: `rgb-matrix-web@stelliosbonadurer.service`
 - Listener: `0.0.0.0:8080`
@@ -17,7 +17,7 @@ current Pi on 2026-10-16.
 
 Verified on the Pi:
 
-- all 21 hardware-free tests pass under `/usr/bin/python3`;
+- all 34 hardware-free tests pass under `/usr/bin/python3`;
 - the unit is both `enabled` and `active`;
 - `/healthz`, visualization listing, and status return successfully;
 - an authenticated finite `sorts`/`quick` launch reached the real native matrix path,
@@ -29,7 +29,8 @@ latency remains accepted; this is an audio-availability caveat, not a performanc
 
 ## What is implemented
 
-The MVP is intentionally a control API, not the later phone UI. It provides:
+The visualization surface remains an API. A minimal phone page now exists only for
+Wi-Fi provisioning at `/setup`. The service provides:
 
 - an explicit allowlist containing `fft` and `sorts`;
 - typed parameter metadata and validation;
@@ -39,8 +40,10 @@ The MVP is intentionally a control API, not the later phone UI. It provides:
 - bearer-token protection for state-changing requests; and
 - a systemd unit template for boot startup.
 
-Live FFT parameter changes, presets, polished mobile controls, mDNS, fallback Wi-Fi,
-portable installation, and container work remain deferred. For this MVP, changing a
+Live FFT parameter changes, presets, polished visualization controls, mDNS,
+portable installation, and container work remain deferred. Fallback Wi-Fi is a
+separate privileged service documented in
+[network-fallback-operations.md](network-fallback-operations.md). For this MVP, changing a
 parameter means calling `run` again; the supervisor stops the active process fully
 before launching the replacement.
 
@@ -51,7 +54,11 @@ before launching the replacement.
 - `matrix_controller/registry.py`: explicit product allowlist; no hardware imports.
 - `matrix_controller/supervisor.py`: exclusive subprocess ownership/state machine.
 - `matrix_controller/web_service.py`: standard-library HTTP and authentication layer.
+- `matrix_network/`: known-network policy, NetworkManager adapter, and privileged
+  Unix-socket service.
+- `matrix_controller/static/setup.html`: minimal phone Wi-Fi setup flow.
 - `deploy/systemd/rgb-matrix-web@.service`: boot service template.
+- `deploy/systemd/rgb-matrix-network@.service`: root network-helper template.
 - `tests/`: registry, supervisor, and loopback HTTP tests using fake processes.
 
 The web service never calls `launch_rgbmatrix.py`, accepts a script path, or uses a

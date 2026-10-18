@@ -20,6 +20,24 @@ HTTP request -> typed allowlist -> exclusive subprocess supervisor
 Changing an MVP parameter is a restart/switch operation. Live frame-boundary IPC is
 deferred. The service never invokes a shell or the heuristic developer launcher.
 
+## Network control plane
+
+`matrix_network` is deliberately separate from visualization supervision. A root
+systemd service owns NetworkManager changes and exposes a group-restricted Unix
+socket; the unprivileged HTTP process validates HTTP structure and forwards the
+narrow request. `NetworkController` contains policy and state transitions while
+`NetworkManagerBackend` contains shell-free `nmcli` mechanics. Candidate Wi-Fi
+profiles are promoted only after association plus local IPv4 assignment.
+
+```text
+phone -> HTTP :8080 -> unprivileged web service -> Unix socket -> root helper
+                                                               -> NetworkManager
+```
+
+The AP and LAN are exclusive modes on the initial single-radio target. The web and
+visualization services do not require `network-online.target`, so the setup page and
+matrix remain usable without internet connectivity.
+
 ## Startup
 
 `main.py` creates `MatrixApp`, adds shared-contract application flags (`--theme`,

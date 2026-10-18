@@ -1,8 +1,7 @@
 # Plans Index
 
-These documents are implementation plans for future work. Nothing described here
-should be assumed to exist until the relevant plan and acceptance checks are
-completed.
+These documents capture both implemented milestones and future work. Check each
+plan's status and acceptance notes rather than assuming every phase is complete.
 
 ## Separate plans
 
@@ -60,11 +59,16 @@ the API plus finite sorting/native-matrix path have been validated. See
 deployment state, and commands. The FFT audio path was not launched during this
 deployment validation because its configured microphone was absent.
 
+The known-network/fallback-AP controller and minimal phone setup page are now
+implemented for the current NetworkManager-based Pi. See
+[network-fallback-operations.md](../network-fallback-operations.md); destructive
+radio-transition acceptance remains pending because SSH is the current access path.
+
 Saved for later, in this order unless priorities change:
 
 1. Portable native installation and additional Pi support.
 2. Phone-focused UI, live FFT IPC, presets, and pairing improvements.
-3. Known-network selection and fallback AP provisioning.
+3. Physical network recovery input, captive-DNS polish, and remaining hardware tests.
 4. Optional container feasibility work.
 
 Current FFT latency is accepted as sufficient. Future work should not add a benchmark

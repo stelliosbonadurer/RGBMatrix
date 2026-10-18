@@ -33,9 +33,10 @@ These observations were verified against the code when this guide was written. R
   Confirm the current host instead of treating them as deployment constants.
 - Portable provisioning remains deferred. There is no `provision.sh` yet.
 
-## Web-service MVP limits
+## Web-service and network-control limits
 
-- The MVP is JSON API only; the phone-focused UI is deferred.
+- Visualization control remains JSON API only. `/setup` is a focused phone UI for
+  Wi-Fi provisioning, not a visualization picker.
 - Parameters are launch-time settings. Calling `run` again stops and restarts the child;
   live FFT frame-boundary IPC is not implemented.
 - The systemd unit is installed and tested on the current Pi, but assumes its specific
@@ -44,6 +45,12 @@ These observations were verified against the code when this guide was written. R
 - POST actions use a bearer token over plain HTTP. Bind beyond loopback only on a
   trusted LAN, and do not expose port 8080 to the internet.
 - GET status/list endpoints are intentionally unauthenticated in the MVP.
+- The fallback profile/controller is installed on the current Pi, but an actual
+  LAN-to-AP transition is untested because SSH is the only current management path.
+  Captive DNS and a physical recovery input are not implemented.
+- Credential-bearing `nmcli` calls use shell-free argv and redact failures, but the
+  passphrase may briefly be visible to a privileged same-host process. A D-Bus
+  secret-agent implementation would tighten this boundary.
 - Registry matrix options cover the common launcher controls, not every obscure
   upstream `SampleBase` flag.
 - A missing `iMM-6C` audio device will still make the FFT child fail; the service does
@@ -52,8 +59,9 @@ These observations were verified against the code when this guide was written. R
 ## Testing gaps
 
 Controller tests now cover schemas, allowlisting, argv construction, process switching,
-termination escalation, status reconciliation, HTTP parsing, and authentication with
-fake processes. There is still no CI, packaging metadata, or hardware test suite.
+termination escalation, status reconciliation, HTTP parsing/authentication, network
+grace periods, candidate rollback, profile guards, and secret-safe failures with fake
+processes/backends. There is still no CI, packaging metadata, or hardware test suite.
 Syntax/unit success does not prove native imports, PortAudio, sudo, systemd, terminal
 mode, or GPIO output. High-value future tests include settings round trips,
 frequency-bin construction, scaler state transitions, runtime-state serialization,

@@ -1,6 +1,7 @@
 # Known-Network and Fallback Access Point Plan
 
-Status: deferred; not part of the current implementation sequence
+Status: implemented for the current Bookworm/NetworkManager Pi on 2026-10-18;
+hardware fallback-transition acceptance remains pending
 
 ## Goal
 
@@ -21,6 +22,12 @@ temporary outages, reboots, and power loss.
   without LAN or internet access.
 
 ## Scope and assumptions
+
+Selected implementation values are one `wlan0` interface, NetworkManager 1.42+, a
+60-second boot grace, 120-second sustained-loss grace, 5/15/30-second retry pacing,
+a 45-second candidate timeout, and `192.168.50.1/24`. “Connected” means
+NetworkManager reports an active non-AP profile with a local IPv4 address; internet
+access is deliberately not part of health.
 
 - Target Raspberry Pi OS and its network stack must be fixed by the portable
   deployment plan before implementation. Prefer NetworkManager profiles and APIs if
@@ -159,9 +166,9 @@ path.
 
 ## Open decisions
 
-- Supported OS release and NetworkManager version.
-- Exact connectivity test: gateway/DHCP/local address only versus optional internet
-  reachability. Local network usability should not require internet.
-- AP subnet, SSID format, per-device secret generation, and captive portal mechanism.
-- Physical recovery input and user-visible status indicator.
-- Policy for auto-returning to a previously known LAN while AP mode is active.
+- Physical recovery input and user-visible status indicator remain open.
+- Automatic periodic return from an active AP to a previously known LAN is deferred;
+  the setup API exposes an explicit retry operation.
+- Captive DNS is deferred. Probe redirects plus the fixed manual URL are implemented.
+- See [network-fallback-operations.md](../network-fallback-operations.md) for selected
+  target values, deployment, and the remaining hardware acceptance matrix.

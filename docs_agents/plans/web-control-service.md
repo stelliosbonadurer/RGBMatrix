@@ -164,7 +164,8 @@ template. A parameter change restarts the active visualization in this milestone
 1. Build a responsive UI generated from parameter metadata where practical. Deferred.
 2. Add visualization selection, parameter editing, start/stop, status, and errors.
 3. The supplied systemd template is installed and enabled on the current Pi. Portable
-   installation and fallback-AP integration are deferred.
+   installation is deferred; fallback-AP integration and its focused setup page are
+   implemented.
 4. Advertise a stable local hostname with mDNS, while retaining an IP fallback. Deferred.
 
 ### Phase 5: live control and presets — deferred

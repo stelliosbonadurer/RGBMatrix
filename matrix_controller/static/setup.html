@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RGB Matrix Wi-Fi Setup</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { margin: 0; background: #111827; color: #f9fafb; }
+    main { max-width: 34rem; margin: auto; padding: 1.25rem; }
+    section { background: #1f2937; border-radius: .8rem; padding: 1rem; margin-bottom: 1rem; }
+    label { display: block; margin: .8rem 0 .3rem; }
+    input, select, button { box-sizing: border-box; width: 100%; min-height: 2.8rem; padding: .65rem; border-radius: .5rem; border: 1px solid #4b5563; font: inherit; }
+    input, select { background: #111827; color: #f9fafb; }
+    button { margin-top: .8rem; border: 0; background: #2563eb; color: white; font-weight: 700; }
+    button.secondary { background: #374151; }
+    button:disabled { opacity: .55; }
+    .inline { display: flex; gap: .6rem; align-items: center; }
+    .inline input { width: auto; min-height: auto; }
+    #message { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .muted { color: #d1d5db; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>RGB Matrix Wi-Fi Setup</h1>
+  <p class="muted">Connect this display to a saved or new local Wi-Fi network.</p>
+
+  <section>
+    <h2>Device status</h2>
+    <div id="status">Loading…</div>
+  </section>
+
+  <section>
+    <h2>Choose a network</h2>
+    <label for="token">Setup password</label>
+    <input id="token" type="password" autocomplete="current-password" placeholder="Same password used for the setup Wi-Fi">
+
+    <button id="scan" class="secondary" type="button">Scan for networks</button>
+    <label for="ssid">Network name</label>
+    <input id="ssid" list="networks" maxlength="32" autocomplete="off">
+    <datalist id="networks"></datalist>
+
+    <label for="passphrase">Network password</label>
+    <input id="passphrase" type="password" autocomplete="new-password">
+    <label class="inline"><input id="hidden" type="checkbox"> Hidden network</label>
+    <button id="connect" type="button">Connect</button>
+  </section>
+
+  <section>
+    <h2>Result</h2>
+    <div id="message" class="muted">No operation started.</div>
+  </section>
+</main>
+<script>
+  const statusBox = document.querySelector('#status');
+  const messageBox = document.querySelector('#message');
+  const tokenBox = document.querySelector('#token');
+  const scanButton = document.querySelector('#scan');
+  const connectButton = document.querySelector('#connect');
+
+  function headers() {
+    return { 'Authorization': `Bearer ${tokenBox.value}` };
+  }
+
+  async function parse(response) {
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `Request failed (${response.status})`);
+    return body;
+  }
+
+  async function refreshStatus() {
+    try {
+      const status = await parse(await fetch('/api/v1/network/status', {cache: 'no-store'}));
+      const address = status.ipv4 || 'none';
+      statusBox.textContent = `${status.mode}: ${status.state} — ${status.ssid || 'not connected'} (${address})`;
+    } catch (error) {
+      statusBox.textContent = error.message;
+    }
+  }
+
+  async function watchJob(jobId) {
+    // Provisioning normally removes the setup AP, so fetch failures are expected.
+    // If the candidate fails and the AP returns, polling resumes after the phone
+    // reconnects and reports the sanitized terminal result.
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      try {
+        const job = await parse(await fetch(`/api/v1/network/provision/${encodeURIComponent(jobId)}`, {
+          headers: headers(), cache: 'no-store'
+        }));
+        messageBox.textContent = job.message;
+        if (!['scheduled', 'running'].includes(job.state)) {
+          connectButton.disabled = false;
+          await refreshStatus();
+          return;
+        }
+      } catch (_error) {
+        // The radio may be changing modes. Keep the original reconnection guidance.
+      }
+    }
+  }
+
+  scanButton.addEventListener('click', async () => {
+    scanButton.disabled = true;
+    messageBox.textContent = 'Scanning…';
+    try {
+      const result = await parse(await fetch('/api/v1/network/scan', {headers: headers(), cache: 'no-store'}));
+      const list = document.querySelector('#networks');
+      list.replaceChildren(...result.networks.map(item => {
+        const option = document.createElement('option');
+        option.value = item.ssid;
+        option.label = `${item.signal}% — ${item.security}`;
+        return option;
+      }));
+      messageBox.textContent = `Found ${result.networks.length} network(s).`;
+    } catch (error) {
+      messageBox.textContent = error.message;
+    } finally {
+      scanButton.disabled = false;
+    }
+  });
+
+  connectButton.addEventListener('click', async () => {
+    connectButton.disabled = true;
+    messageBox.textContent = 'Scheduling connection…';
+    try {
+      const response = await fetch('/api/v1/network/provision', {
+        method: 'POST',
+        headers: {...headers(), 'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          ssid: document.querySelector('#ssid').value,
+          passphrase: document.querySelector('#passphrase').value,
+          hidden: document.querySelector('#hidden').checked,
+          confirm_disconnect: true
+        })
+      });
+      const job = await parse(response);
+      messageBox.textContent = `${job.message}\n\nThe setup Wi-Fi may disappear. If successful, reconnect your phone to the home network and open the Pi there. If it fails, reconnect to this setup Wi-Fi and return to http://192.168.50.1:8080/setup.`;
+      document.querySelector('#passphrase').value = '';
+      watchJob(job.job_id);
+    } catch (error) {
+      messageBox.textContent = error.message;
+      connectButton.disabled = false;
+    }
+  });
+
+  refreshStatus();
+  setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>
