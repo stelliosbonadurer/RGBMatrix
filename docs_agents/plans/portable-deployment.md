@@ -54,7 +54,9 @@ and performance checks pass.
 Build a versioned installer/provisioner that is safe to rerun:
 
 1. Verify model, architecture, OS release, free space, and required hardware.
-2. Install a pinned set of OS packages from named repositories.
+2. Install a pinned set of OS packages from named repositories. Network recovery
+   specifically needs `network-manager`, `python3-dbus`, and `gpiod`; preflight them
+   before enabling the network helper and GPIO recovery watcher.
 3. Fetch a pinned commit/tag of `rpi-rgb-led-matrix` as an explicit dependency.
 4. Create a project virtual environment with a supported Python version.
 5. Build/install the Python binding for that interpreter and architecture.

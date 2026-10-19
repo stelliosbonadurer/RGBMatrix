@@ -1,8 +1,9 @@
 """NetworkManager operations used by the policy controller.
 
-All externally supplied strings are passed as individual argv values. Nothing in this
-module invokes a shell. Profile mutations use UUIDs after creation/lookup so duplicate
-human-readable connection names cannot redirect a destructive operation.
+Non-secret values use individual ``nmcli`` argv entries and nothing invokes a shell.
+Passphrases use the system D-Bus adapter so they never enter a process argument list.
+Profile mutations use UUIDs after creation/lookup so duplicate human-readable names
+cannot redirect a destructive operation.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from .dbus_secrets import NetworkManagerDbusSecrets
 from .models import DeviceSnapshot, ScanResult, WifiProfile, NetworkOperationError
 from .nmcli import NmcliRunner, parse_property_lines, split_terse_line
 
@@ -22,11 +24,25 @@ MANAGED_PROFILE_PREFIX = "rgb-matrix-wifi-"
 class NetworkManagerBackend:
     """A narrow NetworkManager adapter for one configured Wi-Fi interface."""
 
-    def __init__(self, runner: NmcliRunner, interface: str = "wlan0"):
+    def __init__(
+        self,
+        runner: NmcliRunner,
+        interface: str = "wlan0",
+        secret_store: NetworkManagerDbusSecrets | None = None,
+    ):
         if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", interface):
             raise ValueError("invalid Wi-Fi interface name")
         self.runner = runner
         self.interface = interface
+        self.secret_store = secret_store
+
+    def _require_secret_store(self) -> NetworkManagerDbusSecrets:
+        if self.secret_store is None:
+            raise NetworkOperationError(
+                "dbus_unavailable",
+                "NetworkManager secret storage is not configured",
+            )
+        return self.secret_store
 
     def device_snapshot(self) -> DeviceSnapshot:
         result = self.runner.execute(
@@ -151,10 +167,6 @@ class NetworkManagerBackend:
                 address,
                 "ipv6.method",
                 "disabled",
-                "wifi-sec.key-mgmt",
-                "wpa-psk",
-                "wifi-sec.psk",
-                passphrase,
                 "connection.autoconnect",
                 "no",
                 "connection.autoconnect-priority",
@@ -162,6 +174,7 @@ class NetworkManagerBackend:
             ],
             sensitive=True,
         )
+        self._require_secret_store().set_wifi_psk(existing.uuid, passphrase)
         return existing.uuid
 
     def activate(self, profile_uuid: str, *, timeout: int = 30, sensitive: bool = False) -> None:
@@ -183,37 +196,17 @@ class NetworkManagerBackend:
 
     def create_candidate(self, *, job_id: str, ssid: str, passphrase: str, hidden: bool) -> WifiProfile:
         profile_name = f"{CANDIDATE_PREFIX}{job_id}"
-        arguments = [
-            "connection",
-            "add",
-            "type",
-            "wifi",
-            "ifname",
-            self.interface,
-            "con-name",
-            profile_name,
-            "ssid",
-            ssid,
-        ]
-        self.runner.execute(arguments, sensitive=True)
-        candidate = next((p for p in self.wifi_profiles() if p.name == profile_name), None)
-        if candidate is None:
-            raise NetworkOperationError("candidate_missing", "Candidate network profile was not created")
-
-        modifications = [
-            "connection",
-            "modify",
-            "uuid",
-            candidate.uuid,
-            "connection.autoconnect",
-            "no",
-            "802-11-wireless.hidden",
-            "yes" if hidden else "no",
-        ]
-        if passphrase:
-            modifications.extend(["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", passphrase])
-        self.runner.execute(modifications, sensitive=True)
-        return candidate
+        candidate_uuid = self._require_secret_store().add_wifi_candidate(
+            profile_name=profile_name,
+            interface=self.interface,
+            ssid=ssid,
+            passphrase=passphrase,
+            hidden=hidden,
+        )
+        # The UUID is assigned before AddConnection2, so a successful atomic D-Bus
+        # call needs no fallible nmcli rediscovery step and rollback always knows the
+        # exact profile to delete.
+        return WifiProfile(profile_name, candidate_uuid, False, 0)
 
     def promote_candidate(self, candidate: WifiProfile, *, job_id: str) -> None:
         self.runner.execute(
@@ -243,4 +236,3 @@ class NetworkManagerBackend:
         except OSError:
             return "SETUP"
         return compact[-4:] if len(compact) >= 4 else "SETUP"
-

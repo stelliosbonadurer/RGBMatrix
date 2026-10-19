@@ -1,0 +1,33 @@
+[Unit]
+Description=RGB Matrix physical network recovery button for %i
+Documentation=file:/home/%i/rgb_Matrix/docs_agents/network-fallback-operations.md
+After=rgb-matrix-network@%i.service
+Requires=rgb-matrix-network@%i.service
+ConditionPathExists=/dev/gpiochip0
+ConditionPathExists=/home/%i/rgb_Matrix/matrix_network/recovery_input.py
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/%i/rgb_Matrix
+ExecStart=/usr/bin/python3 -m matrix_network.recovery_input \
+    --socket /run/rgb-matrix-network/control.sock \
+    --chip gpiochip0 \
+    --line 19 \
+    --hold-seconds 5
+
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX
+DevicePolicy=closed
+DeviceAllow=/dev/gpiochip0 rw
+
+[Install]
+WantedBy=multi-user.target

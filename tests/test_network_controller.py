@@ -16,6 +16,8 @@ class FakeBackend:
         self.activation_results: dict[str, DeviceSnapshot | Exception] = {}
         self.deleted: list[str] = []
         self.candidate: WifiProfile | None = None
+        self.started_ap = 0
+        self.activation_attempts: list[str] = []
 
     def device_snapshot(self):
         return self.snapshot
@@ -24,6 +26,7 @@ class FakeBackend:
         return list(self.saved)
 
     def activate(self, uuid, **_kwargs):
+        self.activation_attempts.append(uuid)
         outcome = self.activation_results.get(uuid)
         if isinstance(outcome, Exception):
             raise outcome
@@ -31,6 +34,7 @@ class FakeBackend:
             self.snapshot = outcome
 
     def start_ap(self, _uuid):
+        self.started_ap += 1
         self.snapshot = DeviceSnapshot(100, AP_PROFILE_NAME, "192.168.50.1")
         return self.snapshot
 
@@ -82,6 +86,52 @@ class NetworkControllerTests(unittest.TestCase):
             controller.provision(job_id="job", ssid="Home", passphrase="password", hidden=False)
         self.assertEqual(backend.deleted, ["candidate-uuid"])
         self.assertEqual(controller.status()["mode"], "setup_ap")
+
+    def test_sustained_loss_uses_longer_grace_and_reconnect_cancels_it(self) -> None:
+        clock = [0.0]
+        backend = FakeBackend()
+        backend.snapshot = DeviceSnapshot(100, "Home", "10.0.0.9")
+        controller = self.make_controller(backend, clock)
+        controller.tick()
+
+        backend.snapshot = DeviceSnapshot(30, None, None)
+        clock[0] = 10.0
+        controller.tick()
+        clock[0] = 129.0
+        controller.tick()
+        self.assertEqual(backend.started_ap, 0)
+
+        backend.snapshot = DeviceSnapshot(100, "Home", "10.0.0.10")
+        controller.tick()
+        backend.snapshot = DeviceSnapshot(30, None, None)
+        clock[0] = 200.0
+        controller.tick()
+        clock[0] = 319.0
+        controller.tick()
+        self.assertEqual(backend.started_ap, 0)
+        clock[0] = 320.0
+        controller.tick()
+        self.assertEqual(backend.started_ap, 1)
+
+    def test_candidate_without_dhcp_address_is_removed_and_ap_restored(self) -> None:
+        backend = FakeBackend()
+        backend.candidate = WifiProfile("candidate", "candidate-uuid", False, 0)
+        backend.activation_results["candidate-uuid"] = DeviceSnapshot(100, "candidate", None)
+        controller = self.make_controller(backend, [0.0])
+
+        with self.assertRaises(NetworkOperationError) as caught:
+            controller.provision(job_id="job", ssid="Home", passphrase="password", hidden=False)
+        self.assertEqual(caught.exception.code, "provision_failed")
+        self.assertEqual(backend.deleted, ["candidate-uuid"])
+        self.assertEqual(controller.status()["mode"], "setup_ap")
+
+    def test_existing_ap_is_reconciled_after_service_restart(self) -> None:
+        backend = FakeBackend()
+        backend.snapshot = DeviceSnapshot(100, AP_PROFILE_NAME, "192.168.50.1")
+        controller = self.make_controller(backend, [0.0])
+        controller.tick()
+        self.assertEqual(controller.status()["state"], "ap_ready")
+        self.assertEqual(backend.started_ap, 0)
 
     def test_forget_rejects_active_and_last_profiles(self) -> None:
         backend = FakeBackend()

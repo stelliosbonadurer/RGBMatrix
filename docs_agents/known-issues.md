@@ -45,12 +45,12 @@ These observations were verified against the code when this guide was written. R
 - POST actions use a bearer token over plain HTTP. Bind beyond loopback only on a
   trusted LAN, and do not expose port 8080 to the internet.
 - GET status/list endpoints are intentionally unauthenticated in the MVP.
-- The fallback profile/controller is installed on the current Pi, but an actual
-  LAN-to-AP transition is untested because SSH is the only current management path.
-  Captive DNS and a physical recovery input are not implemented.
-- Credential-bearing `nmcli` calls use shell-free argv and redact failures, but the
-  passphrase may briefly be visible to a privileged same-host process. A D-Bus
-  secret-agent implementation would tighten this boundary.
+- The fallback profile/controller and physical recovery watcher are installed on the
+  current Pi, but an attended LAN-to-AP transition and real button press remain to be
+  tested. Captive DNS is intentionally not implemented; use the fixed setup URL.
+- The recovery button defaults to BCM GPIO 19 because it is free under
+  `adafruit-hat`. Other matrix mappings or added hardware require a fresh pin-conflict
+  review before enabling the watcher.
 - Registry matrix options cover the common launcher controls, not every obscure
   upstream `SampleBase` flag.
 - A missing `iMM-6C` audio device will still make the FFT child fail; the service does
@@ -60,8 +60,9 @@ These observations were verified against the code when this guide was written. R
 
 Controller tests now cover schemas, allowlisting, argv construction, process switching,
 termination escalation, status reconciliation, HTTP parsing/authentication, network
-grace periods, candidate rollback, profile guards, and secret-safe failures with fake
-processes/backends. There is still no CI, packaging metadata, or hardware test suite.
+grace periods, DHCP-less candidate rollback, restart reconciliation, physical hold
+detection and local-peer authorization, profile guards, and secret-safe failures with
+fake processes/backends. There is still no CI, packaging metadata, or hardware test suite.
 Syntax/unit success does not prove native imports, PortAudio, sudo, systemd, terminal
 mode, or GPIO output. High-value future tests include settings round trips,
 frequency-bin construction, scaler state transitions, runtime-state serialization,

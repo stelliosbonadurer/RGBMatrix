@@ -56,6 +56,14 @@ class NetworkDaemonTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertNotIn(secret, repr(response))
 
+    def test_physical_recovery_operation_requires_root_unix_peer(self) -> None:
+        request = {"operation": "local_force_ap", "payload": {}}
+        denied = self.daemon.dispatch(request, peer_uid=1000)
+        self.assertEqual(denied["status"], 403)
+        accepted = self.daemon.dispatch(request, peer_uid=0)
+        self.assertTrue(accepted["ok"])
+        self.assertEqual(accepted["result"]["operation"], "force_ap")
+
 
 if __name__ == "__main__":
     unittest.main()

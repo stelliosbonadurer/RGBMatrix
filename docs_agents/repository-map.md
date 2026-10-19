@@ -7,6 +7,7 @@
 | `launch_rgbmatrix.py` | Workspace launcher | Discovers runnable Python files below `my_programs/` and the local upstream sample directory. Runs the selected file with its own directory as the working directory. |
 | `python3 -m matrix_controller.web_service` | Managed HTTP API | Lists, validates, starts, switches, stops, and reports the explicit `fft`/`sorts` allowlist. Does not import matrix or audio libraries. |
 | `python3 -m matrix_network.service` | Privileged network helper | Applies known-network/fallback-AP policy through NetworkManager and exposes only a local Unix socket. Normally run by systemd as root. |
+| `python3 -m matrix_network.recovery_input` | Physical recovery watcher | Uses `gpiomon` and a five-second GPIO 19 hold to request setup AP through a root-peer-only Unix operation. Normally run by systemd as root. |
 | `my_programs/fft_program/main.py` | Current FFT visualizer | The active application and only code path that assembles the modular audio, scaling, themes, layers, rendering, keyboard controls, and state persistence. |
 | `my_programs/visualize_sorts.py` | Sorting visualizer | Preserves its terminal menu and also supports non-interactive `single`, `all`, and `random` service modes. |
 | `my_programs/fft_program/fft_sandbox.py` | Older monolithic FFT experiment | Still discoverable by the launcher; do not mistake it for the modular application. |
@@ -67,8 +68,9 @@ matrix_controller/
 ```
 
 `matrix_network/` contains the separate privileged state machine, NetworkManager
-backend, Unix-socket protocol, and unprivileged client. It must not absorb
-visualization launching or expose a network listener itself.
+backend, D-Bus secret writer, Unix-socket protocol, unprivileged client, and isolated
+GPIO recovery watcher. It must not absorb visualization launching or expose a network
+listener itself.
 
 The product registry is intentionally separate from `launch_rgbmatrix.py` discovery.
 Discovery is convenient for trusted terminal use; it must not become a web execution

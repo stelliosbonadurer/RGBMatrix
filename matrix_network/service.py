@@ -9,7 +9,9 @@ import logging
 import os
 import secrets
 import signal
+import socket
 import socketserver
+import struct
 import threading
 import time
 from collections import OrderedDict
@@ -18,6 +20,7 @@ from typing import Any
 
 from .backend import NetworkManagerBackend
 from .controller import NetworkController, NetworkPolicy, validate_credentials
+from .dbus_secrets import NetworkManagerDbusSecrets
 from .models import NetworkOperationError, NetworkValidationError
 from .nmcli import NmcliRunner
 
@@ -46,7 +49,7 @@ class NetworkDaemon:
         self._jobs_lock = threading.RLock()
         self._active_job: str | None = None
 
-    def dispatch(self, request: Any) -> dict[str, Any]:
+    def dispatch(self, request: Any, *, peer_uid: int | None = None) -> dict[str, Any]:
         if not isinstance(request, dict):
             return self._error(400, "invalid_request", "request must be a JSON object")
         operation = request.get("operation")
@@ -97,6 +100,15 @@ class NetworkDaemon:
                 self._validate_fields(payload, required={"confirm_disconnect"})
                 if payload["confirm_disconnect"] is not True:
                     raise NetworkValidationError("confirm_disconnect must be true")
+                result = self._schedule_job("force_ap", {})
+            elif operation == "local_force_ap":
+                # This operation deliberately has no bearer-token equivalent.  Linux
+                # supplies the Unix peer UID; only the root GPIO watcher (or a local
+                # root operator) can reach this path.  HTTP proxy requests originate
+                # from the unprivileged service account and therefore cannot spoof it.
+                if peer_uid != 0:
+                    raise PermissionError("physical recovery requires a local root peer")
+                self._validate_fields(payload, required=set())
                 result = self._schedule_job("force_ap", {})
             elif operation == "retry_known":
                 self._require_scope(token, {"admin", "setup"})
@@ -258,6 +270,23 @@ class NetworkRequestHandler(socketserver.StreamRequestHandler):
 
     daemon: NetworkDaemon
 
+    def _peer_uid(self) -> int | None:
+        """Return Linux SO_PEERCRED UID, failing closed on unsupported platforms."""
+
+        option = getattr(socket, "SO_PEERCRED", None)
+        if option is None:
+            return None
+        try:
+            credentials = self.request.getsockopt(
+                socket.SOL_SOCKET,
+                option,
+                struct.calcsize("3i"),
+            )
+            _pid, uid, _gid = struct.unpack("3i", credentials)
+            return uid
+        except (OSError, struct.error):
+            return None
+
     def handle(self) -> None:
         raw = self.rfile.readline(MAX_REQUEST_BYTES + 1)
         if len(raw) > MAX_REQUEST_BYTES:
@@ -268,7 +297,10 @@ class NetworkRequestHandler(socketserver.StreamRequestHandler):
             except (UnicodeDecodeError, json.JSONDecodeError):
                 response = NetworkDaemon._error(400, "invalid_json", "request must contain UTF-8 JSON")
             else:
-                response = self.server.daemon.dispatch(request)  # type: ignore[attr-defined]
+                response = self.server.daemon.dispatch(  # type: ignore[attr-defined]
+                    request,
+                    peer_uid=self._peer_uid(),
+                )
         self.wfile.write(json.dumps(response, separators=(",", ":")).encode("utf-8") + b"\n")
 
 
@@ -331,7 +363,15 @@ def main() -> int:
         raise SystemExit(f"could not initialize network secrets: {exc}") from exc
 
     runner = NmcliRunner()
-    backend = NetworkManagerBackend(runner, interface=args.interface)
+    try:
+        secret_store = NetworkManagerDbusSecrets()
+    except NetworkOperationError as exc:
+        raise SystemExit(f"could not initialize NetworkManager secret storage: {exc}") from exc
+    backend = NetworkManagerBackend(
+        runner,
+        interface=args.interface,
+        secret_store=secret_store,
+    )
     suffix = backend.read_interface_suffix(args.interface)
     ap_ssid = f"RGB-Matrix-{suffix}"
     policy = NetworkPolicy(

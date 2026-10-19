@@ -26,17 +26,24 @@ deferred. The service never invokes a shell or the heuristic developer launcher.
 systemd service owns NetworkManager changes and exposes a group-restricted Unix
 socket; the unprivileged HTTP process validates HTTP structure and forwards the
 narrow request. `NetworkController` contains policy and state transitions while
-`NetworkManagerBackend` contains shell-free `nmcli` mechanics. Candidate Wi-Fi
-profiles are promoted only after association plus local IPv4 assignment.
+`NetworkManagerBackend` uses shell-free `nmcli` for non-secret operations and the
+system D-Bus for password-bearing settings. Candidate Wi-Fi profiles are created in
+one D-Bus transaction and promoted only after association plus local IPv4 assignment.
 
 ```text
 phone -> HTTP :8080 -> unprivileged web service -> Unix socket -> root helper
                                                                -> NetworkManager
+physical button -> root GPIO watcher -> root-peer-only Unix operation -> root helper
 ```
 
 The AP and LAN are exclusive modes on the initial single-radio target. The web and
 visualization services do not require `network-online.target`, so the setup page and
 matrix remain usable without internet connectivity.
+
+The GPIO watcher is a separate service, not part of the policy loop. It monitors BCM
+GPIO 19 with `gpiomon`, requires a five-second hold, and has no network listener. The
+helper verifies its UID with `SO_PEERCRED`, so the physical-only operation cannot be
+forwarded by the unprivileged HTTP service.
 
 ## Startup
 
