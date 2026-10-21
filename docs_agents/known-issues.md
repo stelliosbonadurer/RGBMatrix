@@ -14,8 +14,8 @@ These observations were verified against the code when this guide was written. R
 ## Runtime edge cases
 
 - The FFT service path is non-interactive, but most older standalone programs still
-  assume a TTY or upstream `SampleBase` lifecycle. Only `fft` and `sorts` are in the
-  managed allowlist.
+  assume a TTY or upstream `SampleBase` lifecycle. Only `system_info`, `fft`, and
+  `sorts` are in the managed allowlist.
 - The audio callback stores only one input channel because `InputStream` is opened with `channels=1`; setting `AudioSettings.channel` above zero will index past that array.
 - Layer `bins` defaults to 64 independently of actual matrix width. A non-64-column panel can produce layer arrays whose width does not match the canvas.
 - Pressing `r`/`R` rebuilds only the single-mode bin set. Layer frequency ranges are independent and remain unchanged.
@@ -35,8 +35,9 @@ These observations were verified against the code when this guide was written. R
 
 ## Web-service and network-control limits
 
-- Visualization control remains JSON API only. `/setup` is a focused phone UI for
-  Wi-Fi provisioning, not a visualization picker.
+- The `/` phone UI lists visualizations, reports current state, and quits the active
+  process. Starting/switching visualizations and changing parameters still require
+  the JSON API. `/setup` remains a separate Wi-Fi provisioning page.
 - Parameters are launch-time settings. Calling `run` again stops and restarts the child;
   live FFT frame-boundary IPC is not implemented.
 - The systemd unit is installed and tested on the current Pi, but assumes its specific
@@ -44,6 +45,9 @@ These observations were verified against the code when this guide was written. R
   portable installer.
 - POST actions use a bearer token over plain HTTP. Bind beyond loopback only on a
   trusted LAN, and do not expose port 8080 to the internet.
+- Six-digit pairing improves phone usability but not transport security. A device
+  capable of sniffing the trusted LAN can observe a pairing exchange or bearer token;
+  HTTPS remains necessary before using this on an untrusted network.
 - GET status/list endpoints are intentionally unauthenticated in the MVP.
 - The fallback profile/controller and physical recovery watcher are installed on the
   current Pi, but an attended LAN-to-AP transition and real button press remain to be

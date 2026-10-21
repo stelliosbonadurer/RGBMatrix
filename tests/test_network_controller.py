@@ -18,12 +18,16 @@ class FakeBackend:
         self.candidate: WifiProfile | None = None
         self.started_ap = 0
         self.activation_attempts: list[str] = []
+        self.radio_ssid: str | None = None
 
     def device_snapshot(self):
         return self.snapshot
 
     def known_profiles(self):
         return list(self.saved)
+
+    def active_ssid(self):
+        return self.radio_ssid
 
     def activate(self, uuid, **_kwargs):
         self.activation_attempts.append(uuid)
@@ -63,9 +67,11 @@ class NetworkControllerTests(unittest.TestCase):
     def test_connected_lan_is_left_active(self) -> None:
         backend = FakeBackend()
         backend.snapshot = DeviceSnapshot(100, "Home", "10.0.0.9")
+        backend.radio_ssid = "Actual Wi-Fi"
         controller = self.make_controller(backend, [0.0])
         controller.tick()
         self.assertEqual(controller.status()["mode"], "lan")
+        self.assertEqual(controller.status()["ssid"], "Actual Wi-Fi")
 
     def test_no_known_network_starts_ap_only_after_boot_grace(self) -> None:
         clock = [0.0]

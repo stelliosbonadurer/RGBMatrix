@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .definitions import FFT_PARAMETERS, SORT_PARAMETERS
+from .definitions import FFT_PARAMETERS, MATRIX_PARAMETERS, SORT_PARAMETERS
 from .schema import ValidationError, VisualizationSpec
 
 
@@ -34,6 +34,14 @@ def build_default_registry(workspace_root: Path | None = None) -> Registry:
     return Registry(
         (
             VisualizationSpec(
+                visualization_id="system_info",
+                display_name="Connection Info",
+                description="Shows the Wi-Fi name, controller URL, and pairing code.",
+                script_path=root / "my_programs" / "system_info.py",
+                working_directory=root / "my_programs",
+                parameters=MATRIX_PARAMETERS,
+            ),
+            VisualizationSpec(
                 visualization_id="fft",
                 display_name="Music FFT",
                 description="Real-time audio spectrum visualization.",
@@ -52,4 +60,3 @@ def build_default_registry(workspace_root: Path | None = None) -> Registry:
             ),
         )
     )
-

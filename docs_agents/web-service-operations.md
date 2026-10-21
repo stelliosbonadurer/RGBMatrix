@@ -1,7 +1,8 @@
 # Web Service MVP Operations
 
 Status: visualization control deployed and tested on 2026-10-16; network setup proxy
-and minimal mobile setup page added on 2026-10-18.
+and minimal mobile setup page added on 2026-10-18; visualization catalog/status/stop
+UI added at `/` on 2026-10-19.
 
 ## Current Pi deployment
 
@@ -15,11 +16,15 @@ and minimal mobile setup page added on 2026-10-18.
 - Visualization interpreter:
   `/home/stelliosbonadurer/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3`
 
-Verified on the Pi:
+Verified on the Pi after the boot-display/pairing refactor:
 
-- all 34 hardware-free tests pass under `/usr/bin/python3`;
+- all 61 hardware-free tests pass under `/usr/bin/python3`;
 - the unit is both `enabled` and `active`;
-- `/healthz`, visualization listing, and status return successfully;
+- `system_info` remains running on the real matrix hardware;
+- the terminal reader matches the stored boot code and service restarts preserve it;
+- pairing exchange, scoped authorization, and logout pass end to end without logging
+  the code or temporary token;
+- `/healthz`, visualization listing, network status, and supervisor status return successfully;
 - an authenticated finite `sorts`/`quick` launch reached the real native matrix path,
   exited with code 0, cleared the display, and returned the supervisor to `idle`.
 
@@ -29,16 +34,42 @@ latency remains accepted; this is an audio-availability caveat, not a performanc
 
 ## What is implemented
 
-The visualization surface remains an API. A minimal phone page now exists only for
-Wi-Fi provisioning at `/setup`. The service provides:
+The responsive `/` page lists the managed visualizations, highlights the active one,
+polls supervisor status, and can stop it after six-digit pairing. Wi-Fi provisioning
+is a separate phone page at `/setup`. The service provides:
 
-- an explicit allowlist containing `fft` and `sorts`;
+- an explicit allowlist containing `system_info`, `fft`, and `sorts`;
 - typed parameter metadata and validation;
 - list, status, run/switch, and stop endpoints;
 - one supervised visualization process at a time;
 - process-group SIGTERM with timeout/SIGKILL escalation;
 - bearer-token protection for state-changing requests; and
 - a systemd unit template for boot startup.
+
+At a real Pi boot, `boot_code.py` tags a random six-digit code with the kernel boot ID
+in `/var/lib/rgb-matrix-controller/boot-pairing.json`. A web-service restart reuses
+that code; the next full boot rotates it. The supervised `system_info` visualization
+starts automatically and shows the actual SSID, URL, and code together without labels.
+Only an overlong SSID or URL scrolls within its own line. Starting FFT or sorts
+replaces it through the existing exclusive supervisor, so only one process owns GPIO.
+
+The boot code exchanges for random four-hour visualization-only tokens and can pair
+multiple devices during that boot. Temporary tokens cannot use network administration
+routes, are capped/rate-limited in memory, and are all revoked when the service
+restarts. The browser keeps its token in `sessionStorage`, so it
+survives a refresh in the same tab but is discarded when that tab closes. Tokens and
+codes never appear in URLs or request logs. Visualization launch and parameter
+controls remain API-only in this UI slice.
+
+Read the same code locally without handling the permanent token:
+
+```bash
+cd ~/rgb_Matrix
+python3 -m matrix_controller.boot_code
+```
+
+Pairing endpoints are `GET /api/v1/pairing/status` and POST operations `exchange` and
+`logout` under `/api/v1/pairing/`.
 
 Live FFT parameter changes, presets, polished visualization controls, mDNS,
 portable installation, and container work remain deferred. Fallback Wi-Fi is a
@@ -52,11 +83,13 @@ before launching the replacement.
 - `matrix_controller/schema.py`: immutable typed parameter and visualization contracts.
 - `matrix_controller/definitions.py`: shared matrix, FFT, and sorting definitions.
 - `matrix_controller/registry.py`: explicit product allowlist; no hardware imports.
+- `matrix_controller/boot_code.py`: boot-ID-scoped code persistence and terminal command.
 - `matrix_controller/supervisor.py`: exclusive subprocess ownership/state machine.
 - `matrix_controller/web_service.py`: standard-library HTTP and authentication layer.
 - `matrix_network/`: known-network policy, NetworkManager adapter, and privileged
   Unix-socket service.
 - `matrix_controller/static/setup.html`: minimal phone Wi-Fi setup flow.
+- `my_programs/system_info.py`: supervised boot instructions rendered on the panel.
 - `deploy/systemd/rgb-matrix-web@.service`: boot service template.
 - `deploy/systemd/rgb-matrix-network@.service`: root network-helper template.
 - `tests/`: registry, supervisor, and loopback HTTP tests using fake processes.

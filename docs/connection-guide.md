@@ -18,8 +18,9 @@ Open the service in a browser:
 http://raspberrypi.local:8080
 ```
 
-The current web service provides an API and a Wi-Fi setup page. The phone-friendly
-visualization picker is planned but not implemented yet.
+The control page lists every managed visualization, shows what is running, and can
+quit the current visualization. Starting or configuring one still uses the API while
+the next UI phase is developed. Wi-Fi provisioning remains available at `/setup`.
 
 ## Addresses by network
 
@@ -80,10 +81,36 @@ systemctl status "rgb-matrix-network@$USER.service"
 systemctl status "rgb-matrix-recovery-button@$USER.service"
 ```
 
+## Pairing a phone for controls
+
+At every Pi boot, the controller creates a six-digit pairing code and shows three
+unlabeled lines together on the matrix: the Wi-Fi SSID, the exact controller URL,
+and the code. A line scrolls horizontally only when it is too wide for the panel.
+The phone does not need the permanent API token. If the display is hard to read,
+print the same code from a terminal:
+
+```bash
+ssh stelliosbonadurer@raspberrypi.local \
+  "cd ~/rgb_Matrix && python3 -m matrix_controller.boot_code"
+```
+
+1. Open `http://raspberrypi.local:8080` or the Pi's current address.
+2. Enter the six digits under **Six-digit phone code**.
+3. Tap **Pair phone**.
+
+The code remains the same for the current Pi boot and can pair multiple local devices;
+a full reboot rotates it. The resulting phone session can control visualizations but
+cannot change Wi-Fi. It expires after four hours, when the web-service process
+restarts, or when **Forget access in this tab** is selected. Closing the browser tab
+also removes it from that browser because it is stored only in `sessionStorage`.
+
+Pairing is a trusted-LAN convenience feature: this service uses plain HTTP, so do not
+use it on an untrusted network or expose port 8080 to the internet.
+
 ## Starting a visualization through the API
 
-State-changing API calls require the token stored on the Pi. Keep it private. This
-example reads it into a temporary shell variable without printing it:
+Direct state-changing API calls require the permanent token stored on the Pi. Keep it
+private. This example reads it into a temporary shell variable without printing it:
 
 ```bash
 RGB_MATRIX_TOKEN="$(ssh stelliosbonadurer@raspberrypi.local \

@@ -4,6 +4,7 @@ import unittest
 
 from matrix_network.backend import AP_PROFILE_NAME, NetworkManagerBackend
 from matrix_network.models import DeviceSnapshot, WifiProfile
+from matrix_network.nmcli import CommandResult
 
 
 class RecordingRunner:
@@ -40,6 +41,18 @@ class FakeBackend(NetworkManagerBackend):
 
 
 class NetworkBackendTests(unittest.TestCase):
+    def test_active_ssid_uses_in_use_scan_row(self) -> None:
+        class ActiveRunner:
+            def execute(self, arguments, **_kwargs):
+                self.arguments = list(arguments)
+                return CommandResult(0, " :Neighbor\n*:Studio\\: East\n", "")
+
+        runner = ActiveRunner()
+        backend = NetworkManagerBackend(runner)
+        self.assertEqual(backend.active_ssid(), "Studio: East")
+        self.assertIn("--rescan", runner.arguments)
+        self.assertIn("no", runner.arguments)
+
     def test_ap_passphrase_never_appears_in_nmcli_arguments(self) -> None:
         secret = "not-in-process-argv"
         runner = RecordingRunner()

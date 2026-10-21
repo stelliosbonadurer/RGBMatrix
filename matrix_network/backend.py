@@ -129,6 +129,32 @@ class NetworkManagerBackend:
                 best_by_network[key] = item
         return sorted(best_by_network.values(), key=lambda item: (-item.signal, item.ssid))[:limit]
 
+    def active_ssid(self) -> str | None:
+        """Return the radio SSID rather than NetworkManager's profile name."""
+
+        result = self.runner.execute(
+            [
+                "-t",
+                "--escape",
+                "yes",
+                "-f",
+                "IN-USE,SSID",
+                "device",
+                "wifi",
+                "list",
+                "ifname",
+                self.interface,
+                "--rescan",
+                "no",
+            ],
+            timeout=10.0,
+        )
+        for line in result.stdout.splitlines():
+            fields = split_terse_line(line)
+            if len(fields) == 2 and fields[0] == "*" and fields[1]:
+                return fields[1]
+        return None
+
     def ensure_ap_profile(self, *, ssid: str, passphrase: str, address: str) -> str:
         existing = next((p for p in self.wifi_profiles() if p.name == AP_PROFILE_NAME), None)
         if existing is None:

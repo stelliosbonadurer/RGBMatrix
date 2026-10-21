@@ -5,11 +5,13 @@
 | Path | Role | Notes |
 | --- | --- | --- |
 | `launch_rgbmatrix.py` | Workspace launcher | Discovers runnable Python files below `my_programs/` and the local upstream sample directory. Runs the selected file with its own directory as the working directory. |
-| `python3 -m matrix_controller.web_service` | Managed HTTP API | Lists, validates, starts, switches, stops, and reports the explicit `fft`/`sorts` allowlist. Does not import matrix or audio libraries. |
+| `python3 -m matrix_controller.web_service` | Managed HTTP API | Creates/reuses the boot code, launches connection info, and controls the explicit visualization allowlist. Does not import matrix or audio libraries. |
+| `python3 -m matrix_controller.boot_code` | Pairing code reader | Prints the same six-digit code displayed on the matrix for the current Pi boot. |
 | `python3 -m matrix_network.service` | Privileged network helper | Applies known-network/fallback-AP policy through NetworkManager and exposes only a local Unix socket. Normally run by systemd as root. |
 | `python3 -m matrix_network.recovery_input` | Physical recovery watcher | Uses `gpiomon` and a five-second GPIO 19 hold to request setup AP through a root-peer-only Unix operation. Normally run by systemd as root. |
 | `my_programs/fft_program/main.py` | Current FFT visualizer | The active application and only code path that assembles the modular audio, scaling, themes, layers, rendering, keyboard controls, and state persistence. |
 | `my_programs/visualize_sorts.py` | Sorting visualizer | Preserves its terminal menu and also supports non-interactive `single`, `all`, and `random` service modes. |
+| `my_programs/system_info.py` | Boot connection display | Cycles the active SSID, controller URL, and boot pairing code; automatically yields through the shared supervisor. |
 | `my_programs/fft_program/fft_sandbox.py` | Older monolithic FFT experiment | Still discoverable by the launcher; do not mistake it for the modular application. |
 
 The normal launcher invocation is:
@@ -61,8 +63,12 @@ Built-in theme names are `autumn`, `dynamic`, `dynamic_lateral_gradient`, `fores
 matrix_controller/
 ├── schema.py          immutable parameter/visualization contracts and validation
 ├── definitions.py     shared matrix, FFT, and sorting parameters
-├── registry.py        explicit two-program product allowlist
+├── registry.py        explicit product allowlist, including connection info
+├── boot_code.py       boot-ID-scoped six-digit code and terminal reader
+├── pairing.py         boot-code exchange and temporary control sessions
 ├── supervisor.py      one-child state machine and process-group teardown
+├── static/index.html  responsive visualization catalog/status/stop page
+├── static/control.*   control-page styles and browser behavior
 ├── static/setup.html  minimal phone Wi-Fi provisioning page
 └── web_service.py     authenticated standard-library HTTP API and network proxy
 ```

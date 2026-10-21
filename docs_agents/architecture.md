@@ -3,7 +3,7 @@
 ## Control plane
 
 `matrix_controller` is deliberately hardware-independent. `Registry` exposes only the
-reviewed `fft` and `sorts` definitions. `ParameterSpec` normalizes JSON/CLI values and
+reviewed `system_info`, `fft`, and `sorts` definitions. `ParameterSpec` normalizes JSON/CLI values and
 constructs fixed argument vectors. `VisualizationSupervisor` serializes lifecycle
 operations with one lock and owns at most one child process group. The HTTP layer only
 parses requests, checks the bearer token for POST operations, and delegates to the
@@ -12,7 +12,7 @@ supervisor.
 ```text
 HTTP request -> typed allowlist -> exclusive subprocess supervisor
                                       |
-                         FFT or sorting child process
+                      info, FFT, or sorting child process
                                       |
                               native matrix binding
 ```
@@ -44,6 +44,17 @@ The GPIO watcher is a separate service, not part of the policy loop. It monitors
 GPIO 19 with `gpiomon`, requires a five-second hold, and has no network listener. The
 helper verifies its UID with `SO_PEERCRED`, so the physical-only operation cannot be
 forwarded by the unprivileged HTTP service.
+
+Phone control pairing has a small persistent boot boundary. The web service compares
+the saved kernel boot ID with the current one, rotates the six-digit code only on a
+real boot, and starts `system_info` through the same exclusive supervisor used by all
+other visualizations. After the upstream matrix driver drops privileges, it refreshes
+public SSID/address status through the web service's loopback endpoint; protected code
+and font files are loaded before matrix initialization. `PairingManager` exchanges the reusable boot code for random
+four-hour visualization-control tokens and owns per-client/global attempt limits,
+session caps, and locking for `ThreadingHTTPServer`. Temporary tokens are rejected
+before network requests reach the privileged helper; restarting the web service
+revokes sessions but preserves the code displayed for that boot.
 
 ## Startup
 

@@ -148,7 +148,7 @@ class NetworkController:
             self._set_state(
                 state="lan_connected",
                 mode="lan",
-                ssid=snapshot.connection,
+                ssid=self._active_lan_ssid(snapshot.connection),
                 ipv4=snapshot.ipv4,
                 error=None,
             )
@@ -207,7 +207,7 @@ class NetworkController:
                         self._set_state(
                             "lan_connected",
                             "lan",
-                            snapshot.connection,
+                            self._active_lan_ssid(snapshot.connection),
                             snapshot.ipv4,
                             None,
                         )
@@ -351,6 +351,17 @@ class NetworkController:
             except NetworkOperationError as exc:
                 self._set_error(str(exc))
             stop_event.wait(self.policy.monitor_interval_seconds)
+
+    def _active_lan_ssid(self, profile_name: str | None) -> str | None:
+        """Prefer the broadcast SSID while tolerating older/fake backends."""
+
+        lookup = getattr(self.backend, "active_ssid", None)
+        if lookup is None:
+            return profile_name
+        try:
+            return lookup() or profile_name
+        except NetworkOperationError:
+            return profile_name
 
     def _set_error(self, message: str) -> None:
         with self._state_lock:

@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <title>RGB Matrix Control</title>
+  <link rel="stylesheet" href="/static/control.css">
+  <script src="/static/control.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#visualizations">Skip to visualizations</a>
+
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="RGB Matrix control home">
+      <span class="pixel-mark" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </span>
+      <span>RGB MATRIX</span>
+    </a>
+    <a class="utility-link" href="/setup">Wi-Fi setup</a>
+  </header>
+
+  <main>
+    <section class="hero" aria-labelledby="page-title">
+      <p class="eyebrow">DISPLAY CONTROL</p>
+      <h1 id="page-title">Choose the mood.<br><span>Own the glow.</span></h1>
+      <p class="lede">See what this matrix can run and safely clear the display from any device on the local network.</p>
+    </section>
+
+    <section class="runtime-panel" aria-labelledby="runtime-title">
+      <div class="runtime-copy">
+        <p class="section-label" id="runtime-title">CURRENT OUTPUT</p>
+        <div class="runtime-state">
+          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="current-name">Checking the matrix…</strong>
+            <p id="current-detail" aria-live="polite">Connecting to the controller.</p>
+          </div>
+        </div>
+      </div>
+      <button id="quit-button" class="quit-button" type="button" disabled>
+        <span class="stop-icon" aria-hidden="true">■</span>
+        <span class="button-label">Quit current</span>
+      </button>
+    </section>
+
+    <section class="access-panel" aria-labelledby="access-title">
+      <div class="access-intro">
+        <h2 id="access-title">Control access</h2>
+        <p id="access-status">Enter the six-digit code shown on the matrix.</p>
+        <p class="terminal-hint">From SSH, run <code>cd ~/rgb_Matrix &amp;&amp; python3 -m matrix_controller.boot_code</code></p>
+      </div>
+      <div class="access-controls">
+        <div class="pairing-row">
+          <label class="token-field" for="pairing-code">
+            <span>Six-digit phone code</span>
+            <input id="pairing-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000">
+          </label>
+          <button id="pair-button" class="pair-button" type="button">Pair phone</button>
+        </div>
+        <button id="forget-button" class="text-button" type="button" hidden>Forget access in this tab</button>
+      </div>
+    </section>
+
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+    <section id="visualizations" class="catalog" aria-labelledby="catalog-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">AVAILABLE NOW</p>
+          <h2 id="catalog-title">Visualizations</h2>
+        </div>
+        <span id="visualization-count" class="count-badge">—</span>
+      </div>
+      <div id="visualization-grid" class="visualization-grid" aria-live="polite" aria-busy="true">
+        <article class="visualization-card skeleton" aria-hidden="true"></article>
+        <article class="visualization-card skeleton" aria-hidden="true"></article>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Local control · Port 8080</span>
+    <span id="last-updated">Waiting for status</span>
+  </footer>
+</body>
+</html>
