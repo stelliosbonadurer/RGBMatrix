@@ -17,7 +17,10 @@ def connection_details(
     address = ap.get("address") if ap.get("active") else status.get("ipv4")
     return (
         ("CONNECT WIFI", str(ssid or "WAITING...")),
-        ("OPEN URL", f"http://{address}:{port}" if address else "WAITING..."),
+        # Modern phone browsers accept a bare IPv4 address and port in the address
+        # bar. Omitting the scheme keeps the limited-width matrix line shorter while
+        # leaving the actual HTTP service and its URLs unchanged.
+        ("OPEN URL", f"{address}:{port}" if address else "WAITING..."),
         ("PAIR CODE", code),
     )
 

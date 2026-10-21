@@ -2,8 +2,9 @@
 
 Status: archived — supervised API, boot service, and network proxy milestone completed
 
-The visualization phone UI and live-control work are tracked in
-[phone-visualization-ui.md](../plans/phone-visualization-ui.md).
+The visualization phone UI milestone is archived in
+[04-phone-visualization-controls.md](04-phone-visualization-controls.md). Live-control
+IPC remains deferred.
 
 ## Goal
 

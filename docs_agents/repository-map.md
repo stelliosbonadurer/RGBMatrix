@@ -61,17 +61,22 @@ Built-in theme names are `autumn`, `dynamic`, `dynamic_lateral_gradient`, `fores
 
 ```text
 matrix_controller/
+├── controller_config.py strict versioned launch-default loader
 ├── schema.py          immutable parameter/visualization contracts and validation
 ├── definitions.py     shared matrix, FFT, and sorting parameters
 ├── registry.py        explicit product allowlist, including connection info
 ├── boot_code.py       boot-ID-scoped six-digit code and terminal reader
 ├── pairing.py         boot-code exchange and temporary control sessions
 ├── supervisor.py      one-child state machine and process-group teardown
-├── static/index.html  responsive visualization catalog/status/stop page
-├── static/control.*   control-page styles and browser behavior
+├── static/index.html  responsive visualization control page
+├── static/control.*   generated launch forms, pairing, status, and browser behavior
 ├── static/setup.html  minimal phone Wi-Fi provisioning page
 └── web_service.py     authenticated standard-library HTTP API and network proxy
 ```
+
+`config/matrix-controller.json` supplies the managed service's interpreter,
+privilege mode, boot visualization, hardware defaults, and visualization defaults.
+It is validated before the HTTP listener or matrix child starts.
 
 `matrix_network/` contains the separate privileged state machine, NetworkManager
 backend, D-Bus secret writer, Unix-socket protocol, unprivileged client, and isolated

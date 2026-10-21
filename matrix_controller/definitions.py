@@ -24,6 +24,91 @@ MATRIX_PARAMETERS: tuple[ParameterSpec, ...] = (
         choices=("regular", "regular-pi1", "adafruit-hat", "adafruit-hat-pwm"),
     ),
     ParameterSpec("led_slowdown_gpio", "--led-slowdown-gpio", "int", 2, "GPIO timing slowdown.", 0, 5),
+    ParameterSpec(
+        "led_scan_mode",
+        "--led-scan-mode",
+        "int",
+        1,
+        "Panel scan mode: zero is progressive and one is interlaced.",
+        0,
+        1,
+    ),
+    ParameterSpec(
+        "led_pwm_lsb_nanoseconds",
+        "--led-pwm-lsb-nanoseconds",
+        "int",
+        130,
+        "PWM least-significant-bit duration in nanoseconds.",
+        10,
+        1000,
+    ),
+    ParameterSpec(
+        "led_show_refresh",
+        "--led-show-refresh",
+        "bool",
+        False,
+        "Print the panel refresh rate in service logs.",
+    ),
+    ParameterSpec(
+        "led_no_hardware_pulse",
+        "--led-no-hardware-pulse",
+        "bool",
+        False,
+        "Disable hardware-assisted GPIO pulses.",
+        # The upstream Python SampleBase declares this legacy flag as a stored
+        # value rather than store_true. Supplying a fixed value works for both it
+        # and the project's matching MatrixApp parser without exposing raw argv.
+        true_cli_value="1",
+    ),
+    ParameterSpec(
+        "led_rgb_sequence",
+        "--led-rgb-sequence",
+        "enum",
+        "RGB",
+        "Physical color-channel order.",
+        choices=("RGB", "RBG", "GRB", "GBR", "BRG", "BGR"),
+    ),
+    ParameterSpec(
+        "led_pixel_mapper",
+        "--led-pixel-mapper",
+        "string",
+        "",
+        "Optional driver pixel-mapper chain, such as Rotate:90.",
+        maximum_length=128,
+    ),
+    ParameterSpec(
+        "led_row_addr_type",
+        "--led-row-addr-type",
+        "int",
+        0,
+        "Panel row-addressing strategy.",
+        0,
+        4,
+    ),
+    ParameterSpec(
+        "led_multiplexing",
+        "--led-multiplexing",
+        "int",
+        0,
+        "Driver multiplexing mapper index.",
+        0,
+        17,
+    ),
+    ParameterSpec(
+        "led_panel_type",
+        "--led-panel-type",
+        "string",
+        "",
+        "Optional panel chipset name, such as FM6126A.",
+        maximum_length=64,
+    ),
+    ParameterSpec(
+        "led_no_drop_privs",
+        "--led-no-drop-privs",
+        "bool",
+        False,
+        "Keep root privileges after matrix initialization.",
+    ),
 )
 
 
@@ -137,4 +222,3 @@ def application_parameters(visualization_id: str) -> tuple[ParameterSpec, ...]:
         raise KeyError(f"unknown visualization: {visualization_id}") from exc
     matrix_names = {parameter.name for parameter in MATRIX_PARAMETERS}
     return tuple(parameter for parameter in parameters if parameter.name not in matrix_names)
-

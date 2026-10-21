@@ -11,3 +11,6 @@ were extracted into active plans instead of being mislabeled as finished.
 3. [Known-network and fallback AP](03-network-fallback-ap.md) — implemented the
    NetworkManager controller, protected provisioning workflow, setup page, and boot
    service; physical fallback testing remains in the active hardening plan.
+4. [Phone visualization controls](04-phone-visualization-controls.md) — implemented
+   paired launch/switch forms generated from typed metadata plus versioned launch
+   configuration.

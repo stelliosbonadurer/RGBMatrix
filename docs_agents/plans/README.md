@@ -6,11 +6,11 @@ The archive directory intentionally retains the requested `plans_archvie` spelli
 
 ## Current order
 
-1. [Portable Raspberry Pi deployment](portable-deployment.md) — produce a repeatable
+1. [Live visualization interaction](live-visualization-interaction.md) — expose the
+   active FFT state and typed live controls through one command layer shared by the
+   keyboard and authenticated phone UI.
+2. [Portable Raspberry Pi deployment](portable-deployment.md) — produce a repeatable
    native install for explicitly supported Pi models before reconsidering containers.
-2. [Phone visualization controls](phone-visualization-ui.md) — add the mobile picker,
-   generated parameter controls, start/stop state, and useful errors on top of the
-   existing API.
 3. [Web visualization emulator](web-visualization-emulator.md) — execute the existing
    Python renderers against a software matrix and stream frames to a browser preview.
 4. [Runtime modernization](runtime-modernization.md) — continue removing production
@@ -28,3 +28,7 @@ The visualization registry and typed CLI contract are already implemented. The w
 service consumes that allowlist, while the privileged network helper is a separate
 NetworkManager-only service. Portability work owns installation of both services but
 must not merge their privilege boundaries.
+
+Live interaction should establish the shared runtime state/control contract before
+the emulator grows an interactive preview. The emulator can then reuse the same
+controller and schema rather than developing a parallel set of browser controls.

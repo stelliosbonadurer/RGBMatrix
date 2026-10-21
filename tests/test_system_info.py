@@ -12,7 +12,7 @@ class SystemInfoTests(unittest.TestCase):
             "012345",
         )
         self.assertEqual(pages[0], ("CONNECT WIFI", "Studio"))
-        self.assertEqual(pages[1], ("OPEN URL", "http://192.168.1.20:8080"))
+        self.assertEqual(pages[1], ("OPEN URL", "192.168.1.20:8080"))
         self.assertEqual(pages[2], ("PAIR CODE", "012345"))
 
     def test_setup_ap_details_take_precedence(self) -> None:
@@ -25,7 +25,7 @@ class SystemInfoTests(unittest.TestCase):
             "654321",
         )
         self.assertEqual(pages[0][1], "RGB-Matrix-ABCD")
-        self.assertEqual(pages[1][1], "http://192.168.50.1:8080")
+        self.assertEqual(pages[1][1], "192.168.50.1:8080")
 
     def test_short_text_is_centered_and_long_text_wraps_continuously(self) -> None:
         self.assertEqual(
@@ -33,7 +33,7 @@ class SystemInfoTests(unittest.TestCase):
             (2,),
         )
         positions = text_positions(
-            "http://192.168.1.204:8080",
+            "192.168.1.204:8080",
             glyph_width=4,
             viewport_width=64,
             elapsed=1.0,

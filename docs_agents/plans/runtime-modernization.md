@@ -17,6 +17,10 @@ when a measured target-device problem justifies it.
 3. Remove the duplicate rFFT performed in layered FFT mode before considering a
    language rewrite.
 4. Add fake-canvas coverage for renderer output, teardown, and lifecycle behavior.
-5. Keep live control IPC optional and separate from the baseline CLI contract.
+5. Implement live control through the dedicated
+   [live visualization interaction plan](live-visualization-interaction.md). Keep its
+   runtime interface optional and separate from the baseline launch-time CLI
+   contract, while routing FFT keyboard controls through the same in-process command
+   layer.
 
 Current FFT latency is acceptable and requires no benchmark gate.

@@ -28,8 +28,9 @@ class ParameterSpec:
     """Describe one allowlisted parameter from JSON value through CLI argument.
 
     ``negative_cli_flag`` is used for booleans whose false value must be explicit.
-    If it is absent, false simply omits the positive flag. This supports conventional
-    ``store_true`` arguments without allowing arbitrary argument injection.
+    If it is absent, false simply omits the positive flag. ``true_cli_value`` supports
+    legacy flags that require a fixed value after the flag instead of conventional
+    ``store_true`` parsing. Neither mechanism accepts arbitrary argument fragments.
     """
 
     name: str
@@ -42,6 +43,7 @@ class ParameterSpec:
     choices: tuple[str, ...] = ()
     negative_cli_flag: str | None = None
     maximum_length: int = 256
+    true_cli_value: str | None = None
 
     def normalize(self, value: Any) -> Any:
         """Return a validated canonical value or raise ``ValidationError``.
@@ -97,7 +99,10 @@ class ParameterSpec:
         normalized = self.normalize(value)
         if self.kind == "bool":
             if normalized:
-                return [self.cli_flag]
+                arguments = [self.cli_flag]
+                if self.true_cli_value is not None:
+                    arguments.append(self.true_cli_value)
+                return arguments
             return [self.negative_cli_flag] if self.negative_cli_flag else []
         return [self.cli_flag, str(normalized)]
 
@@ -163,6 +168,8 @@ class ParameterSpec:
             data["maximum"] = self.maximum
         if self.choices:
             data["choices"] = list(self.choices)
+        if self.kind in {"string", "enum"}:
+            data["maximum_length"] = self.maximum_length
         return data
 
 

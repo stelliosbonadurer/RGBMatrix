@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from typing import Any, Mapping
 
 from .definitions import FFT_PARAMETERS, MATRIX_PARAMETERS, SORT_PARAMETERS
-from .schema import ValidationError, VisualizationSpec
+from .schema import ParameterSpec, ValidationError, VisualizationSpec
 
 
 class Registry:
@@ -27,19 +29,44 @@ class Registry:
             raise ValidationError(f"unknown visualization: {visualization_id}") from exc
 
 
-def build_default_registry(workspace_root: Path | None = None) -> Registry:
+def _with_defaults(
+    parameters: tuple[ParameterSpec, ...],
+    defaults: Mapping[str, Any],
+) -> tuple[ParameterSpec, ...]:
+    """Copy parameter contracts with administrator-configured default values."""
+
+    known = {parameter.name for parameter in parameters}
+    unknown = sorted(set(defaults) - known)
+    if unknown:
+        raise ValidationError(f"unknown configured parameters: {', '.join(unknown)}")
+    return tuple(
+        replace(parameter, default=parameter.normalize(defaults[parameter.name]))
+        if parameter.name in defaults
+        else parameter
+        for parameter in parameters
+    )
+
+
+def build_default_registry(
+    workspace_root: Path | None = None,
+    parameter_defaults: Mapping[str, Mapping[str, Any]] | None = None,
+) -> Registry:
     """Build the initial product allowlist without importing either application."""
 
     root = workspace_root or Path(__file__).resolve().parent.parent
+    defaults = parameter_defaults or {}
     return Registry(
         (
             VisualizationSpec(
                 visualization_id="system_info",
                 display_name="Connection Info",
-                description="Shows the Wi-Fi name, controller URL, and pairing code.",
+                description="Shows the Wi-Fi name, controller address, and pairing code.",
                 script_path=root / "my_programs" / "system_info.py",
                 working_directory=root / "my_programs",
-                parameters=MATRIX_PARAMETERS,
+                parameters=_with_defaults(
+                    MATRIX_PARAMETERS,
+                    defaults.get("system_info", {}),
+                ),
             ),
             VisualizationSpec(
                 visualization_id="fft",
@@ -47,7 +74,7 @@ def build_default_registry(workspace_root: Path | None = None) -> Registry:
                 description="Real-time audio spectrum visualization.",
                 script_path=root / "my_programs" / "fft_program" / "main.py",
                 working_directory=root / "my_programs" / "fft_program",
-                parameters=FFT_PARAMETERS,
+                parameters=_with_defaults(FFT_PARAMETERS, defaults.get("fft", {})),
                 requires_audio=True,
             ),
             VisualizationSpec(
@@ -56,7 +83,7 @@ def build_default_registry(workspace_root: Path | None = None) -> Registry:
                 description="Animated insertion, selection, bubble, and quick sorts.",
                 script_path=root / "my_programs" / "visualize_sorts.py",
                 working_directory=root / "my_programs",
-                parameters=SORT_PARAMETERS,
+                parameters=_with_defaults(SORT_PARAMETERS, defaults.get("sorts", {})),
             ),
         )
     )

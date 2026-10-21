@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 from matrix_network import NetworkClient, NetworkClientError
 
 from .boot_code import DEFAULT_CODE_FILE, ensure_boot_code
+from .controller_config import ControllerConfigError, load_controller_config
 from .pairing import PairingError, PairingManager
 from .registry import build_default_registry
 from .schema import ValidationError
@@ -387,6 +388,11 @@ def _read_token(token_file: str | None) -> str | None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RGB matrix visualization control API")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        help="Versioned JSON file containing managed launch defaults",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Address on which to listen")
     parser.add_argument("--port", type=int, default=8080, help="TCP port on which to listen")
     parser.add_argument("--python", default=None, help="Python executable used for visualizations")
@@ -402,16 +408,25 @@ def build_parser() -> argparse.ArgumentParser:
         default="/run/rgb-matrix-network/control.sock",
         help="Unix socket for the privileged NetworkManager helper",
     )
-    parser.add_argument(
+    privilege_group = parser.add_mutually_exclusive_group()
+    privilege_group.add_argument(
         "--sudo",
+        dest="use_sudo",
         action="store_true",
         help="Prefix visualization commands with non-interactive sudo -E",
     )
-    parser.add_argument("--stop-timeout", type=float, default=5.0)
+    privilege_group.add_argument(
+        "--no-sudo",
+        dest="use_sudo",
+        action="store_false",
+        help="Do not prefix visualization commands with sudo",
+    )
+    parser.set_defaults(use_sudo=None)
+    parser.add_argument("--stop-timeout", type=float, default=None)
     parser.add_argument(
         "--no-boot-display",
         action="store_true",
-        help="Do not start the SSID, URL, and pairing-code matrix display",
+        help="Do not start the SSID, address, and pairing-code matrix display",
     )
     return parser
 
@@ -420,8 +435,13 @@ def main() -> int:
     args = build_parser().parse_args()
     if not (1 <= args.port <= 65535):
         raise SystemExit("--port must be between 1 and 65535")
-    if args.stop_timeout <= 0:
+    if args.stop_timeout is not None and args.stop_timeout <= 0:
         raise SystemExit("--stop-timeout must be positive")
+
+    try:
+        controller_config = load_controller_config(args.config)
+    except ControllerConfigError as exc:
+        raise SystemExit(f"could not load controller config: {exc}") from exc
 
     try:
         token = _read_token(args.token_file)
@@ -445,12 +465,28 @@ def main() -> int:
         f"http://127.0.0.1:{args.port}/api/v1/network/status"
     )
 
-    command_prefix = ("sudo", "-n", "-E") if args.sudo else ()
+    use_sudo = controller_config.use_sudo if args.use_sudo is None else args.use_sudo
+    command_prefix = ("sudo", "-n", "-E") if use_sudo else ()
+    python_executable = (
+        args.python
+        or controller_config.python_executable
+        or os.environ.get("RGBMATRIX_PYTHON")
+        or os.sys.executable
+    )
+    stop_timeout = (
+        args.stop_timeout
+        if args.stop_timeout is not None
+        else controller_config.stop_timeout_seconds
+    )
+    registry_defaults = {
+        visualization_id: controller_config.defaults_for(visualization_id)
+        for visualization_id in ("system_info", "fft", "sorts")
+    }
     supervisor = VisualizationSupervisor(
-        build_default_registry(),
-        python_executable=args.python or os.environ.get("RGBMATRIX_PYTHON") or os.sys.executable,
+        build_default_registry(parameter_defaults=registry_defaults),
+        python_executable=python_executable,
         command_prefix=command_prefix,
-        stop_timeout=args.stop_timeout,
+        stop_timeout=stop_timeout,
     )
     server = ThreadingHTTPServer(
         (args.host, args.port),
@@ -474,9 +510,12 @@ def main() -> int:
     signal.signal(signal.SIGINT, request_shutdown)
 
     try:
-        if not args.no_boot_display:
+        boot_visualization_id = (
+            None if args.no_boot_display else controller_config.boot_visualization_id
+        )
+        if boot_visualization_id is not None:
             try:
-                supervisor.start("system_info", {})
+                supervisor.start(boot_visualization_id, {})
             except (OSError, RuntimeError, ValidationError) as exc:
                 # A display wiring/driver failure must not take the recovery UI off
                 # the network. Journald still records a concise actionable error.

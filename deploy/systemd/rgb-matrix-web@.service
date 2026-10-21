@@ -18,16 +18,16 @@ StateDirectoryMode=0750
 Environment=PYTHONUNBUFFERED=1
 Environment=RGBMATRIX_STATE_DIR=/var/lib/rgb-matrix-controller
 
-# The service itself remains unprivileged. --sudo applies only the fixed, allowlisted
-# visualization argv and requires passwordless non-interactive sudo for this account.
-# Change --python if the installed rgbmatrix/audio environment lives elsewhere.
+# The service itself remains unprivileged. Configured sudo applies only the fixed,
+# allowlisted visualization argv and requires passwordless non-interactive sudo.
+# Interpreter, privilege mode, boot visualization, and matrix/visualization defaults
+# live in the versioned controller config rather than being duplicated in this unit.
 ExecStart=/usr/bin/python3 -m matrix_controller.web_service \
+    --config /home/%i/rgb_Matrix/config/matrix-controller.json \
     --host 0.0.0.0 \
     --port 8080 \
     --token-file /home/%i/.config/rgb-matrix-controller/api-token \
-    --network-socket /run/rgb-matrix-network/control.sock \
-    --python /home/%i/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3 \
-    --sudo
+    --network-socket /run/rgb-matrix-network/control.sock
 
 Restart=on-failure
 RestartSec=3

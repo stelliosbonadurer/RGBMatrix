@@ -1,8 +1,8 @@
 # Web Service MVP Operations
 
 Status: visualization control deployed and tested on 2026-10-16; network setup proxy
-and minimal mobile setup page added on 2026-10-18; visualization catalog/status/stop
-UI added at `/` on 2026-10-19.
+and minimal mobile setup page added on 2026-10-18; paired visualization launch forms
+and versioned launch configuration added on 2026-10-21.
 
 ## Current Pi deployment
 
@@ -16,17 +16,22 @@ UI added at `/` on 2026-10-19.
 - Visualization interpreter:
   `/home/stelliosbonadurer/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3`
 
-Verified on the Pi after the boot-display/pairing refactor:
+Verified on the Pi after the generated-launch/config deployment:
 
-- all 61 hardware-free tests pass under `/usr/bin/python3`;
+- all 67 hardware-free tests pass under `/usr/bin/python3`;
 - the unit is both `enabled` and `active`;
 - `system_info` remains running on the real matrix hardware;
 - the terminal reader matches the stored boot code and service restarts preserve it;
 - pairing exchange, scoped authorization, and logout pass end to end without logging
   the code or temporary token;
 - `/healthz`, visualization listing, network status, and supervisor status return successfully;
+- the service loads `config/matrix-controller.json` and publishes its 64x64,
+  slowdown-2 defaults plus all 18 managed matrix parameters;
+- the deployed browser assets contain the generated launch form and `/api/v1/run`
+  client path;
 - an authenticated finite `sorts`/`quick` launch reached the real native matrix path,
-  exited with code 0, cleared the display, and returned the supervisor to `idle`.
+  used the configured native options, exited with code 0, and returned the supervisor
+  to `idle`; `system_info` was then restored.
 
 The FFT child was not launched during deployment validation because the configured
 `iMM-6C` input was not present in the earlier audio-device check. The existing FFT
@@ -34,9 +39,10 @@ latency remains accepted; this is an audio-availability caveat, not a performanc
 
 ## What is implemented
 
-The responsive `/` page lists the managed visualizations, highlights the active one,
-polls supervisor status, and can stop it after six-digit pairing. Wi-Fi provisioning
-is a separate phone page at `/setup`. The service provides:
+The responsive `/` page lists the managed visualizations, generates typed parameter
+forms from registry metadata, launches or switches the selected visualization,
+highlights active state, polls supervisor status, and can stop it after six-digit
+pairing. Wi-Fi provisioning is a separate phone page at `/setup`. The service provides:
 
 - an explicit allowlist containing `system_info`, `fft`, and `sorts`;
 - typed parameter metadata and validation;
@@ -49,9 +55,10 @@ is a separate phone page at `/setup`. The service provides:
 At a real Pi boot, `boot_code.py` tags a random six-digit code with the kernel boot ID
 in `/var/lib/rgb-matrix-controller/boot-pairing.json`. A web-service restart reuses
 that code; the next full boot rotates it. The supervised `system_info` visualization
-starts automatically and shows the actual SSID, URL, and code together without labels.
-Only an overlong SSID or URL scrolls within its own line. Starting FFT or sorts
-replaces it through the existing exclusive supervisor, so only one process owns GPIO.
+starts automatically and shows the actual SSID, bare `IP:port`, and code together
+without labels. Only an overlong SSID or address scrolls within its own line. Starting
+FFT or sorts replaces it through the existing exclusive supervisor, so only one
+process owns GPIO.
 
 The boot code exchanges for random four-hour visualization-only tokens and can pair
 multiple devices during that boot. Temporary tokens cannot use network administration
@@ -59,7 +66,7 @@ routes, are capped/rate-limited in memory, and are all revoked when the service
 restarts. The browser keeps its token in `sessionStorage`, so it
 survives a refresh in the same tab but is discarded when that tab closes. Tokens and
 codes never appear in URLs or request logs. Visualization launch and parameter
-controls remain API-only in this UI slice.
+controls use the same API and validation contract as direct clients.
 
 Read the same code locally without handling the permanent token:
 
@@ -71,7 +78,7 @@ python3 -m matrix_controller.boot_code
 Pairing endpoints are `GET /api/v1/pairing/status` and POST operations `exchange` and
 `logout` under `/api/v1/pairing/`.
 
-Live FFT parameter changes, presets, polished visualization controls, mDNS,
+Live FFT parameter changes, presets, mDNS,
 portable installation, and container work remain deferred. Fallback Wi-Fi is a
 separate privileged service documented in
 [network-fallback-operations.md](network-fallback-operations.md). For this MVP, changing a
@@ -81,6 +88,7 @@ before launching the replacement.
 ## Code map
 
 - `matrix_controller/schema.py`: immutable typed parameter and visualization contracts.
+- `matrix_controller/controller_config.py`: strict versioned launch-default loader.
 - `matrix_controller/definitions.py`: shared matrix, FFT, and sorting definitions.
 - `matrix_controller/registry.py`: explicit product allowlist; no hardware imports.
 - `matrix_controller/boot_code.py`: boot-ID-scoped code persistence and terminal command.
@@ -93,6 +101,7 @@ before launching the replacement.
 - `deploy/systemd/rgb-matrix-web@.service`: boot service template.
 - `deploy/systemd/rgb-matrix-network@.service`: root network-helper template.
 - `tests/`: registry, supervisor, and loopback HTTP tests using fake processes.
+- `config/matrix-controller.json`: runtime, boot, matrix, and visualization defaults.
 
 The web service never calls `launch_rgbmatrix.py`, accepts a script path, or uses a
 shell. The interactive launcher remains useful for a developer, while the public API
@@ -140,6 +149,14 @@ Run on loopback without a token or hardware launch:
 python3 -m matrix_controller.web_service
 ```
 
+Run with the same launch defaults used by the Pi service:
+
+```bash
+python3 -m matrix_controller.web_service \
+  --config config/matrix-controller.json \
+  --host 127.0.0.1
+```
+
 Inspect definitions and status:
 
 ```bash
@@ -173,14 +190,13 @@ chmod 600 ~/.config/rgb-matrix-controller/api-token
 
 RGBMATRIX_STATE_DIR="$HOME/.local/state/rgb-matrix-controller" \
 python3 -m matrix_controller.web_service \
+  --config config/matrix-controller.json \
   --host 0.0.0.0 \
   --port 8080 \
-  --token-file "$HOME/.config/rgb-matrix-controller/api-token" \
-  --python "$HOME/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3" \
-  --sudo
+  --token-file "$HOME/.config/rgb-matrix-controller/api-token"
 ```
 
-Before using `--sudo`, verify `sudo -n true` succeeds for the service account. The
+Before configuring sudo, verify `sudo -n true` succeeds for the service account. The
 MVP intentionally does not install or broaden sudoers policy. If non-interactive sudo
 is unavailable, stop and decide the hardware privilege boundary rather than running
 the HTTP server itself as root.
@@ -209,8 +225,7 @@ The checked-in unit assumes:
 
 - repository: `/home/USER/rgb_Matrix`;
 - control service interpreter: `/usr/bin/python3`;
-- visualization interpreter:
-  `/home/USER/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3`;
+- controller config: `/home/USER/rgb_Matrix/config/matrix-controller.json`;
 - API token: `/home/USER/.config/rgb-matrix-controller/api-token`; and
 - passwordless non-interactive sudo already works for `USER`.
 

@@ -118,7 +118,9 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(js_status, 200)
         self.assertEqual(js_headers.get_content_type(), "text/javascript")
         self.assertIn("/api/v1/visualizations", script)
+        self.assertIn("/api/v1/run", script)
         self.assertIn("/api/v1/stop", script)
+        self.assertIn("createParameterField", script)
 
     def test_read_endpoints_do_not_require_token(self) -> None:
         status, body = self.request("/api/v1/visualizations")

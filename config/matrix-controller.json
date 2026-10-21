@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "runtime": {
+    "python_executable": "~/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3",
+    "use_sudo": true,
+    "stop_timeout_seconds": 5.0
+  },
+  "boot": {
+    "visualization_id": "system_info"
+  },
+  "matrix": {
+    "led_rows": 64,
+    "led_cols": 64,
+    "led_chain": 1,
+    "led_parallel": 1,
+    "led_pwm_bits": 11,
+    "led_brightness": 100,
+    "led_gpio_mapping": "adafruit-hat",
+    "led_slowdown_gpio": 2,
+    "led_scan_mode": 1,
+    "led_pwm_lsb_nanoseconds": 130,
+    "led_show_refresh": false,
+    "led_no_hardware_pulse": false,
+    "led_rgb_sequence": "RGB",
+    "led_pixel_mapper": "",
+    "led_row_addr_type": 0,
+    "led_multiplexing": 0,
+    "led_panel_type": "",
+    "led_no_drop_privs": false
+  },
+  "visualizations": {
+    "fft": {
+      "theme": "ocean",
+      "gradient": false,
+      "overflow": true,
+      "non_interactive": true
+    },
+    "sorts": {
+      "mode": "random",
+      "sort": "quick",
+      "delay": 0.05,
+      "seed": 0,
+      "max_runs": 0
+    },
+    "system_info": {}
+  }
+}

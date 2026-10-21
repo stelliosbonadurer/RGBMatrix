@@ -19,6 +19,8 @@ const elements = {
 let visualizations = [];
 let currentStatus = null;
 let stopPending = false;
+let launchPendingId = null;
+let expandedVisualizationId = null;
 let authorizationStatus = null;
 let controlToken = '';
 
@@ -63,7 +65,9 @@ async function readJson(response) {
     throw new Error(`Controller returned an invalid response (${response.status}).`);
   }
   if (!response.ok) {
-    throw new Error(body.error || `Request failed (${response.status}).`);
+    const error = new Error(body.error || `Request failed (${response.status}).`);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -111,6 +115,125 @@ function visualizationName(id) {
   return visualizations.find(item => item.id === id)?.name || id || 'No visualization running';
 }
 
+function parameterValue(item, parameter) {
+  if (
+    currentStatus?.visualization_id === item.id &&
+    currentStatus.parameters &&
+    Object.prototype.hasOwnProperty.call(currentStatus.parameters, parameter.name)
+  ) {
+    return currentStatus.parameters[parameter.name];
+  }
+  return parameter.default;
+}
+
+function createParameterField(item, parameter) {
+  const wrapper = document.createElement('label');
+  wrapper.className = `parameter-field${parameter.type === 'bool' ? ' boolean-field' : ''}`;
+
+  const label = document.createElement('span');
+  label.className = 'parameter-label';
+  label.textContent = parameter.name.replaceAll('_', ' ');
+
+  const description = document.createElement('small');
+  description.textContent = parameter.description || '';
+
+  const value = parameterValue(item, parameter);
+  let control;
+  if (parameter.type === 'bool') {
+    control = document.createElement('input');
+    control.type = 'checkbox';
+    control.checked = Boolean(value);
+    wrapper.append(control, label, description);
+  } else if (parameter.type === 'enum') {
+    control = document.createElement('select');
+    control.required = true;
+    (parameter.choices || []).forEach(choice => {
+      const option = document.createElement('option');
+      option.value = choice;
+      option.textContent = choice;
+      option.selected = choice === value;
+      control.append(option);
+    });
+    wrapper.append(label, control, description);
+  } else {
+    control = document.createElement('input');
+    control.type = parameter.type === 'int' || parameter.type === 'float' ? 'number' : 'text';
+    control.value = value ?? '';
+    if (parameter.type === 'int') {
+      control.step = '1';
+      control.required = true;
+    }
+    if (parameter.type === 'float') {
+      control.step = 'any';
+      control.required = true;
+    }
+    if (parameter.minimum !== undefined) control.min = String(parameter.minimum);
+    if (parameter.maximum !== undefined) control.max = String(parameter.maximum);
+    if (parameter.maximum_length !== undefined) control.maxLength = parameter.maximum_length;
+    wrapper.append(label, control, description);
+  }
+
+  control.name = parameter.name;
+  control.dataset.parameterType = parameter.type;
+  control.disabled = launchPendingId === item.id;
+  return wrapper;
+}
+
+function readLaunchParameters(form, item) {
+  const parameters = {};
+  for (const parameter of item.parameters || []) {
+    const control = form.elements.namedItem(parameter.name);
+    if (!control) throw new Error(`Missing control for ${parameter.name}.`);
+    if (parameter.type === 'bool') {
+      parameters[parameter.name] = control.checked;
+    } else if (parameter.type === 'int') {
+      parameters[parameter.name] = Number.parseInt(control.value, 10);
+    } else if (parameter.type === 'float') {
+      parameters[parameter.name] = Number.parseFloat(control.value);
+    } else {
+      parameters[parameter.name] = control.value;
+    }
+  }
+  return parameters;
+}
+
+async function launchVisualization(item, form) {
+  if (!controlToken) {
+    showMessage('Enter the six-digit pairing code before launching a visualization.', true);
+    elements.pairingCode.focus();
+    return;
+  }
+  if (!form.reportValidity()) return;
+
+  launchPendingId = item.id;
+  clearMessage();
+  renderVisualizations();
+  try {
+    const parameters = readLaunchParameters(form, item);
+    await readJson(await fetch('/api/v1/run', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${controlToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({visualization_id: item.id, parameters}),
+    }));
+    expandedVisualizationId = null;
+    showMessage(`${item.name} is now running on the matrix.`);
+  } catch (error) {
+    if (error.status === 401) {
+      authorizationStatus = null;
+      renderAuthorization();
+      elements.pairingCode.focus();
+    }
+    showMessage(`Could not launch ${item.name}: ${error.message}`, true);
+  } finally {
+    launchPendingId = null;
+    await refreshStatus();
+    renderVisualizations();
+  }
+}
+
 function renderVisualizations() {
   elements.grid.replaceChildren();
   elements.grid.setAttribute('aria-busy', 'false');
@@ -128,6 +251,7 @@ function renderVisualizations() {
     const card = document.createElement('article');
     card.className = `visualization-card${index % 2 === 0 ? '' : ' accent-cyan'}`;
     card.dataset.active = String(active);
+    card.dataset.visualizationId = item.id;
 
     const top = document.createElement('div');
     top.className = 'card-top';
@@ -158,8 +282,67 @@ function renderVisualizations() {
       footer.append(audio);
     }
 
-    card.append(top, title, description, footer);
+    const configureButton = document.createElement('button');
+    configureButton.className = 'configure-button';
+    configureButton.type = 'button';
+    configureButton.textContent = expandedVisualizationId === item.id ? 'Close controls' : 'Configure';
+    configureButton.setAttribute('aria-expanded', String(expandedVisualizationId === item.id));
+    configureButton.setAttribute('aria-controls', `launch-form-${item.id}`);
+    configureButton.addEventListener('click', () => {
+      expandedVisualizationId = expandedVisualizationId === item.id ? null : item.id;
+      renderVisualizations();
+    });
+
+    const form = document.createElement('form');
+    form.id = `launch-form-${item.id}`;
+    form.className = 'launch-form';
+    form.hidden = expandedVisualizationId !== item.id;
+
+    const applicationParameters = (item.parameters || []).filter(parameter => !parameter.name.startsWith('led_'));
+    const matrixParameters = (item.parameters || []).filter(parameter => parameter.name.startsWith('led_'));
+    const addGroup = (name, parameters, open) => {
+      if (parameters.length === 0) return;
+      const group = document.createElement('details');
+      group.className = 'parameter-group';
+      group.open = open;
+      const summary = document.createElement('summary');
+      summary.textContent = `${name} (${parameters.length})`;
+      const fields = document.createElement('div');
+      fields.className = 'parameter-fields';
+      parameters.forEach(parameter => fields.append(createParameterField(item, parameter)));
+      group.append(summary, fields);
+      form.append(group);
+    };
+    addGroup('Visualization settings', applicationParameters, true);
+    addGroup('Matrix hardware', matrixParameters, applicationParameters.length === 0);
+
+    const launchButton = document.createElement('button');
+    launchButton.className = 'launch-button';
+    launchButton.type = 'submit';
+    launchButton.disabled = launchPendingId === item.id;
+    launchButton.textContent = launchPendingId === item.id
+      ? 'Launching…'
+      : active ? 'Restart with these settings' : 'Launch visualization';
+    form.append(launchButton);
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      launchVisualization(item, form);
+    });
+
+    card.append(top, title, description, footer, configureButton, form);
     elements.grid.append(card);
+  });
+}
+
+function updateCardStates() {
+  elements.grid.querySelectorAll('.visualization-card[data-visualization-id]').forEach(card => {
+    const active = currentStatus?.visualization_id === card.dataset.visualizationId;
+    card.dataset.active = String(active);
+    const badge = card.querySelector('.card-badge');
+    if (badge) {
+      badge.classList.toggle('active', active);
+      badge.textContent = active ? 'Running' : 'Available';
+    }
   });
 }
 
@@ -187,7 +370,7 @@ function renderStatus() {
   elements.lastUpdated.textContent = `Updated ${new Intl.DateTimeFormat([], {
     hour: 'numeric', minute: '2-digit', second: '2-digit'
   }).format(new Date())}`;
-  renderVisualizations();
+  updateCardStates();
 }
 
 async function loadVisualizations() {

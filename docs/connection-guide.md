@@ -19,8 +19,9 @@ http://raspberrypi.local:8080
 ```
 
 The control page lists every managed visualization, shows what is running, and can
-quit the current visualization. Starting or configuring one still uses the API while
-the next UI phase is developed. Wi-Fi provisioning remains available at `/setup`.
+launch, switch, configure, or quit a visualization after pairing. Each visualization
+form includes its application settings and a collapsible matrix-hardware section.
+Wi-Fi provisioning remains available at `/setup`.
 
 ## Addresses by network
 
@@ -84,8 +85,9 @@ systemctl status "rgb-matrix-recovery-button@$USER.service"
 ## Pairing a phone for controls
 
 At every Pi boot, the controller creates a six-digit pairing code and shows three
-unlabeled lines together on the matrix: the Wi-Fi SSID, the exact controller URL,
-and the code. A line scrolls horizontally only when it is too wide for the panel.
+unlabeled lines together on the matrix: the Wi-Fi SSID, the controller IP and port
+without an `http://` prefix, and the code. A line scrolls horizontally only when it
+is too wide for the panel.
 The phone does not need the permanent API token. If the display is hard to read,
 print the same code from a terminal:
 
@@ -98,6 +100,11 @@ ssh stelliosbonadurer@raspberrypi.local \
 2. Enter the six digits under **Six-digit phone code**.
 3. Tap **Pair phone**.
 
+To start or switch visualizations, select **Configure** on a card, adjust the generated
+settings, and choose **Launch visualization**. The current visualization is stopped
+before the replacement starts. Hardware fields such as dimensions and GPIO slowdown
+are advanced settings; incorrect values can produce a blank or unstable panel.
+
 The code remains the same for the current Pi boot and can pair multiple local devices;
 a full reboot rotates it. The resulting phone session can control visualizations but
 cannot change Wi-Fi. It expires after four hours, when the web-service process
@@ -106,6 +113,33 @@ also removes it from that browser because it is stored only in `sessionStorage`.
 
 Pairing is a trusted-LAN convenience feature: this service uses plain HTTP, so do not
 use it on an untrusted network or expose port 8080 to the internet.
+
+## Changing launch defaults
+
+The versioned administrator config is:
+
+```text
+~/rgb_Matrix/config/matrix-controller.json
+```
+
+It controls the visualization interpreter, sudo policy, stop timeout, boot
+visualization, shared matrix defaults, and FFT/sorting defaults. Matrix fields cover
+the fixed native launch flags, including dimensions, chain/parallel counts, PWM,
+brightness, GPIO mapping and slowdown, scan mode, color order, pixel mapping, row
+addressing, multiplexing, panel type, and privilege dropping.
+
+Edit the JSON over SSH, validate it, then restart the web service:
+
+```bash
+cd ~/rgb_Matrix
+python3 -c 'from pathlib import Path; from matrix_controller.controller_config import load_controller_config; load_controller_config(Path("config/matrix-controller.json")); print("config ok")'
+sudo systemctl restart "rgb-matrix-web@$USER.service"
+```
+
+The service refuses invalid JSON, unknown fields, unsupported versions, and values
+outside the shared parameter contract. This file contains defaults, not arbitrary
+shell commands or script paths. A web form can override its exposed values for one
+launch; it does not rewrite the file.
 
 ## Starting a visualization through the API
 

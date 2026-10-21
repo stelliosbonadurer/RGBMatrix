@@ -72,6 +72,31 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("bubble", argv)
         self.assertNotIn("shell", " ".join(argv).lower())
 
+    def test_complete_matrix_contract_is_public_and_builds_fixed_flags(self) -> None:
+        fft = self.registry.get("fft")
+        names = {parameter.name for parameter in fft.parameters}
+        self.assertTrue(
+            {
+                "led_rows",
+                "led_cols",
+                "led_slowdown_gpio",
+                "led_scan_mode",
+                "led_pwm_lsb_nanoseconds",
+                "led_show_refresh",
+                "led_no_hardware_pulse",
+                "led_rgb_sequence",
+                "led_pixel_mapper",
+                "led_row_addr_type",
+                "led_multiplexing",
+                "led_panel_type",
+                "led_no_drop_privs",
+            }.issubset(names)
+        )
+        values = fft.validate_parameters({"led_no_hardware_pulse": True})
+        argv = fft.build_argv("/fixed/python", values)
+        index = argv.index("--led-no-hardware-pulse")
+        self.assertEqual(argv[index + 1], "1")
+
     def test_argparse_adapter_uses_contract_validation(self) -> None:
         parser = argparse.ArgumentParser(exit_on_error=False)
         delay = self.registry.get("sorts").parameter("delay")

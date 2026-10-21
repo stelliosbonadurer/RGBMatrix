@@ -20,6 +20,13 @@ HTTP request -> typed allowlist -> exclusive subprocess supervisor
 Changing an MVP parameter is a restart/switch operation. Live frame-boundary IPC is
 deferred. The service never invokes a shell or the heuristic developer launcher.
 
+`config/matrix-controller.json` is the versioned administrator source for runtime,
+boot, shared matrix, and per-visualization defaults. `controller_config.py` rejects
+unknown structure and validates launch values through the same `ParameterSpec`
+objects used by the API. Explicit service CLI flags override runtime config, and a
+validated web launch overrides configured parameter defaults for that run. The file
+cannot select scripts, command prefixes, or arbitrary arguments.
+
 ## Network control plane
 
 `matrix_network` is deliberately separate from visualization supervision. A root

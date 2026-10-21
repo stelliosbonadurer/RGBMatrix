@@ -1,6 +1,6 @@
 # Managed Visualization Inventory
 
-Last reviewed: 2026-10-16
+Last reviewed: 2026-10-21
 
 ## Performance decision
 
@@ -18,6 +18,7 @@ Only the following programs are exposed through `matrix_controller.Registry`:
 
 | ID | Program | Service default | Required resources |
 | --- | --- | --- | --- |
+| `system_info` | `my_programs/system_info.py` | Active SSID, bare address, and boot pairing code | HUB75 matrix, `rgbmatrix`, controller/network status |
 | `fft` | `my_programs/fft_program/main.py` | Ocean theme, overflow on, non-interactive | HUB75 matrix, `rgbmatrix`, NumPy, sounddevice, working audio input |
 | `sorts` | `my_programs/visualize_sorts.py` | Continuous seeded random sorts | HUB75 matrix, `rgbmatrix`, upstream `samplebase.py` |
 
@@ -37,10 +38,21 @@ Both managed definitions currently expose these CLI/API parameters:
 - `led_brightness`
 - `led_gpio_mapping`
 - `led_slowdown_gpio`
+- `led_scan_mode`
+- `led_pwm_lsb_nanoseconds`
+- `led_show_refresh`
+- `led_no_hardware_pulse`
+- `led_rgb_sequence`
+- `led_pixel_mapper`
+- `led_row_addr_type`
+- `led_multiplexing`
+- `led_panel_type`
+- `led_no_drop_privs`
 
-The supervisor supplies all defaults explicitly, using the existing developer
-launcher's normal 64x64, Adafruit HAT, slowdown-2 profile. Less common upstream flags
-remain available during direct CLI use but are not yet web-managed.
+The supervisor supplies all defaults explicitly. The checked-in
+`config/matrix-controller.json` owns the service's normal 64x64, Adafruit HAT,
+slowdown-2 profile and the remaining native-driver defaults. The web UI generates
+controls for this contract; it does not maintain a second parameter list.
 
 ## FFT details
 
@@ -115,12 +127,9 @@ failure back to `idle` while retaining the last exit fields for diagnosis.
 
 ## Deliberately deferred
 
-- polished phone UI;
 - live parameter/action IPC;
 - presets and automatic resume after reboot;
 - registration of other project/upstream demos;
 - portable installer and other Pi compatibility work;
-- fallback access point and captive provisioning;
 - container evaluation; and
 - TLS or a stronger local pairing transport.
-
