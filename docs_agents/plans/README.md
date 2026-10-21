@@ -11,9 +11,11 @@ The archive directory intentionally retains the requested `plans_archvie` spelli
 2. [Phone visualization controls](phone-visualization-ui.md) — add the mobile picker,
    generated parameter controls, start/stop state, and useful errors on top of the
    existing API.
-3. [Runtime modernization](runtime-modernization.md) — continue removing production
+3. [Web visualization emulator](web-visualization-emulator.md) — execute the existing
+   Python renderers against a software matrix and stream frames to a browser preview.
+4. [Runtime modernization](runtime-modernization.md) — continue removing production
    dependence on the upstream demo layout and address duplicate FFT work when useful.
-4. [Network recovery hardening](network-recovery-hardening.md) — physically validate
+5. [Network recovery hardening](network-recovery-hardening.md) — physically validate
    LAN-to-AP fallback and add a recovery input before treating failure recovery as
    field-proven.
 
