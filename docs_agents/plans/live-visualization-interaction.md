@@ -1,6 +1,11 @@
 # Live Visualization Interaction Plan
 
-Status: proposed next implementation
+Status: live-control MVP implemented; preset and layer-composition work remains
+
+Implemented on 2026-10-25: phases 1–4, the generic opt-in runtime protocol, existing
+FFT keyboard-equivalent controls, stable per-layer controls, and an initial set of
+validated numeric audio/scaling controls. Phase 5 remains the active customization
+follow-up, particularly named presets and adding/removing/duplicating layers.
 
 ## Goal
 

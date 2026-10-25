@@ -10,15 +10,20 @@ parses requests, checks the bearer token for POST operations, and delegates to t
 supervisor.
 
 ```text
-HTTP request -> typed allowlist -> exclusive subprocess supervisor
-                                      |
-                      info, FFT, or sorting child process
-                                      |
-                              native matrix binding
+launch HTTP -> typed allowlist -> exclusive subprocess supervisor -> child process
+live HTTP ---------------------> private per-run Unix socket ------> runtime queue
+                                                                    |
+                                                      frame-boundary controller
+                                                                    |
+                                                   renderer/audio/native matrix
 ```
 
-Changing an MVP parameter is a restart/switch operation. Live frame-boundary IPC is
-deferred. The service never invokes a shell or the heuristic developer launcher.
+Launch parameters remain restart/switch operations. FFT additionally opts into a
+versioned live-control protocol. The supervisor creates a mode-0600 Unix socket and
+one-run capability, passes them only in the child environment, and proxies bounded
+JSON requests. `system_info` and `sorts` do not create runtime endpoints. Run IDs and
+state revisions reject stale browser commands. The service never invokes a shell or
+the heuristic developer launcher.
 
 `config/matrix-controller.json` is the versioned administrator source for runtime,
 boot, shared matrix, and per-visualization defaults. `controller_config.py` rejects
@@ -77,9 +82,12 @@ After the matrix exists, the program constructs:
 - one single-mode `ScalingProcessor`;
 - the hardcoded `bars` (`BarsUnifiedVisualizer`) renderer;
 - a theme and `ThemeCycler`;
-- layer audio bins, visual state, and one scaler per configured layer on demand.
+- layer audio bins, visual state, and one scaler per configured layer on demand; and
+- one `FftRuntimeController`, shared by keyboard mappings and private IPC.
 
-Both the audio stream and optional terminal keyboard mode are context-managed.
+Both the audio stream and optional terminal keyboard mode are context-managed. The
+IPC listener only queues work; the main loop drains a bounded batch before rendering
+so request threads never mutate audio or visualizer objects directly.
 SIGTERM is translated into the same cleanup path as Ctrl+C. The matrix is cleared and
 runtime state is saved during normal teardown.
 
@@ -135,7 +143,10 @@ There are three kinds of state:
 
 Runtime state captures selected display flags, zoom index, themes, layer visibility/order, and dynamic-theme parameters. It does not serialize the full `Settings` object. In non-interactive stdin, prior state is never restored because the confirmation prompt is skipped.
 
-The terminal controls are defined in the large key-dispatch block in `main.py`; the startup banner is the quickest current inventory. If changing a key or mode, update the banner, handler, persisted state if relevant, and the user docs together.
+`runtime_control.py` is the source of truth for typed values, semantic actions,
+snapshots, and keyboard mappings. The browser generates fields from its control
+schema. If changing a key or mode, update that controller, the startup banner,
+persisted state if relevant, and the user docs together.
 
 ## Hardware boundary
 

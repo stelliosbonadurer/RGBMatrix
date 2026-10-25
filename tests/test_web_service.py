@@ -18,6 +18,33 @@ class FakeSupervisor:
     def __init__(self):
         self.started: list[tuple[str, dict]] = []
         self.stop_count = 0
+        self.runtime_commands: list[dict] = []
+        self.runtime = {
+            "protocol_version": 1,
+            "supported": True,
+            "connected": True,
+            "run_id": 1,
+            "visualization_id": "fft",
+            "revision": 4,
+            "state": {"visualizer": {"gradient": False}},
+            "controls": [
+                {
+                    "id": "visualizer.gradient",
+                    "path": "visualizer.gradient",
+                    "label": "Gradient",
+                    "type": "boolean",
+                    "group": "visualizer",
+                    "value": False,
+                },
+                {
+                    "id": "dynamic.reseed",
+                    "type": "action",
+                    "action": "dynamic.reseed",
+                    "group": "theme",
+                    "label": "Reseed",
+                },
+            ],
+        }
 
     def list_visualizations(self):
         return [{"id": "fft", "name": "Music FFT", "parameters": []}]
@@ -37,6 +64,14 @@ class FakeSupervisor:
     def stop(self):
         self.stop_count += 1
         return self.status()
+
+    def runtime_snapshot(self):
+        return self.runtime
+
+    def runtime_command(self, command, **_kwargs):
+        self.runtime_commands.append(command)
+        self.runtime["revision"] += 1
+        return self.runtime
 
 
 class FakeNetworkClient:
@@ -86,9 +121,9 @@ class WebServiceTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def request(self, path: str, *, payload=None, token: str | None = None):
+    def request(self, path: str, *, payload=None, token: str | None = None, method=None):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
-        request = urllib.request.Request(self.base_url + path, data=data)
+        request = urllib.request.Request(self.base_url + path, data=data, method=method)
         if data is not None:
             request.add_header("Content-Type", "application/json")
         if token is not None:
@@ -144,6 +179,75 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body["pid"], 42)
         self.assertEqual(self.supervisor.started, [("fft", {"theme": "warm"})])
+
+    def test_runtime_snapshot_requires_control_authentication(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/v1/runtime")
+        self.assertEqual(caught.exception.code, 401)
+        caught.exception.close()
+
+        status, body = self.request("/api/v1/runtime", token="secret-token")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["visualization_id"], "fft")
+        self.assertEqual(body["controls"][0]["path"], "visualizer.gradient")
+
+    def test_runtime_patch_is_bounded_and_forwards_typed_command(self) -> None:
+        payload = {
+            "run_id": 1,
+            "expected_revision": 4,
+            "changes": [{"path": "visualizer.gradient", "value": True}],
+        }
+        status, body = self.request(
+            "/api/v1/runtime",
+            payload=payload,
+            token="secret-token",
+            method="PATCH",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["revision"], 5)
+        self.assertEqual(
+            self.supervisor.runtime_commands[-1],
+            {
+                "operation": "patch",
+                "run_id": 1,
+                "expected_revision": 4,
+                "changes": [{"path": "visualizer.gradient", "value": True}],
+            },
+        )
+
+    def test_runtime_action_forwards_allowlisted_envelope(self) -> None:
+        payload = {
+            "run_id": 1,
+            "expected_revision": 4,
+            "action": "dynamic.reseed",
+            "target": "active",
+            "args": {},
+        }
+        status, body = self.request(
+            "/api/v1/runtime/actions",
+            payload=payload,
+            token="secret-token",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["revision"], 5)
+        self.assertEqual(self.supervisor.runtime_commands[-1]["operation"], "action")
+        self.assertEqual(self.supervisor.runtime_commands[-1]["action"], "dynamic.reseed")
+
+    def test_runtime_patch_rejects_unknown_fields_before_supervisor(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(
+                "/api/v1/runtime",
+                payload={
+                    "run_id": 1,
+                    "changes": [{"path": "x", "value": True}],
+                    "shell": "echo unsafe",
+                },
+                token="secret-token",
+                method="PATCH",
+            )
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        self.assertEqual(self.supervisor.runtime_commands, [])
 
     def test_stop_requires_token_and_quits_current_visualization(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

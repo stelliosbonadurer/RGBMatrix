@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import inspect
 import ipaddress
 import json
+import math
+import math
 import os
 import signal
 import threading
@@ -26,6 +29,18 @@ from .supervisor import VisualizationSupervisor
 
 
 MAX_REQUEST_BYTES = 64 * 1024
+MAX_RUNTIME_CHANGES = 32
+MAX_RUNTIME_PATH_LENGTH = 256
+MAX_RUNTIME_ACTION_LENGTH = 128
+MAX_RUNTIME_TARGET_LENGTH = 256
+
+
+class _RuntimeResponseError(RuntimeError):
+    """Translate a child ``{ok: false, error: ...}`` result for HTTP clients."""
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
 
 
 def _is_loopback_address(address_text: str) -> bool:
@@ -39,6 +54,216 @@ def _is_loopback_address(address_text: str) -> bool:
         return True
     mapped = getattr(address, "ipv4_mapped", None)
     return mapped is not None and mapped.is_loopback
+
+
+def _unsupported_runtime_snapshot(supervisor: Any) -> dict[str, Any]:
+    """Return a stable response for visualizations without live control support.
+
+    Live controls are opt-in. Keeping this fallback in the HTTP adapter means older
+    supervisors and launch-only visualizations continue to work while the runtime
+    protocol is rolled out incrementally.
+    """
+
+    try:
+        status = supervisor.status()
+    except Exception:  # pragma: no cover - a broken status provider is handled below
+        status = {}
+    if not isinstance(status, dict):
+        status = {}
+    return {
+        "protocol_version": 1,
+        "supported": False,
+        "connected": False,
+        "run_id": status.get("run_id"),
+        "visualization_id": status.get("visualization_id"),
+        "revision": None,
+        "state": {},
+        "controls": [],
+    }
+
+
+def _runtime_snapshot(supervisor: Any) -> dict[str, Any]:
+    """Call the optional supervisor snapshot API and require a JSON object."""
+
+    method = getattr(supervisor, "runtime_snapshot", None)
+    if method is None:
+        return _unsupported_runtime_snapshot(supervisor)
+    # The real supervisor advertises whether the current registry entry opted into
+    # live control. Avoid a one-second socket timeout on every poll while a normal
+    # launch-only visualization (connection info or sorts) is running.
+    try:
+        status = supervisor.status()
+    except Exception:
+        status = None
+    runtime_status = status.get("runtime_control") if isinstance(status, dict) else None
+    if isinstance(runtime_status, dict) and runtime_status.get("available") is False:
+        return _unsupported_runtime_snapshot(supervisor)
+    snapshot = method()
+    if snapshot is None:
+        return _unsupported_runtime_snapshot(supervisor)
+    return _normalize_runtime_result(snapshot)
+
+
+def _normalize_runtime_result(result: Any) -> dict[str, Any]:
+    """Accept both raw snapshots and the transport's ``ok/snapshot`` envelope."""
+
+    if not isinstance(result, dict):
+        raise RuntimeError("runtime response must be a JSON object")
+    if result.get("ok") is False:
+        error = result.get("error")
+        if isinstance(error, dict):
+            code = str(error.get("code", "runtime_error"))
+            message = str(error.get("message", "runtime command rejected"))
+        else:
+            code = "runtime_error"
+            message = "runtime command rejected"
+        raise _RuntimeResponseError(code, message)
+    snapshot = result.get("snapshot")
+    if isinstance(snapshot, dict):
+        return snapshot
+    return result
+
+
+def _bounded_runtime_value(value: Any, *, label: str, depth: int = 0) -> Any:
+    """Reject pathological command values before they reach a child process."""
+
+    if depth > 8:
+        raise ValidationError(f"{label} is nested too deeply")
+    if value is None or type(value) in {bool, int, float, str}:
+        if type(value) is float and not math.isfinite(value):
+            raise ValidationError(f"{label} must be finite")
+        if isinstance(value, str) and len(value) > MAX_RUNTIME_PATH_LENGTH:
+            raise ValidationError(f"{label} is too long")
+        return value
+    if isinstance(value, list):
+        if len(value) > MAX_RUNTIME_CHANGES:
+            raise ValidationError(f"{label} contains too many items")
+        return [
+            _bounded_runtime_value(item, label=label, depth=depth + 1)
+            for item in value
+        ]
+    if isinstance(value, dict):
+        if len(value) > MAX_RUNTIME_CHANGES:
+            raise ValidationError(f"{label} contains too many fields")
+        if any(type(key) is not str or len(key) > MAX_RUNTIME_PATH_LENGTH for key in value):
+            raise ValidationError(f"{label} contains an invalid field name")
+        return {
+            key: _bounded_runtime_value(item, label=label, depth=depth + 1)
+            for key, item in value.items()
+        }
+    raise ValidationError(f"{label} contains an unsupported JSON value")
+
+
+def _parse_runtime_patch(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate the public atomic patch envelope without knowing visualization IDs."""
+
+    allowed = {"run_id", "expected_revision", "changes"}
+    unknown = set(payload) - allowed
+    if unknown:
+        raise ValidationError(f"unknown runtime fields: {', '.join(sorted(unknown))}")
+    run_id = payload.get("run_id")
+    if type(run_id) not in {str, int} or (isinstance(run_id, str) and not run_id):
+        raise ValidationError("run_id must be a non-empty string or integer")
+    expected_revision = payload.get("expected_revision")
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise ValidationError("expected_revision must be a non-negative integer")
+    changes = payload.get("changes")
+    if not isinstance(changes, list) or not changes or len(changes) > MAX_RUNTIME_CHANGES:
+        raise ValidationError(
+            f"changes must contain between 1 and {MAX_RUNTIME_CHANGES} items"
+        )
+    normalized_changes = []
+    for index, change in enumerate(changes):
+        if not isinstance(change, dict) or set(change) != {"path", "value"}:
+            raise ValidationError(f"changes[{index}] must contain path and value only")
+        path = change["path"]
+        if type(path) is not str or not path or len(path) > MAX_RUNTIME_PATH_LENGTH:
+            raise ValidationError(f"changes[{index}].path is invalid")
+        normalized_changes.append(
+            {
+                "path": path,
+                "value": _bounded_runtime_value(
+                    change["value"], label=f"changes[{index}].value"
+                ),
+            }
+        )
+    return {
+        "operation": "patch",
+        "run_id": run_id,
+        "expected_revision": expected_revision,
+        "changes": normalized_changes,
+    }
+
+
+def _parse_runtime_action(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate an allowlisted semantic action envelope."""
+
+    allowed = {"run_id", "expected_revision", "action", "target", "args"}
+    unknown = set(payload) - allowed
+    if unknown:
+        raise ValidationError(f"unknown runtime fields: {', '.join(sorted(unknown))}")
+    run_id = payload.get("run_id")
+    if type(run_id) not in {str, int} or (isinstance(run_id, str) and not run_id):
+        raise ValidationError("run_id must be a non-empty string or integer")
+    expected_revision = payload.get("expected_revision")
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise ValidationError("expected_revision must be a non-negative integer")
+    action = payload.get("action")
+    if type(action) is not str or not action or len(action) > MAX_RUNTIME_ACTION_LENGTH:
+        raise ValidationError("action must be a non-empty string")
+    target = payload.get("target")
+    if target is not None and (type(target) is not str or len(target) > MAX_RUNTIME_TARGET_LENGTH):
+        raise ValidationError("target must be a string")
+    args = payload.get("args", {})
+    if not isinstance(args, dict):
+        raise ValidationError("args must be a JSON object")
+    return {
+        "operation": "action",
+        "run_id": run_id,
+        "expected_revision": expected_revision,
+        "action": action,
+        "target": target,
+        "args": _bounded_runtime_value(args, label="args"),
+    }
+
+
+def _runtime_error_response(exc: Exception) -> tuple[HTTPStatus, str, str]:
+    """Map supervisor errors to predictable HTTP status/code triples."""
+
+    raw_code = getattr(exc, "code", None)
+    code = raw_code if isinstance(raw_code, str) else "runtime_error"
+    text = str(exc) or code
+    if code == "runtime_error":
+        lowered = text.lower()
+        for candidate in ("stale_run", "revision_conflict", "invalid_value", "invalid_path", "invalid_command", "unsupported_version", "protocol_error", "unavailable", "busy", "unsupported", "timeout"):
+            if candidate in lowered:
+                code = candidate
+                break
+    status_value = getattr(exc, "status", None)
+    if type(status_value) is int:
+        try:
+            status = HTTPStatus(status_value)
+        except ValueError:
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
+    else:
+        status = {
+            "stale_run": HTTPStatus.CONFLICT,
+            "revision_conflict": HTTPStatus.CONFLICT,
+            "invalid_value": HTTPStatus.BAD_REQUEST,
+            "invalid_path": HTTPStatus.BAD_REQUEST,
+            "invalid_command": HTTPStatus.BAD_REQUEST,
+            "unsupported_version": HTTPStatus.BAD_REQUEST,
+            "protocol_error": HTTPStatus.BAD_REQUEST,
+            "unsupported": HTTPStatus.NOT_IMPLEMENTED,
+            "unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
+            "busy": HTTPStatus.SERVICE_UNAVAILABLE,
+            "timeout": HTTPStatus.GATEWAY_TIMEOUT,
+        }.get(code, HTTPStatus.INTERNAL_SERVER_ERROR)
+    return status, code, text
 
 
 def build_handler(
@@ -87,6 +312,11 @@ def build_handler(
                 self._send_json(HTTPStatus.OK, {"visualizations": supervisor.list_visualizations()})
             elif path == "/api/v1/status":
                 self._send_json(HTTPStatus.OK, supervisor.status())
+            elif path == "/api/v1/runtime":
+                if not self._is_control_authorized():
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing bearer token")
+                else:
+                    self._handle_runtime_snapshot()
             elif path == "/api/v1/pairing/status":
                 supplied_token = self._bearer_token()
                 self._send_json(
@@ -107,6 +337,9 @@ def build_handler(
                         "endpoints": [
                             "GET /api/v1/visualizations",
                             "GET /api/v1/status",
+                            "GET /api/v1/runtime",
+                            "PATCH /api/v1/runtime",
+                            "POST /api/v1/runtime/actions",
                             "GET /api/v1/pairing/status",
                             "GET /api/v1/network/status",
                             "GET /setup",
@@ -181,6 +414,11 @@ def build_handler(
                     self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing bearer token")
                     return
 
+                if path == "/api/v1/runtime/actions":
+                    command = _parse_runtime_action(self._read_json_object())
+                    self._handle_runtime_command(command)
+                    return
+
                 if path == "/api/v1/run":
                     payload = self._read_json_object()
                     visualization_id = payload.get("visualization_id")
@@ -219,6 +457,61 @@ def build_handler(
                 self._send_json(status, {"error": str(exc)}, headers=headers)
             except RuntimeError as exc:
                 self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+        def do_PATCH(self) -> None:  # noqa: N802 - HTTP handler API name
+            """Apply one authenticated atomic runtime patch."""
+
+            path = urlsplit(self.path).path
+            if path != "/api/v1/runtime":
+                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                return
+            if not self._is_control_authorized():
+                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing bearer token")
+                return
+            try:
+                command = _parse_runtime_patch(self._read_json_object())
+                self._handle_runtime_command(command)
+            except ValidationError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+            except ValueError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+
+        def _handle_runtime_snapshot(self) -> None:
+            try:
+                self._send_json(HTTPStatus.OK, _runtime_snapshot(supervisor))
+            except Exception as exc:
+                status, code, message = _runtime_error_response(exc)
+                self._send_json(status, {"error": message, "code": code})
+
+        def _handle_runtime_command(self, command: dict[str, Any]) -> None:
+            method = getattr(supervisor, "runtime_command", None)
+            if method is None:
+                self._send_json(
+                    HTTPStatus.NOT_IMPLEMENTED,
+                    {"error": "active visualization does not support live controls", "code": "unsupported"},
+                )
+                return
+            try:
+                # New supervisors can enforce identity/revision at their boundary;
+                # older adapters accept only the command mapping. Inspecting the
+                # signature avoids catching a TypeError raised by the child itself
+                # and accidentally issuing a command twice.
+                kwargs: dict[str, Any] = {}
+                try:
+                    parameters = inspect.signature(method).parameters
+                except (TypeError, ValueError):
+                    parameters = {}
+                if "run_id" in parameters:
+                    kwargs["run_id"] = command["run_id"]
+                if "expected_revision" in parameters:
+                    kwargs["expected_revision"] = command.get("expected_revision")
+                result = method(command, **kwargs)
+                if result is None:
+                    result = _runtime_snapshot(supervisor)
+                self._send_json(HTTPStatus.OK, _normalize_runtime_result(result))
+            except Exception as exc:
+                status, code, message = _runtime_error_response(exc)
+                self._send_json(status, {"error": message, "code": code})
 
         def _handle_network_request(
             self,
@@ -487,6 +780,7 @@ def main() -> int:
         python_executable=python_executable,
         command_prefix=command_prefix,
         stop_timeout=stop_timeout,
+        runtime_dir=os.environ.get("RGBMATRIX_RUNTIME_DIR"),
     )
     server = ThreadingHTTPServer(
         (args.host, args.port),

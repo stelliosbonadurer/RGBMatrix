@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Protocol
 
 from .registry import Registry
+from .runtime_transport import (
+    RuntimeControlServer,
+    RuntimeRunMismatch,
+    RuntimeUnavailable,
+)
 from .schema import ValidationError
 
 
@@ -65,6 +70,8 @@ class VisualizationSupervisor:
         group_signaler: GroupSignaler = os.killpg,
         process_group_lookup: ProcessGroupLookup = os.getpgid,
         clock: Clock = time.time,
+        runtime_dir: str | os.PathLike[str] | None = None,
+        runtime_request_timeout: float = 1.0,
     ):
         self.registry = registry
         self.python_executable = python_executable
@@ -74,6 +81,8 @@ class VisualizationSupervisor:
         self._group_signaler = group_signaler
         self._process_group_lookup = process_group_lookup
         self._clock = clock
+        self._runtime_dir = runtime_dir
+        self._runtime_request_timeout = runtime_request_timeout
         self._lock = threading.RLock()
 
         self._state = "idle"
@@ -85,6 +94,7 @@ class VisualizationSupervisor:
         self._last_exit_code: int | None = None
         self._last_error: str | None = None
         self._run_id = 0
+        self._runtime_control: RuntimeControlServer | None = None
 
     def list_visualizations(self) -> list[dict[str, Any]]:
         return [item.as_public_dict() for item in self.registry.list()]
@@ -121,8 +131,24 @@ class VisualizationSupervisor:
             self._last_error = None
             self._last_exit_code = None
             self._run_id += 1
+            runtime_control: RuntimeControlServer | None = None
+            if spec.supports_live_control:
+                try:
+                    runtime_control = RuntimeControlServer(
+                        self._run_id,
+                        runtime_dir=self._runtime_dir,
+                    )
+                except OSError:
+                    # A display must remain launchable if the host policy cannot
+                    # create Unix sockets (for example, a restricted development
+                    # sandbox). The status surface reports runtime control as
+                    # unavailable; normal Pi deployments use the private endpoint.
+                    runtime_control = None
 
             try:
+                child_environment = os.environ.copy()
+                if runtime_control is not None:
+                    child_environment.update(runtime_control.endpoint.environment())
                 # stdin is closed so a missed non-interactive adapter fails instead of
                 # hanging. Inheriting stdout/stderr lets systemd/journald apply its
                 # existing bounded logging policy without an unread pipe deadlock.
@@ -133,13 +159,17 @@ class VisualizationSupervisor:
                     stdout=None,
                     stderr=subprocess.STDOUT,
                     start_new_session=True,
+                    env=child_environment,
                 )
             except Exception as exc:
+                if runtime_control is not None:
+                    runtime_control.close()
                 self._state = "failed"
                 self._last_error = self._bounded_error(f"launch failed: {exc}")
                 raise RuntimeError(self._last_error) from exc
 
             self._process = process
+            self._runtime_control = runtime_control
             self._visualization_id = visualization_id
             self._parameters = dict(normalized)
             self._argv = tuple(argv)
@@ -153,6 +183,7 @@ class VisualizationSupervisor:
                     f"process exited during startup with code {immediate_exit}"
                 )
                 self._process = None
+                self._close_runtime_control_locked()
                 self._state = "failed"
                 raise RuntimeError(self._last_error)
 
@@ -178,11 +209,73 @@ class VisualizationSupervisor:
             self._reconcile_locked()
             return self._status_locked()
 
+    def runtime_request(
+        self,
+        operation: str,
+        payload: Any = None,
+        *,
+        run_id: int | str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Send one typed operation to the active visualization.
+
+        ``run_id`` is checked before touching the socket.  Callers should capture
+        it from :meth:`status`/the :class:`LaunchResult` and include it on every
+        request so a delayed phone request cannot mutate a replacement process.
+        """
+
+        with self._lock:
+            self._reconcile_locked()
+            self._require_runtime_run_locked(run_id)
+            runtime_control = self._runtime_control
+            if runtime_control is None:
+                raise RuntimeUnavailable("active visualization does not provide runtime control")
+            request_timeout = (
+                self._runtime_request_timeout if timeout is None else timeout
+            )
+            return runtime_control.request(operation, payload, timeout=request_timeout)
+
+    def runtime_snapshot(
+        self,
+        *,
+        run_id: int | str | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Request the child-owned current state snapshot."""
+
+        return self.runtime_request("snapshot", {}, run_id=run_id, timeout=timeout)
+
+    def runtime_command(
+        self,
+        command: Mapping[str, Any],
+        *,
+        run_id: int | str | None = None,
+        expected_revision: int | None = None,
+        timeout: float | None = None,
+    ) -> Any:
+        """Send a semantic runtime command without emulating keyboard input."""
+
+        if not isinstance(command, Mapping):
+            raise TypeError("runtime command must be a mapping")
+        payload: dict[str, Any] = {"command": dict(command)}
+        if expected_revision is not None:
+            payload["expected_revision"] = expected_revision
+        return self.runtime_request("command", payload, run_id=run_id, timeout=timeout)
+
+    def _require_runtime_run_locked(self, run_id: int | str | None) -> None:
+        if self._process is None or self._state != "running":
+            raise RuntimeUnavailable("no visualization is currently running")
+        if run_id is not None and str(run_id) != str(self._run_id):
+            raise RuntimeRunMismatch(
+                f"runtime request targets run {run_id!r}, active run is {self._run_id!r}"
+            )
+
     def _stop_locked(self) -> None:
         process = self._process
         if process is None:
             # An explicit stop also acknowledges a previously observed failure. Keep
             # last_error/last_exit_code for diagnosis, but return lifecycle to idle.
+            self._close_runtime_control_locked()
             self._state = "idle"
             return
 
@@ -205,8 +298,11 @@ class VisualizationSupervisor:
         except subprocess.TimeoutExpired as exc:
             # Do not forget a child that could not be reaped. Retaining ownership in
             # failed state prevents a subsequent start from creating two potential
-            # matrix owners. A later stop/status call can reconcile if it finally
-            # exits; systemd KillMode=control-group is the outer safety net.
+            # matrix owners. The child control endpoint is closed immediately so a
+            # stuck process cannot keep accepting live mutations. A later stop/status
+            # call can reconcile if it finally exits; systemd KillMode=control-group
+            # is the outer safety net.
+            self._close_runtime_control_locked()
             self._state = "failed"
             self._last_error = self._bounded_error(
                 f"process {process.pid} did not exit after SIGKILL"
@@ -219,6 +315,7 @@ class VisualizationSupervisor:
 
         self._last_exit_code = exit_code
         self._process = None
+        self._close_runtime_control_locked()
         self._visualization_id = None
         self._parameters = {}
         self._argv = ()
@@ -237,6 +334,7 @@ class VisualizationSupervisor:
         self._last_exit_code = exit_code
         finished_id = self._visualization_id
         self._process = None
+        self._close_runtime_control_locked()
         self._visualization_id = None
         self._parameters = {}
         self._argv = ()
@@ -265,7 +363,21 @@ class VisualizationSupervisor:
             "run_id": self._run_id,
             "last_exit_code": self._last_exit_code,
             "last_error": self._last_error,
+            "runtime_control": {
+                "available": self._runtime_control is not None,
+                "connected": (
+                    self._runtime_control.connected
+                    if self._runtime_control is not None
+                    else False
+                ),
+            },
         }
+
+    def _close_runtime_control_locked(self) -> None:
+        runtime_control = self._runtime_control
+        self._runtime_control = None
+        if runtime_control is not None:
+            runtime_control.close()
 
     @staticmethod
     def _bounded_error(message: str, limit: int = 500) -> str:

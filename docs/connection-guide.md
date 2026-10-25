@@ -105,6 +105,13 @@ settings, and choose **Launch visualization**. The current visualization is stop
 before the replacement starts. Hardware fields such as dimensions and GPIO slowdown
 are advanced settings; incorrect values can produce a blank or unstable panel.
 
+While Music FFT is running, a **Live controls** panel appears. It reads current state
+from the visualization process and can change themes, display modes, zoom, layers,
+layer order/visibility/boost, dynamic-theme behavior, and bounded audio or scaling
+parameters without restarting. Keyboard changes made over SSH appear on the next
+phone poll. Controls marked `rebuild` refresh derived FFT bins in-process; matrix
+hardware and audio-device geometry still require a new launch.
+
 The code remains the same for the current Pi boot and can pair multiple local devices;
 a full reboot rotates it. The resulting phone session can control visualizations but
 cannot change Wi-Fi. It expires after four hours, when the web-service process

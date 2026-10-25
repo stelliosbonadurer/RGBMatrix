@@ -6,9 +6,9 @@ The archive directory intentionally retains the requested `plans_archvie` spelli
 
 ## Current order
 
-1. [Live visualization interaction](live-visualization-interaction.md) — expose the
-   active FFT state and typed live controls through one command layer shared by the
-   keyboard and authenticated phone UI.
+1. [Live visualization interaction](live-visualization-interaction.md) — the typed
+   FFT phone-control MVP is implemented; finish named presets and safe dynamic layer
+   composition on the established runtime protocol.
 2. [Portable Raspberry Pi deployment](portable-deployment.md) — produce a repeatable
    native install for explicitly supported Pi models before reconsidering containers.
 3. [Web visualization emulator](web-visualization-emulator.md) — execute the existing

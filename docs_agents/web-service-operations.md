@@ -2,7 +2,9 @@
 
 Status: visualization control deployed and tested on 2026-10-16; network setup proxy
 and minimal mobile setup page added on 2026-10-18; paired visualization launch forms
-and versioned launch configuration added on 2026-10-21.
+and versioned launch configuration added on 2026-10-21; live FFT control deployed on
+2026-10-25, with service/API validation complete and audio-driven hardware validation
+still pending.
 
 ## Current Pi deployment
 
@@ -13,12 +15,13 @@ and versioned launch configuration added on 2026-10-21.
 - Listener: `0.0.0.0:8080`
 - API token: `/home/stelliosbonadurer/.config/rgb-matrix-controller/api-token`
 - Mutable state: `/var/lib/rgb-matrix-controller`
+- Private per-run control sockets: `/run/rgb-matrix-controller`
 - Visualization interpreter:
   `/home/stelliosbonadurer/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3`
 
 Verified on the Pi after the generated-launch/config deployment:
 
-- all 67 hardware-free tests pass under `/usr/bin/python3`;
+- all 87 hardware-free tests pass under `/usr/bin/python3`;
 - the unit is both `enabled` and `active`;
 - `system_info` remains running on the real matrix hardware;
 - the terminal reader matches the stored boot code and service restarts preserve it;
@@ -29,6 +32,8 @@ Verified on the Pi after the generated-launch/config deployment:
   slowdown-2 defaults plus all 18 managed matrix parameters;
 - the deployed browser assets contain the generated launch form and `/api/v1/run`
   client path;
+- the deployed registry advertises FFT live-control support, the private runtime
+  directory is mode `0700`, and the service health check succeeds after restart;
 - an authenticated finite `sorts`/`quick` launch reached the real native matrix path,
   used the configured native options, exited with code 0, and returned the supervisor
   to `idle`; `system_info` was then restored.
@@ -78,8 +83,8 @@ python3 -m matrix_controller.boot_code
 Pairing endpoints are `GET /api/v1/pairing/status` and POST operations `exchange` and
 `logout` under `/api/v1/pairing/`.
 
-Live FFT parameter changes, presets, mDNS,
-portable installation, and container work remain deferred. Fallback Wi-Fi is a
+Named presets, dynamic layer composition, mDNS, portable installation, and container
+work remain deferred. Fallback Wi-Fi is a
 separate privileged service documented in
 [network-fallback-operations.md](network-fallback-operations.md). For this MVP, changing a
 parameter means calling `run` again; the supervisor stops the active process fully
@@ -123,6 +128,20 @@ State-changing endpoints require `Authorization: Bearer TOKEN`:
 POST /api/v1/run
 POST /api/v1/stop
 ```
+
+Paired live-control endpoints are also authenticated:
+
+```text
+GET   /api/v1/runtime
+PATCH /api/v1/runtime
+POST  /api/v1/runtime/actions
+```
+
+Only FFT currently advertises `supports_live_control`. The child owns its current
+state and control schema; the web service forwards typed, bounded requests over a
+private per-run Unix socket. Changes apply between frames. Every mutation uses the
+active `run_id`, may include `expected_revision`, and returns a fresh snapshot.
+`system_info` and `sorts` return an unsupported snapshot without waiting on a socket.
 
 Example run body:
 

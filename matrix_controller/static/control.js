@@ -8,6 +8,10 @@ const elements = {
   statusDot: document.querySelector('#status-dot'),
   quitButton: document.querySelector('#quit-button'),
   quitLabel: document.querySelector('#quit-button .button-label'),
+  livePanel: document.querySelector('#live-controls-panel'),
+  liveDetail: document.querySelector('#live-controls-detail'),
+  liveConnection: document.querySelector('#live-controls-connection'),
+  liveGroups: document.querySelector('#live-controls-groups'),
   pairingCode: document.querySelector('#pairing-code'),
   pairButton: document.querySelector('#pair-button'),
   accessStatus: document.querySelector('#access-status'),
@@ -18,8 +22,10 @@ const elements = {
 
 let visualizations = [];
 let currentStatus = null;
+let currentRuntime = null;
 let stopPending = false;
 let launchPendingId = null;
+let runtimeCommandPending = false;
 let expandedVisualizationId = null;
 let authorizationStatus = null;
 let controlToken = '';
@@ -67,6 +73,7 @@ async function readJson(response) {
   if (!response.ok) {
     const error = new Error(body.error || `Request failed (${response.status}).`);
     error.status = response.status;
+    error.code = body.code || '';
     throw error;
   }
   return body;
@@ -346,6 +353,221 @@ function updateCardStates() {
   });
 }
 
+function runtimeControls() {
+  return Array.isArray(currentRuntime?.controls) ? currentRuntime.controls : [];
+}
+
+function valueAtPath(value, path) {
+  if (!path) return undefined;
+  return path.split('.').reduce((current, part) => {
+    if (current === null || current === undefined || typeof current !== 'object') return undefined;
+    return current[part];
+  }, value);
+}
+
+function runtimeControlPath(control) {
+  return control.path || control.id || control.name || '';
+}
+
+function runtimeControlValue(control) {
+  const path = runtimeControlPath(control);
+  const stateValue = valueAtPath(currentRuntime?.state, path);
+  return stateValue === undefined ? control.value : stateValue;
+}
+
+function runtimeControlAvailable(control) {
+  return control.available !== false && control.enabled !== false;
+}
+
+function runtimeControlLabel(control) {
+  return control.label || control.name || runtimeControlPath(control).replaceAll('_', ' ');
+}
+
+function runtimeControlDescription(control) {
+  const mode = control.apply_mode || control.applyMode;
+  const suffix = mode && mode !== 'live' ? ` · ${mode} applies` : '';
+  return `${control.description || ''}${suffix}`.trim();
+}
+
+function runtimeValueForInput(control, input) {
+  if (control.type === 'bool' || control.type === 'boolean') return input.checked;
+  if (control.type === 'int' || control.type === 'integer') return Number.parseInt(input.value, 10);
+  if (control.type === 'float' || control.type === 'number') return Number.parseFloat(input.value);
+  return input.value;
+}
+
+async function applyRuntimeChange(control, input) {
+  const path = runtimeControlPath(control);
+  if (!path || !currentRuntime || currentRuntime.run_id === null || currentRuntime.run_id === undefined) {
+    showMessage('Live controls are not connected to the active visualization.', true);
+    return;
+  }
+  const value = runtimeValueForInput(control, input);
+  if ((control.type === 'int' || control.type === 'integer' || control.type === 'float' || control.type === 'number') && !Number.isFinite(value)) {
+    showMessage(`${runtimeControlLabel(control)} must be a number.`, true);
+    renderLiveControls();
+    return;
+  }
+  runtimeCommandPending = true;
+  renderLiveControls();
+  try {
+    const payload = {
+      run_id: currentRuntime.run_id,
+      changes: [{path, value}],
+    };
+    if (Number.isInteger(currentRuntime.revision)) payload.expected_revision = currentRuntime.revision;
+    currentRuntime = await readJson(await fetch('/api/v1/runtime', {
+      method: 'PATCH',
+      headers: {...authorizationHeaders(), 'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    }));
+    clearMessage();
+    renderLiveControls();
+  } catch (error) {
+    if (error.status === 401) {
+      authorizationStatus = null;
+      renderAuthorization();
+    }
+    if (error.status === 409 || error.code === 'stale_run' || error.code === 'revision_conflict') {
+      await refreshRuntime({reportErrors: false});
+      showMessage('The visualization changed elsewhere. Live controls were refreshed.', true);
+    } else if (error.status === 501 || error.code === 'unsupported') {
+      await refreshRuntime({reportErrors: false});
+      showMessage('This visualization does not support live controls yet.', true);
+    } else {
+      showMessage(`Could not change ${runtimeControlLabel(control)}: ${error.message}`, true);
+      await refreshRuntime({reportErrors: false});
+    }
+  } finally {
+    runtimeCommandPending = false;
+    renderLiveControls();
+  }
+}
+
+async function invokeRuntimeAction(control) {
+  if (!currentRuntime || currentRuntime.run_id === null || currentRuntime.run_id === undefined) return;
+  runtimeCommandPending = true;
+  renderLiveControls();
+  try {
+    const payload = {
+      run_id: currentRuntime.run_id,
+      action: control.action || runtimeControlPath(control),
+    };
+    if (control.target) payload.target = control.target;
+    if (control.args) payload.args = control.args;
+    if (Number.isInteger(currentRuntime.revision)) payload.expected_revision = currentRuntime.revision;
+    currentRuntime = await readJson(await fetch('/api/v1/runtime/actions', {
+      method: 'POST',
+      headers: {...authorizationHeaders(), 'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    }));
+    clearMessage();
+  } catch (error) {
+    if (error.status === 409 || error.code === 'stale_run' || error.code === 'revision_conflict') {
+      await refreshRuntime({reportErrors: false});
+      showMessage('The visualization changed elsewhere. Live controls were refreshed.', true);
+    } else {
+      showMessage(`Could not run ${runtimeControlLabel(control)}: ${error.message}`, true);
+      await refreshRuntime({reportErrors: false});
+    }
+  } finally {
+    runtimeCommandPending = false;
+    renderLiveControls();
+  }
+}
+
+function createRuntimeControl(control) {
+  const path = runtimeControlPath(control);
+  const wrapper = document.createElement('label');
+  wrapper.className = `runtime-control${runtimeControlAvailable(control) ? '' : ' unavailable'}`;
+  const title = document.createElement('span');
+  title.className = 'runtime-control-label';
+  title.textContent = runtimeControlLabel(control);
+  const description = document.createElement('small');
+  description.textContent = runtimeControlDescription(control);
+  const type = control.type || control.kind || 'string';
+  const isAction = type === 'action' || Boolean(control.action);
+  let input;
+  if (isAction) {
+    input = document.createElement('button');
+    input.type = 'button';
+    input.className = 'runtime-action-button';
+    input.textContent = control.button_label || runtimeControlLabel(control);
+    input.addEventListener('click', () => invokeRuntimeAction(control));
+    wrapper.append(input, description);
+  } else if (type === 'bool' || type === 'boolean') {
+    input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = Boolean(runtimeControlValue(control));
+    input.addEventListener('change', () => applyRuntimeChange(control, input));
+    wrapper.append(input, title, description);
+  } else if (type === 'enum' || Array.isArray(control.choices)) {
+    input = document.createElement('select');
+    (control.choices || []).forEach(choice => {
+      const option = document.createElement('option');
+      option.value = choice;
+      option.textContent = choice;
+      option.selected = choice === runtimeControlValue(control);
+      input.append(option);
+    });
+    input.addEventListener('change', () => applyRuntimeChange(control, input));
+    wrapper.append(title, input, description);
+  } else {
+    input = document.createElement('input');
+    input.type = type === 'int' || type === 'integer' || type === 'float' || type === 'number' ? 'number' : 'text';
+    const value = runtimeControlValue(control);
+    input.value = value === undefined || value === null ? '' : value;
+    if (type === 'int' || type === 'integer') input.step = '1';
+    if (type === 'float' || type === 'number') input.step = control.step || 'any';
+    const minimum = control.minimum ?? control.min;
+    const maximum = control.maximum ?? control.max;
+    if (minimum !== undefined) input.min = String(minimum);
+    if (maximum !== undefined) input.max = String(maximum);
+    if (control.maximum_length !== undefined) input.maxLength = control.maximum_length;
+    input.addEventListener('change', () => applyRuntimeChange(control, input));
+    wrapper.append(title, input, description);
+  }
+  input.disabled = runtimeCommandPending || !runtimeControlAvailable(control);
+  input.dataset.runtimePath = path;
+  return wrapper;
+}
+
+function renderLiveControls() {
+  if (!elements.livePanel) return;
+  const controls = runtimeControls();
+  const supported = Boolean(currentRuntime?.visualization_id)
+    && currentRuntime?.supported !== false
+    && (currentRuntime?.supported === true || controls.length > 0);
+  const connected = supported && currentRuntime.connected !== false;
+  elements.livePanel.hidden = !supported;
+  elements.liveConnection.textContent = connected ? 'Connected' : 'Offline';
+  elements.liveConnection.className = `connection-badge ${connected ? 'connected' : 'offline'}`;
+  elements.liveDetail.textContent = supported
+    ? `${visualizationName(currentRuntime.visualization_id)} · revision ${currentRuntime.revision ?? '—'}`
+    : 'The active visualization does not expose live controls.';
+  elements.liveGroups.replaceChildren();
+  elements.liveGroups.setAttribute('aria-busy', 'false');
+  if (!supported || controls.length === 0) return;
+  const grouped = new Map();
+  controls.forEach(control => {
+    const group = control.group || control.scope || 'Visualization';
+    if (!grouped.has(group)) grouped.set(group, []);
+    grouped.get(group).push(control);
+  });
+  grouped.forEach((groupControls, groupName) => {
+    const group = document.createElement('details');
+    group.className = 'live-control-group';
+    group.open = true;
+    const summary = document.createElement('summary');
+    summary.textContent = groupName;
+    const fields = document.createElement('div');
+    fields.className = 'runtime-control-fields';
+    groupControls.forEach(control => fields.append(createRuntimeControl(control)));
+    group.append(summary, fields);
+    elements.liveGroups.append(group);
+  });
+}
+
 function renderStatus() {
   if (currentStatus === null) return;
 
@@ -386,15 +608,39 @@ async function loadVisualizations() {
   }
 }
 
+async function refreshRuntime({reportErrors = false} = {}) {
+  if (!controlToken) {
+    currentRuntime = null;
+    renderLiveControls();
+    return;
+  }
+  try {
+    currentRuntime = await readJson(await fetch('/api/v1/runtime', {
+      headers: authorizationHeaders(),
+      cache: 'no-store',
+    }));
+    renderLiveControls();
+  } catch (error) {
+    currentRuntime = null;
+    renderLiveControls();
+    if (reportErrors && error.status !== 401) {
+      showMessage(`Could not read live controls: ${error.message}`, true);
+    }
+  }
+}
+
 async function refreshStatus({reportErrors = false} = {}) {
   try {
     currentStatus = await readJson(await fetch('/api/v1/status', {cache: 'no-store'}));
     renderStatus();
+    await refreshRuntime({reportErrors: false});
   } catch (error) {
     elements.statusDot.className = 'status-dot failed';
     elements.currentName.textContent = 'Controller unavailable';
     elements.currentDetail.textContent = 'Trying again automatically.';
     elements.quitButton.disabled = true;
+    currentRuntime = null;
+    renderLiveControls();
     if (reportErrors) showMessage(`Could not read status: ${error.message}`, true);
   }
 }
@@ -447,6 +693,7 @@ elements.pairButton.addEventListener('click', async () => {
     storeToken(result.token);
     elements.pairingCode.value = '';
     await refreshAuthorization();
+    await refreshRuntime({reportErrors: false});
     showMessage(`Phone paired. Access expires in ${Math.round(result.expires_in / 3600)} hours or when the service restarts. The displayed code can pair another device.`);
   } catch (error) {
     showMessage(`Could not pair this phone: ${error.message}`, true);
@@ -470,7 +717,9 @@ elements.forgetButton.addEventListener('click', async () => {
   controlToken = '';
   storeToken('');
   authorizationStatus = null;
+  currentRuntime = null;
   renderAuthorization();
+  renderLiveControls();
   showMessage('Access was removed from this browser tab.');
 });
 
@@ -485,5 +734,5 @@ async function initialize() {
 
 initialize();
 setInterval(() => {
-  if (!document.hidden && !stopPending) refreshStatus();
-}, 3000);
+  if (!document.hidden && !stopPending && !runtimeCommandPending) refreshStatus();
+}, 1500);

@@ -1,6 +1,6 @@
 # Managed Visualization Inventory
 
-Last reviewed: 2026-10-21
+Last reviewed: 2026-10-25
 
 ## Performance decision
 
@@ -67,7 +67,8 @@ Direct CLI execution still supports `--settings` and `--list-themes`. `--setting
 not web-exposed because accepting an arbitrary server-side path from HTTP would cross
 the intended security boundary.
 
-The following features are still runtime keyboard controls, not MVP web parameters:
+The FFT child now exposes these as typed live phone controls while preserving their
+keyboard mappings:
 
 - next/previous theme;
 - zoom preset cycling;
@@ -75,10 +76,10 @@ The following features are still runtime keyboard controls, not MVP web paramete
 - layer selection, visibility, and draw order; and
 - dynamic-theme speed, reseed, and freeze.
 
-The future live-control phase should promote these into typed named actions or values
-and apply them at frame boundaries. Do not model them as synthetic keypresses: that
-would couple the API to terminal implementation details and make validation/state
-reporting unreliable.
+The same schema exposes per-layer theme/display/boost values and bounded noise,
+weighting, sensitivity, smoothing, overflow, and peak tuning. Weight changes rebuild
+derived frequency-bin weights at a frame boundary. Matrix flags and audio stream
+geometry remain launch/restart settings.
 
 Service-safety changes already present:
 
@@ -127,8 +128,8 @@ failure back to `idle` while retaining the last exit fields for diagnosis.
 
 ## Deliberately deferred
 
-- live parameter/action IPC;
-- presets and automatic resume after reboot;
+- named live-control presets and dynamic add/remove/duplicate layer composition;
+- automatic resume after reboot;
 - registration of other project/upstream demos;
 - portable installer and other Pi compatibility work;
 - container evaluation; and

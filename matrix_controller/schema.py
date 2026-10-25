@@ -184,6 +184,7 @@ class VisualizationSpec:
     working_directory: Path
     parameters: tuple[ParameterSpec, ...]
     requires_audio: bool = False
+    supports_live_control: bool = False
 
     def parameter(self, name: str) -> ParameterSpec:
         for parameter in self.parameters:
@@ -231,5 +232,6 @@ class VisualizationSpec:
             "name": self.display_name,
             "description": self.description,
             "requires_audio": self.requires_audio,
+            "supports_live_control": self.supports_live_control,
             "parameters": [parameter.as_public_dict() for parameter in self.parameters],
         }

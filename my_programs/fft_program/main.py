@@ -28,6 +28,7 @@ import tty
 import termios
 import json
 import signal
+import threading
 import numpy as np  # type: ignore
 
 # Ensure the fft_program package is importable
@@ -46,6 +47,11 @@ from core import MatrixApp, AudioProcessor, ScalingProcessor
 from themes import get_theme, list_themes
 from visualizers import get_visualizer, draw_peaks
 from matrix_controller.definitions import application_parameters
+from matrix_controller.runtime_transport import (
+    FrameBoundaryRuntimeBridge,
+    RuntimeControlClient,
+)
+from runtime_control import FftRuntimeController
 
 
 STATE_VERSION = 1
@@ -335,6 +341,30 @@ def main():
         if 'peak_color_mode' in persisted_settings:
             settings.peak.color_mode = persisted_settings['peak_color_mode']
 
+        numeric_restore = {
+            'noise_floor': (settings.sensitivity, 'noise_floor', 0.0, 100.0),
+            'low_freq_weight': (settings.sensitivity, 'low_freq_weight', 0.0, 100.0),
+            'high_freq_weight': (settings.sensitivity, 'high_freq_weight', 0.0, 100.0),
+            'silence_threshold': (settings.sensitivity, 'silence_threshold', 0.0, 100.0),
+            'sensitivity_scalar': (settings.scaling, 'sensitivity_scalar', 0.01, 20.0),
+            'smoothing_rise': (settings.smoothing, 'rise', 0.0, 1.0),
+            'smoothing_fall': (settings.smoothing, 'fall', 0.0, 1.0),
+            'overflow_multiplier': (settings.overflow, 'multiplier', 0.1, 10.0),
+            'peak_fall_speed': (settings.peak, 'fall_speed', 0.0, 1.0),
+            'peak_hold_frames': (settings.peak, 'hold_frames', 0, 600),
+        }
+        for name, (target, attribute, minimum, maximum) in numeric_restore.items():
+            value = persisted_settings.get(name)
+            if (
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and np.isfinite(value)
+                and minimum <= value <= maximum
+            ):
+                if name == 'peak_hold_frames' and not isinstance(value, int):
+                    continue
+                setattr(target, attribute, value)
+
         zoom_idx = persisted_settings.get('zoom_preset_index')
         if isinstance(zoom_idx, int) and settings.frequency.zoom_presets:
             settings.frequency.zoom_preset_index = zoom_idx % len(settings.frequency.zoom_presets)
@@ -449,6 +479,7 @@ def main():
                     setattr(visualizer, attr, bool(persisted_visualizer[attr]))
 
             target_layers_enabled = bool(persisted_visualizer.get('layers_enabled', visualizer.layers_enabled))
+            settings.layers.enabled = target_layers_enabled
 
             if target_layers_enabled:
                 ensure_layer_pipeline()
@@ -474,6 +505,7 @@ def main():
 
                     if 'boost' in state_data:
                         layer_state.boost = float(state_data['boost'])
+                        settings.layers.layers[idx].boost = layer_state.boost
 
                     _apply_dynamic_theme_state(layer_state.theme, state_data.get('dynamic', {}))
 
@@ -483,7 +515,11 @@ def main():
 
                 active_layer = persisted_visualizer.get('active_layer')
                 if isinstance(active_layer, int):
-                    visualizer.select_layer(active_layer)
+                    if visualizer.select_layer(active_layer):
+                        settings.layers.active_layer = active_layer
+                        active_name = visualizer.layer_states[active_layer].theme_name
+                        if active_name in theme_cycler.themes:
+                            theme_cycler.current_index = theme_cycler.themes.index(active_name)
             else:
                 visualizer.layers_enabled = False
 
@@ -499,53 +535,38 @@ def main():
                 if single_theme_name in theme_cycler.themes:
                     theme_cycler.current_index = theme_cycler.themes.index(single_theme_name)
 
+        # Assigned after optional persisted-state restoration. The closure keeps
+        # runtime-state saves on the same authoritative controller used by keys and
+        # IPC.
+        controller = None
+
         def build_runtime_state() -> dict:
-            """Capture the current runtime/session state as a serializable dict."""
-            layer_states = []
-            if visualizer.layer_states:
-                for state_obj in visualizer.layer_states:
-                    layer_states.append({
-                        'theme_name': state_obj.theme_name,
-                        'bars_enabled': state_obj.bars_enabled,
-                        'gradient_enabled': state_obj.gradient_enabled,
-                        'overflow_enabled': state_obj.overflow_enabled,
-                        'peak_enabled': state_obj.peak_enabled,
-                        'visible': state_obj.visible,
-                        'boost': state_obj.boost,
-                        'dynamic': _extract_dynamic_theme_state(state_obj.theme),
-                    })
-
-            single_theme_name = settings.color.theme
-            if visualizer.theme is not None and hasattr(visualizer.theme, 'name'):
-                single_theme_name = visualizer.theme.name
-
-            return {
-                'version': STATE_VERSION,
-                'timestamp': time.time(),
-                'settings': {
-                    'shadow_enabled': settings.shadow.enabled,
-                    'peak_enabled': settings.peak.enabled,
-                    'peak_color_mode': settings.peak.color_mode,
-                    'zoom_preset_index': settings.frequency.zoom_preset_index,
-                },
-                'visualizer': {
-                    'layers_enabled': visualizer.layers_enabled,
-                    'gradient_mode': getattr(visualizer, 'gradient_mode', False),
-                    'overflow_mode': getattr(visualizer, 'overflow_mode', False),
-                    'bars_enabled': getattr(visualizer, 'bars_enabled', True),
-                    'full_mode': getattr(visualizer, 'full_mode', False),
-                    'debug_mode': getattr(visualizer, 'debug_mode', False),
-                    'active_layer': getattr(visualizer, 'active_layer', 0),
-                    'draw_order': list(getattr(visualizer, 'draw_order', [])),
-                    'single_theme_name': single_theme_name,
-                    'single_dynamic': _extract_dynamic_theme_state(visualizer.theme),
-                    'layer_states': layer_states,
-                }
-            }
+            """Capture current state through the in-process runtime controller."""
+            if controller is None:
+                raise RuntimeError("FFT runtime controller is not initialized")
+            return controller.runtime_state()
 
         if reload_prior_state and prior_state is not None:
             apply_persisted_runtime_state(prior_state)
             print(f"Reloaded prior runtime state from: {RUNTIME_STATE_PATH}")
+
+        controller = FftRuntimeController(
+            settings=settings,
+            visualizer=visualizer,
+            audio=audio,
+            theme_cycler=theme_cycler,
+            width=app.width,
+            height=app.height,
+            ensure_layer_pipeline=ensure_layer_pipeline,
+            run_id=os.environ.get("RGB_MATRIX_RUN_ID", "local"),
+        )
+        runtime_client = RuntimeControlClient.from_environment()
+        runtime_bridge = FrameBoundaryRuntimeBridge(
+            max_pending=32,
+            response_timeout=0.75,
+        )
+        runtime_stop_event = threading.Event()
+        runtime_thread = None
         
     except Exception as e:
         print(f"Initialization error: {e}")
@@ -556,228 +577,49 @@ def main():
         keyboard_enabled = not args.non_interactive
         with ShutdownSignalHandler(), audio, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
             time.sleep(0.5)  # Let audio stream settle
+            if runtime_client is not None:
+                def serve_runtime_controls() -> None:
+                    """Keep control-channel failures isolated from rendering."""
+                    while not runtime_stop_event.is_set():
+                        try:
+                            runtime_client.serve(
+                                runtime_bridge.handle,
+                                stop_event=runtime_stop_event,
+                            )
+                        except Exception as exc:
+                            # The panel and audio remain useful even if the optional
+                            # phone-control connection disappears. Retry because the
+                            # supervisor keeps the per-run listener alive.
+                            if not runtime_stop_event.is_set():
+                                print(f"Runtime control disconnected: {exc}")
+                        runtime_stop_event.wait(0.25)
+
+                runtime_thread = threading.Thread(
+                    target=serve_runtime_controls,
+                    name="fft-runtime-control",
+                    daemon=True,
+                )
+                runtime_thread.start()
             last_state_save_time = 0.0
             state_save_interval = 2.0
-            
             while True:
+                # IPC listeners only enqueue validated request envelopes.  Drain a
+                # small bounded batch here so all visualizer/audio mutations happen
+                # between frames on this render thread.
+                runtime_bridge.process_pending(
+                    controller.handle_runtime_operation,
+                    max_items=4,
+                )
                 # Check for keyboard input
                 key = keyboard.get_key()
                 state_dirty = key is not None
 
-                def get_active_theme_instance():
-                    if visualizer.layers_enabled and visualizer.layer_states:
-                        return visualizer.layer_states[visualizer.active_layer].theme
-                    return visualizer.theme
-
-                def get_active_layer_prefix() -> str:
-                    if visualizer.layers_enabled and visualizer.layer_states:
-                        return f"Layer {visualizer.active_layer + 1} "
-                    return ""
-
-                if key == 't':
-                    # Next theme (for active layer if layered mode)
-                    new_theme = theme_cycler.next_theme()
-                    if visualizer.layers_enabled:
-                        visualizer.set_layer_theme(
-                            theme_cycler.current_theme_name,
-                            brightness_boost=settings.color.brightness_boost
-                        )
-                        info = visualizer.get_active_layer_info()
-                        print(f"Layer {info['index']+1} theme: {theme_cycler.current_theme_name}")
-                    else:
-                        visualizer.set_theme(new_theme)
-                        print(f"Theme: {theme_cycler.current_theme_name}")
-                elif key == 'T':
-                    # Previous theme (for active layer if layered mode)
-                    new_theme = theme_cycler.prev_theme()
-                    if visualizer.layers_enabled:
-                        visualizer.set_layer_theme(
-                            theme_cycler.current_theme_name,
-                            brightness_boost=settings.color.brightness_boost
-                        )
-                        info = visualizer.get_active_layer_info()
-                        print(f"Layer {info['index']+1} theme: {theme_cycler.current_theme_name}")
-                    else:
-                        visualizer.set_theme(new_theme)
-                        print(f"Theme: {theme_cycler.current_theme_name}")
-                elif key == 'g':
-                    # Toggle gradient mode (for active layer if layered mode)
-                    gradient_on = visualizer.toggle_gradient()
-                    if visualizer.layers_enabled:
-                        info = visualizer.get_active_layer_info()
-                        print(f"Layer {info['index']+1} gradient: {'ON' if gradient_on else 'OFF'}")
-                    else:
-                        print(f"Gradient: {'ON (per-pixel)' if gradient_on else 'OFF (uniform)'}")
-                elif key == 'o':
-                    # Toggle overflow mode (for active layer if layered mode)
-                    overflow_on = visualizer.toggle_overflow()
-                    if visualizer.layers_enabled:
-                        info = visualizer.get_active_layer_info()
-                        print(f"Layer {info['index']+1} overflow: {'ON' if overflow_on else 'OFF'}")
-                    else:
-                        print(f"Overflow: {'ON' if overflow_on else 'OFF'}")
-                elif key == 'r':
-                    # Next zoom preset
-                    preset = settings.frequency.next_zoom_preset()
-                    audio.update_frequency_range()
-                    print(f"Zoom preset: {preset[0]} - {preset[1]} Hz")
-                elif key == 'R':
-                    # Previous zoom preset
-                    preset = settings.frequency.prev_zoom_preset()
-                    audio.update_frequency_range()
-                    print(f"Zoom preset: {preset[0]} - {preset[1]} Hz")
-                elif key == 'b':
-                    # Toggle bars for active layer (to see peaks only)
-                    bars_on = visualizer.toggle_bars()
-                    if visualizer.layers_enabled:
-                        info = visualizer.get_active_layer_info()
-                        print(f"Layer {info['index']+1} bars: {'ON' if bars_on else 'OFF'}")
-                    else:
-                        print(f"Bars: {'ON' if bars_on else 'OFF (peaks only)'}")
-                elif key == 'f':
-                    # Toggle full mode (if visualizer supports it)
-                    if hasattr(visualizer, 'toggle_full'):
-                        full_on = visualizer.toggle_full()
-                        print(f"Full: {'ON (gradient scaled by FFT)' if full_on else 'OFF'}")
-                elif key == 'd':
-                    # Toggle debug mode (if visualizer supports it)
-                    if hasattr(visualizer, 'toggle_debug'):
-                        debug_on = visualizer.toggle_debug()
-                        print(f"Debug: {'ON (static gradient)' if debug_on else 'OFF'}")
-                elif key == 'l':
-                    # Toggle layered mode
-                    if hasattr(visualizer, 'toggle_layers'):
-                        layers_on = visualizer.toggle_layers()
-                        settings.layers.enabled = layers_on
-                        print(f"Layered mode: {'ON' if layers_on else 'OFF'}")
-                        
-                        # Setup layers if not already done
-                        if layers_on:
-                            ensure_layer_pipeline()
-                        
-                        if layers_on:
-                            info = visualizer.get_active_layer_info()
-                            print(f"  Editing layer {info['index']+1}: {info['theme']}")
-                elif key == '1':
-                    # Select layer 1 (index 0)
-                    if visualizer.layers_enabled:
-                        visualizer.select_layer(0)
-                        info = visualizer.get_active_layer_info()
-                        print(f"Editing layer 1: {info['theme']} (g={info['gradient']}, o={info['overflow']})")
-                elif key == '2':
-                    # Select layer 2 (index 1)
-                    if visualizer.layers_enabled:
-                        visualizer.select_layer(1)
-                        info = visualizer.get_active_layer_info()
-                        print(f"Editing layer 2: {info['theme']} (g={info['gradient']}, o={info['overflow']})")
-                elif key == '!':
-                    # Toggle layer 1 visibility (Shift+1)
-                    if visualizer.layers_enabled:
-                        visible = visualizer.toggle_layer_visibility(0)
-                        print(f"Layer 1 visibility: {'ON' if visible else 'OFF'}")
-                elif key == '@':
-                    # Toggle layer 2 visibility (Shift+2)
-                    if visualizer.layers_enabled:
-                        visible = visualizer.toggle_layer_visibility(1)
-                        print(f"Layer 2 visibility: {'ON' if visible else 'OFF'}")
-                elif key == '3':
-                    # Select layer 3 (index 2)
-                    if visualizer.layers_enabled:
-                        if visualizer.select_layer(2):
-                            info = visualizer.get_active_layer_info()
-                            print(f"Editing layer 3: {info['theme']} (g={info['gradient']}, o={info['overflow']})")
-                        else:
-                            print("Layer 3 not available")
-                elif key == '#':
-                    # Toggle layer 3 visibility (Shift+3)
-                    if visualizer.layers_enabled:
-                        visible = visualizer.toggle_layer_visibility(2)
-                        if visible is not False:
-                            print(f"Layer 3 visibility: {'ON' if visible else 'OFF'}")
-                        else:
-                            print("Layer 3 not available")
-                elif key == '<':
-                    # Move active layer toward background (drawn earlier)
-                    if visualizer.layers_enabled:
-                        result = visualizer.swap_draw_order(-1)
-                        if result:
-                            old_pos, new_pos = result
-                            info = visualizer.get_active_layer_info()
-                            print(f"Layer '{info['theme']}' moved to z-position {new_pos} (toward background)")
-                        else:
-                            print("Layer already at background")
-                elif key == '>':
-                    # Move active layer toward foreground (drawn later)
-                    if visualizer.layers_enabled:
-                        result = visualizer.swap_draw_order(+1)
-                        if result:
-                            old_pos, new_pos = result
-                            info = visualizer.get_active_layer_info()
-                            print(f"Layer '{info['theme']}' moved to z-position {new_pos} (toward foreground)")
-                        else:
-                            print("Layer already at foreground")
-                elif key == 's':
-                    # Toggle shadow mode
-                    settings.shadow.enabled = not settings.shadow.enabled
-                    # Re-initialize shadow buffers in visualizer
-                    if settings.shadow.enabled:
-                        visualizer.shadow_buffer = np.zeros((app.width, app.height), dtype=np.float32)
-                        visualizer.shadow_colors = np.zeros((app.width, app.height, 3), dtype=np.uint8)
-                    else:
-                        visualizer.shadow_buffer = None
-                        visualizer.shadow_colors = None
-                    print(f"Shadow: {'ON' if settings.shadow.enabled else 'OFF'}")
-                elif key == 'p':
-                    # Toggle peak mode (for active layer if layered mode)
-                    if visualizer.layers_enabled:
-                        peak_on = visualizer.toggle_peak()
-                        info = visualizer.get_active_layer_info()
-                        print(f"Layer {info['index']+1} peak: {'ON' if peak_on else 'OFF'}")
-                    else:
-                        settings.peak.enabled = not settings.peak.enabled
-                        print(f"Peak: {'ON' if settings.peak.enabled else 'OFF'}")
-                elif key == 'P':
-                    # Cycle peak color mode
-                    peak_modes = ['white', 'bar', 'contrast', 'peak']
-                    current_idx = peak_modes.index(settings.peak.color_mode)
-                    new_idx = (current_idx + 1) % len(peak_modes)
-                    settings.peak.color_mode = peak_modes[new_idx]
-                    mode_descriptions = {
-                        'white': 'white (always white)',
-                        'bar': 'bar (matches bar color)',
-                        'contrast': 'contrast (inverted bar color)',
-                        'peak': 'peak (color at max height)'
-                    }
-                    print(f"Peak color: {mode_descriptions[settings.peak.color_mode]}")
-                elif key == '[':
-                    active_theme = get_active_theme_instance()
-                    if hasattr(active_theme, 'adjust_cycle_speed'):
-                        new_speed = active_theme.adjust_cycle_speed(-0.01)
-                        print(f"{get_active_layer_prefix()}dynamic speed: {new_speed:.3f} cycles/sec")
-                    else:
-                        print(f"{get_active_layer_prefix()}theme is not dynamic")
-                elif key == ']':
-                    active_theme = get_active_theme_instance()
-                    if hasattr(active_theme, 'adjust_cycle_speed'):
-                        new_speed = active_theme.adjust_cycle_speed(0.01)
-                        print(f"{get_active_layer_prefix()}dynamic speed: {new_speed:.3f} cycles/sec")
-                    else:
-                        print(f"{get_active_layer_prefix()}theme is not dynamic")
-                elif key == 'c':
-                    active_theme = get_active_theme_instance()
-                    if hasattr(active_theme, 'reseed_start_hue'):
-                        new_hue = active_theme.reseed_start_hue()
-                        print(f"{get_active_layer_prefix()}dynamic reseed: start_hue={new_hue:.3f}")
-                    else:
-                        print(f"{get_active_layer_prefix()}theme is not dynamic")
-                elif key == 'x':
-                    active_theme = get_active_theme_instance()
-                    if hasattr(active_theme, 'toggle_frozen'):
-                        is_frozen = active_theme.toggle_frozen()
-                        print(f"{get_active_layer_prefix()}dynamic: {'FROZEN' if is_frozen else 'RUNNING'}")
-                    else:
-                        print(f"{get_active_layer_prefix()}theme is not dynamic")
-                
+                # Keyboard input is an adapter for the same semantic controller
+                # used by the child IPC listener at frame boundaries.
+                if key is not None:
+                    message = controller.handle_key(key)
+                    if message:
+                        print(message)
                 # Get FFT data
                 bars = audio.get_fft_magnitudes()
                 layer_bars_raw = None
@@ -849,7 +691,7 @@ def main():
                     draw_peaks(
                         app.canvas,
                         peaks,
-                        theme_cycler._get_current_theme(),
+                        visualizer.theme,
                         settings,
                         app.height
                     )
@@ -871,6 +713,10 @@ def main():
         print(f"Runtime error: {e}")
         raise
     finally:
+        runtime_stop_event.set()
+        runtime_bridge.close()
+        if runtime_thread is not None:
+            runtime_thread.join(timeout=1.0)
         try:
             save_runtime_state(build_runtime_state())
         except Exception:

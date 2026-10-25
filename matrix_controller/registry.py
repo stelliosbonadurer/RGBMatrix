@@ -67,6 +67,7 @@ def build_default_registry(
                     MATRIX_PARAMETERS,
                     defaults.get("system_info", {}),
                 ),
+                supports_live_control=False,
             ),
             VisualizationSpec(
                 visualization_id="fft",
@@ -76,6 +77,7 @@ def build_default_registry(
                 working_directory=root / "my_programs" / "fft_program",
                 parameters=_with_defaults(FFT_PARAMETERS, defaults.get("fft", {})),
                 requires_audio=True,
+                supports_live_control=True,
             ),
             VisualizationSpec(
                 visualization_id="sorts",
@@ -84,6 +86,7 @@ def build_default_registry(
                 script_path=root / "my_programs" / "visualize_sorts.py",
                 working_directory=root / "my_programs",
                 parameters=_with_defaults(SORT_PARAMETERS, defaults.get("sorts", {})),
+                supports_live_control=False,
             ),
         )
     )

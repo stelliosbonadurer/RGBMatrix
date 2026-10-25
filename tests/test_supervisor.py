@@ -66,6 +66,14 @@ class SupervisorTests(unittest.TestCase):
             clock=lambda: 123.5,
         )
 
+    def tearDown(self) -> None:
+        # FFT launches now own a Unix listener in addition to the fake process.
+        # Reap both so individual tests cannot leak descriptors into later cases.
+        try:
+            self.supervisor.stop()
+        except RuntimeError:
+            pass
+
     def test_start_passes_vector_and_service_safety_options(self) -> None:
         result = self.supervisor.start("fft", {"theme": "warm"})
         argv, kwargs = self.factory.calls[0]

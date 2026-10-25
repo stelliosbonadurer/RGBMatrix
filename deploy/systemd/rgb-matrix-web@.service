@@ -15,8 +15,11 @@ WorkingDirectory=/home/%i/rgb_Matrix
 # ownership matching User=/Group= before ExecStart runs.
 StateDirectory=rgb-matrix-controller
 StateDirectoryMode=0750
+RuntimeDirectory=rgb-matrix-controller
+RuntimeDirectoryMode=0700
 Environment=PYTHONUNBUFFERED=1
 Environment=RGBMATRIX_STATE_DIR=/var/lib/rgb-matrix-controller
+Environment=RGBMATRIX_RUNTIME_DIR=/run/rgb-matrix-controller
 
 # The service itself remains unprivileged. Configured sudo applies only the fixed,
 # allowlisted visualization argv and requires passwordless non-interactive sudo.

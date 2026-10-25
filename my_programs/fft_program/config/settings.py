@@ -261,6 +261,19 @@ def load_settings(path: str = None) -> Settings:
             settings.scaling = ScalingSettings(**data['scaling'])
         if 'smoothing' in data:
             settings.smoothing = SmoothingSettings(**data['smoothing'])
+        if 'shadow' in data:
+            settings.shadow = ShadowSettings(**data['shadow'])
+        if 'layers' in data:
+            layer_section = dict(data['layers'])
+            raw_layers = layer_section.pop('layers', None)
+            settings.layers = LayeredVisualizerSettings(**layer_section)
+            if raw_layers is not None:
+                settings.layers.layers = []
+                for raw_layer in raw_layers:
+                    layer_data = dict(raw_layer)
+                    if 'freq_range' in layer_data:
+                        layer_data['freq_range'] = tuple(layer_data['freq_range'])
+                    settings.layers.layers.append(LayerConfig(**layer_data))
         
         return settings
     

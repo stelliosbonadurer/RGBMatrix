@@ -45,6 +45,18 @@
       </button>
     </section>
 
+    <section id="live-controls-panel" class="live-controls-panel" aria-labelledby="live-controls-title" hidden>
+      <div class="section-heading live-controls-heading">
+        <div>
+          <p class="eyebrow">RUNNING NOW</p>
+          <h2 id="live-controls-title">Live controls</h2>
+          <p id="live-controls-detail" class="panel-detail">Read-only until the runtime connects.</p>
+        </div>
+        <span id="live-controls-connection" class="connection-badge">Offline</span>
+      </div>
+      <div id="live-controls-groups" class="live-controls-groups" aria-live="polite" aria-busy="true"></div>
+    </section>
+
     <section class="access-panel" aria-labelledby="access-title">
       <div class="access-intro">
         <h2 id="access-title">Control access</h2>
