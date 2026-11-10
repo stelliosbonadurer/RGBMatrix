@@ -96,12 +96,17 @@ def main() -> int:
     except ValueError as exc:
         app.parser.error(str(exc))
 
+    dominance_text = {
+        "root": "root dominates",
+        "leaves": "leaves dominate",
+        "balanced": "balanced across levels",
+    }[analysis.dominance]
     print(
         f"T(n) = {analysis.spec.a}T(n/{analysis.spec.b}) + Theta(n^{analysis.spec.k:g})\n"
         f"critical exponent: log_{analysis.spec.b}({analysis.spec.a}) = "
         f"{analysis.critical_exponent:.3f}\n"
         f"level-work ratio: {analysis.level_work_ratio:.3f}\n"
-        f"case {analysis.case}: {analysis.dominance} dominate; {analysis.asymptotic}"
+        f"case {analysis.case}: {dominance_text}; {analysis.asymptotic}"
     )
 
     if not app.initialize_matrix():

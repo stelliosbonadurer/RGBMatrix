@@ -163,6 +163,10 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser = argparse.ArgumentParser(
         description="Launch RGB matrix programs with shared matrix options.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        # Visualization arguments are collected with parse_known_args() below.
+        # Prefix matching would otherwise mistake an application flag such as
+        # ``--n`` for the launcher's ``--no-sudo`` or ``--no-led-defaults``.
+        allow_abbrev=False,
     )
 
     parser.add_argument("--program", help="Program alias, index, or path.")
