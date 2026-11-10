@@ -71,6 +71,16 @@ def animate(app: NativeMatrixApp, analysis, *, delay: float, hold: float, cycles
         completed += 1
 
 
+def display_total(app: NativeMatrixApp, analysis) -> None:
+    """Draw the complete classified tree once and hold it until stopped."""
+
+    renderer = MasterTheoremRenderer(app.width, app.height)
+    renderer.render(app.canvas, analysis, show_result=True)
+    app.swap_canvas()
+    while True:
+        time.sleep(3600)
+
+
 def _request_exit(_signum, _frame) -> None:
     raise KeyboardInterrupt
 
@@ -103,13 +113,16 @@ def main() -> int:
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, _request_exit)
     try:
-        animate(
-            app,
-            analysis,
-            delay=args.delay,
-            hold=args.hold,
-            cycles=args.cycles,
-        )
+        if args.animate:
+            animate(
+                app,
+                analysis,
+                delay=args.delay,
+                hold=args.hold,
+                cycles=args.cycles,
+            )
+        else:
+            display_total(app, analysis)
     except KeyboardInterrupt:
         print("\nMaster Theorem visualization stopped.")
     finally:

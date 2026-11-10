@@ -123,6 +123,8 @@ logical levels independently of matrix hardware, renders each displayed level in
 six-pixel band, aggregates node density when individual nodes become unreadable, and
 highlights the standard Master Theorem case. Managed parameters select a preset or
 custom `a`, `b`, `n`, `k`, base case, animation delay, result hold, and cycle count.
+Animation can be disabled to hold the complete classified tree without replaying the
+level reveal and comparison sweep.
 
 This visualization uses a project-owned native adapter and does not depend on
 `samplebase`, NumPy, sounddevice, or the FFT package. It is launch/stop-only in the

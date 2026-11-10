@@ -68,6 +68,9 @@ deeper model by showing the earliest levels and the final leaf level.
 3. Hold a result frame with the dominant region highlighted.
 4. Repeat continuously, or stop after a configured number of cycles.
 
+Animation is enabled by default. `--no-animate` skips directly to the complete
+classified tree and holds that static total until the process is stopped.
+
 Initial presets are binary search, merge sort, root-heavy quadratic work,
 Strassen multiplication, and a leaf-heavy four-way recurrence. Custom `a`, `b`,
 `n`, and `k` values remain the default mode.

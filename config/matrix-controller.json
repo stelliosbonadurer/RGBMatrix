@@ -42,6 +42,7 @@
       "n": 64,
       "k": 1.0,
       "base_case": 1,
+      "animate": true,
       "delay": 0.45,
       "hold": 3.0,
       "cycles": 0

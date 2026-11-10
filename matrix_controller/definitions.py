@@ -243,6 +243,14 @@ MASTER_THEOREM_PARAMETERS: tuple[ParameterSpec, ...] = (
         64,
     ),
     ParameterSpec(
+        "animate",
+        "--animate",
+        "bool",
+        True,
+        "Reveal and compare recurrence levels before showing the total result.",
+        negative_cli_flag="--no-animate",
+    ),
+    ParameterSpec(
         "delay",
         "--delay",
         "float",

@@ -143,7 +143,12 @@ class MasterTheoremCliTests(unittest.TestCase):
     def test_managed_argv_is_accepted_by_visualization_parser(self) -> None:
         definition = build_default_registry().get("master_theorem")
         values = definition.validate_parameters(
-            {"example": "root_heavy", "cycles": 1, "led_no_hardware_pulse": True}
+            {
+                "example": "root_heavy",
+                "animate": False,
+                "cycles": 1,
+                "led_no_hardware_pulse": True,
+            }
         )
         argv = definition.build_argv("/fixed/python", values)
         app = NativeMatrixApp()
@@ -152,6 +157,7 @@ class MasterTheoremCliTests(unittest.TestCase):
         parsed = app.parser.parse_args(argv[2:])
         self.assertEqual(parsed.example, "root_heavy")
         self.assertEqual(parsed.cycles, 1)
+        self.assertFalse(parsed.animate)
         self.assertTrue(parsed.led_no_hardware_pulse)
 
 

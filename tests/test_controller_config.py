@@ -29,6 +29,7 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertEqual(config.matrix_defaults["led_slowdown_gpio"], 2)
         self.assertEqual(config.visualization_defaults["fft"]["theme"], "ocean")
         self.assertEqual(config.visualization_defaults["master_theorem"]["a"], 2)
+        self.assertTrue(config.visualization_defaults["master_theorem"]["animate"])
         self.assertTrue(config.use_sudo)
         self.assertTrue(config.python_executable.endswith("/fftdemo/.venv/bin/python3"))
 
