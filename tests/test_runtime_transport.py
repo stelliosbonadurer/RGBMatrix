@@ -191,9 +191,11 @@ class LiveCapabilityTests(unittest.TestCase):
         self.assertTrue(registry.get("fft").supports_live_control)
         self.assertFalse(registry.get("system_info").supports_live_control)
         self.assertFalse(registry.get("sorts").supports_live_control)
+        self.assertFalse(registry.get("master_theorem").supports_live_control)
         public = {item["id"]: item for item in (spec.as_public_dict() for spec in registry.list())}
         self.assertTrue(public["fft"]["supports_live_control"])
         self.assertFalse(public["sorts"]["supports_live_control"])
+        self.assertFalse(public["master_theorem"]["supports_live_control"])
 
 
 if __name__ == "__main__":

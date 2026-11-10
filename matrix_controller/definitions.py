@@ -204,6 +204,74 @@ SORT_PARAMETERS: tuple[ParameterSpec, ...] = (
 )
 
 
+MASTER_THEOREM_PARAMETERS: tuple[ParameterSpec, ...] = (
+    *MATRIX_PARAMETERS,
+    ParameterSpec(
+        "example",
+        "--example",
+        "enum",
+        "custom",
+        "Use a named recurrence example instead of the custom a, b, n, and k values.",
+        choices=(
+            "custom",
+            "binary_search",
+            "merge_sort",
+            "root_heavy",
+            "strassen",
+            "leaf_heavy",
+        ),
+    ),
+    ParameterSpec("a", "--a", "int", 2, "Recursive calls made by each node.", 1, 8),
+    ParameterSpec("b", "--b", "int", 2, "Input-size divisor for each child.", 2, 8),
+    ParameterSpec("n", "--n", "int", 64, "Illustrative root problem size.", 2, 256),
+    ParameterSpec(
+        "k",
+        "--k",
+        "float",
+        1.0,
+        "Exponent in the non-recursive work f(n) = n^k.",
+        0.0,
+        4.0,
+    ),
+    ParameterSpec(
+        "base_case",
+        "--base-case",
+        "int",
+        1,
+        "Problem size at which recursion stops.",
+        1,
+        64,
+    ),
+    ParameterSpec(
+        "delay",
+        "--delay",
+        "float",
+        0.45,
+        "Seconds between level-reveal and comparison frames.",
+        0.02,
+        5.0,
+    ),
+    ParameterSpec(
+        "hold",
+        "--hold",
+        "float",
+        3.0,
+        "Seconds to hold the final Master Theorem result.",
+        0.1,
+        30.0,
+    ),
+    ParameterSpec(
+        "cycles",
+        "--cycles",
+        "int",
+        0,
+        "Animation cycles before exit; zero repeats continuously.",
+        0,
+        1000,
+    ),
+)
+
+
 def application_parameters(visualization_id: str) -> tuple[ParameterSpec, ...]:
     """Return only parameters owned by an application's parser extension.
 
@@ -214,6 +282,7 @@ def application_parameters(visualization_id: str) -> tuple[ParameterSpec, ...]:
 
     all_parameters = {
         "fft": FFT_PARAMETERS,
+        "master_theorem": MASTER_THEOREM_PARAMETERS,
         "sorts": SORT_PARAMETERS,
     }
     try:

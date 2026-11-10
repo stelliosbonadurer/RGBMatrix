@@ -17,7 +17,7 @@ class RegistryTests(unittest.TestCase):
     def test_initial_allowlist_is_stable_and_sorted(self) -> None:
         self.assertEqual(
             [item.visualization_id for item in self.registry.list()],
-            ["fft", "sorts", "system_info"],
+            ["fft", "master_theorem", "sorts", "system_info"],
         )
 
     def test_listing_does_not_import_hardware_applications(self) -> None:
@@ -25,7 +25,7 @@ class RegistryTests(unittest.TestCase):
         # If a future definition imports either application, this test environment's
         # missing rgbmatrix binding will make the regression visible.
         listing = [item.as_public_dict() for item in self.registry.list()]
-        self.assertEqual(len(listing), 3)
+        self.assertEqual(len(listing), 4)
         self.assertTrue(all(item["parameters"] for item in listing))
 
     def test_unknown_visualization_is_rejected(self) -> None:
@@ -52,6 +52,11 @@ class RegistryTests(unittest.TestCase):
         sorts = self.registry.get("sorts")
         with self.assertRaises(ValidationError):
             sorts.validate_parameters({"delay": math.inf})
+
+        theorem = self.registry.get("master_theorem")
+        for supplied in ({"a": 0}, {"b": 1}, {"n": 257}, {"k": -1.0}):
+            with self.subTest(supplied=supplied), self.assertRaises(ValidationError):
+                theorem.validate_parameters(supplied)
 
     def test_defaults_are_fresh_and_deterministic(self) -> None:
         fft = self.registry.get("fft")

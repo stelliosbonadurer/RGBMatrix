@@ -910,7 +910,7 @@ def main() -> int:
     )
     registry_defaults = {
         visualization_id: controller_config.defaults_for(visualization_id)
-        for visualization_id in ("system_info", "fft", "sorts")
+        for visualization_id in ("system_info", "fft", "sorts", "master_theorem")
     }
     supervisor = VisualizationSupervisor(
         build_default_registry(parameter_defaults=registry_defaults),

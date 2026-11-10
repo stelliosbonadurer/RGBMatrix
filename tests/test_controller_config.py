@@ -28,6 +28,7 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertEqual(config.matrix_defaults["led_cols"], 64)
         self.assertEqual(config.matrix_defaults["led_slowdown_gpio"], 2)
         self.assertEqual(config.visualization_defaults["fft"]["theme"], "ocean")
+        self.assertEqual(config.visualization_defaults["master_theorem"]["a"], 2)
         self.assertTrue(config.use_sudo)
         self.assertTrue(config.python_executable.endswith("/fftdemo/.venv/bin/python3"))
 
@@ -46,7 +47,7 @@ class ControllerConfigTests(unittest.TestCase):
         )
         defaults = {
             item: config.defaults_for(item)
-            for item in ("system_info", "fft", "sorts")
+            for item in ("system_info", "fft", "sorts", "master_theorem")
         }
         registry = build_default_registry(parameter_defaults=defaults)
         fft = registry.get("fft")

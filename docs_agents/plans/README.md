@@ -6,16 +6,19 @@ The archive directory intentionally retains the requested `plans_archvie` spelli
 
 ## Current order
 
-1. [Live visualization interaction](live-visualization-interaction.md) — the typed
+1. [Master Theorem visualization](master-theorem-visualization.md) — initial 64x64
+   recurrence-tree implementation is complete; validate it in the classroom and on
+   the physical panel, then refine its visual language.
+2. [Live visualization interaction](live-visualization-interaction.md) — the typed
    FFT phone-control MVP is implemented; finish named presets and safe dynamic layer
    composition on the established runtime protocol.
-2. [Portable Raspberry Pi deployment](portable-deployment.md) — produce a repeatable
+3. [Portable Raspberry Pi deployment](portable-deployment.md) — produce a repeatable
    native install for explicitly supported Pi models before reconsidering containers.
-3. [Web visualization emulator](web-visualization-emulator.md) — execute the existing
+4. [Web visualization emulator](web-visualization-emulator.md) — execute the existing
    Python renderers against a software matrix and stream frames to a browser preview.
-4. [Runtime modernization](runtime-modernization.md) — continue removing production
+5. [Runtime modernization](runtime-modernization.md) — continue removing production
    dependence on the upstream demo layout and address duplicate FFT work when useful.
-5. [Network recovery hardening](network-recovery-hardening.md) — physically validate
+6. [Network recovery hardening](network-recovery-hardening.md) — physically validate
    LAN-to-AP fallback and add a recovery input before treating failure recovery as
    field-proven.
 

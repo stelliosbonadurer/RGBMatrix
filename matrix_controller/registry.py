@@ -6,7 +6,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from .definitions import FFT_PARAMETERS, MATRIX_PARAMETERS, SORT_PARAMETERS
+from .definitions import (
+    FFT_PARAMETERS,
+    MASTER_THEOREM_PARAMETERS,
+    MATRIX_PARAMETERS,
+    SORT_PARAMETERS,
+)
 from .schema import ParameterSpec, ValidationError, VisualizationSpec
 
 
@@ -86,6 +91,20 @@ def build_default_registry(
                 script_path=root / "my_programs" / "visualize_sorts.py",
                 working_directory=root / "my_programs",
                 parameters=_with_defaults(SORT_PARAMETERS, defaults.get("sorts", {})),
+                supports_live_control=False,
+            ),
+            VisualizationSpec(
+                visualization_id="master_theorem",
+                display_name="Master Theorem",
+                description="Builds a recurrence tree and highlights where its work is concentrated.",
+                script_path=(
+                    root / "my_programs" / "dsa_visualizations" / "master_theorem.py"
+                ),
+                working_directory=root / "my_programs" / "dsa_visualizations",
+                parameters=_with_defaults(
+                    MASTER_THEOREM_PARAMETERS,
+                    defaults.get("master_theorem", {}),
+                ),
                 supports_live_control=False,
             ),
         )

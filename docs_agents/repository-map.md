@@ -11,6 +11,7 @@
 | `python3 -m matrix_network.recovery_input` | Physical recovery watcher | Uses `gpiomon` and a five-second GPIO 19 hold to request setup AP through a root-peer-only Unix operation. Normally run by systemd as root. |
 | `my_programs/fft_program/main.py` | Current FFT visualizer | The active application and only code path that assembles the modular audio, scaling, themes, layers, rendering, keyboard controls, and state persistence. |
 | `my_programs/visualize_sorts.py` | Sorting visualizer | Preserves its terminal menu and also supports non-interactive `single`, `all`, and `random` service modes. |
+| `my_programs/dsa_visualizations/master_theorem.py` | Master Theorem visualizer | Builds a 64x64 recurrence tree from typed `a`, `b`, `n`, and `k` values and highlights root-, balanced-, or leaf-dominant work. |
 | `my_programs/system_info.py` | Boot connection display | Cycles the active SSID, controller URL, and boot pairing code; automatically yields through the shared supervisor. |
 | `my_programs/fft_program/fft_sandbox.py` | Older monolithic FFT experiment | Still discoverable by the launcher; do not mistake it for the modular application. |
 
@@ -63,7 +64,7 @@ Built-in theme names are `autumn`, `dynamic`, `dynamic_lateral_gradient`, `fores
 matrix_controller/
 ├── controller_config.py strict versioned launch-default loader
 ├── schema.py          immutable parameter/visualization contracts and validation
-├── definitions.py     shared matrix, FFT, and sorting parameters
+├── definitions.py     shared matrix and visualization launch parameters
 ├── registry.py        explicit product allowlist, including connection info
 ├── boot_code.py       boot-ID-scoped six-digit code and terminal reader
 ├── pairing.py         boot-code exchange and temporary control sessions
@@ -87,6 +88,14 @@ listener itself.
 The product registry is intentionally separate from `launch_rgbmatrix.py` discovery.
 Discovery is convenient for trusted terminal use; it must not become a web execution
 surface. Tests under `tests/` inject fake processes and do not initialize hardware.
+
+## DSA visualization package
+
+`my_programs/dsa_visualizations/` begins a hardware-testable teaching-visualization
+package. `model.py` owns exact recurrence levels and Master Theorem classification,
+`rendering.py` maps those values to six-pixel 64x64 bands, and `native_matrix.py`
+contains the thin native output adapter. The model and renderer import neither
+`rgbmatrix` nor audio dependencies.
 
 ## Other top-level areas
 

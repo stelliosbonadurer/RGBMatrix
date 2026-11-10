@@ -3,7 +3,7 @@
 ## Control plane
 
 `matrix_controller` is deliberately hardware-independent. `Registry` exposes only the
-reviewed `system_info`, `fft`, and `sorts` definitions. `ParameterSpec` normalizes JSON/CLI values and
+reviewed `system_info`, `fft`, `sorts`, and `master_theorem` definitions. `ParameterSpec` normalizes JSON/CLI values and
 constructs fixed argument vectors. `VisualizationSupervisor` serializes lifecycle
 operations with one lock and owns at most one child process group. The HTTP layer
 parses requests, checks an HttpOnly browser session or explicit bearer token for
@@ -24,7 +24,7 @@ the `daemon` UID after GPIO initialization, the supervisor uses unlistable
 search-only directories and a connectable Unix socket. The endpoint path has high
 entropy and every request requires a separate 256-bit one-run capability. The
 supervisor passes the path and capability only in the child environment and proxies
-bounded JSON requests. `system_info` and `sorts` do not create runtime endpoints. Run IDs and
+bounded JSON requests. `system_info`, `sorts`, and `master_theorem` do not create runtime endpoints. Run IDs and
 state revisions reject stale browser commands. The service never invokes a shell or
 the heuristic developer launcher.
 

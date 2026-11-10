@@ -1,6 +1,6 @@
 # Managed Visualization Inventory
 
-Last reviewed: 2026-10-25
+Last reviewed: 2026-11-10
 
 ## Performance decision
 
@@ -21,6 +21,7 @@ Only the following programs are exposed through `matrix_controller.Registry`:
 | `system_info` | `my_programs/system_info.py` | Active SSID, bare address, and boot pairing code | HUB75 matrix, `rgbmatrix`, controller/network status |
 | `fft` | `my_programs/fft_program/main.py` | Ocean theme, overflow on, non-interactive | HUB75 matrix, `rgbmatrix`, NumPy, sounddevice, working audio input |
 | `sorts` | `my_programs/visualize_sorts.py` | Continuous seeded random sorts | HUB75 matrix, `rgbmatrix`, upstream `samplebase.py` |
+| `master_theorem` | `my_programs/dsa_visualizations/master_theorem.py` | Custom `2T(n/2) + Theta(n)` recurrence | HUB75 matrix, `rgbmatrix` |
 
 The broader discovery results from `launch_rgbmatrix.py` are developer conveniences,
 not reviewed product entries. Do not automatically copy discovered files into the web
@@ -28,7 +29,7 @@ registry.
 
 ## Shared matrix launch parameters
 
-Both managed definitions currently expose these CLI/API parameters:
+Managed hardware visualizations expose these CLI/API parameters:
 
 - `led_rows`
 - `led_cols`
@@ -114,6 +115,18 @@ menu would otherwise catch Ctrl+C and return to its prompt.
 This script still depends on the ignored upstream samples checkout for `samplebase.py`
 and the native binding. Removing that layout dependency is saved for the portable
 runtime/deployment work.
+
+## Master Theorem details
+
+The DSA visualization models `T(n) = aT(n/b) + Theta(n^k)`. It calculates exact
+logical levels independently of matrix hardware, renders each displayed level in a
+six-pixel band, aggregates node density when individual nodes become unreadable, and
+highlights the standard Master Theorem case. Managed parameters select a preset or
+custom `a`, `b`, `n`, `k`, base case, animation delay, result hold, and cycle count.
+
+This visualization uses a project-owned native adapter and does not depend on
+`samplebase`, NumPy, sounddevice, or the FFT package. It is launch/stop-only in the
+first release; changing the recurrence starts a replacement process.
 
 ## Supervisor lifecycle
 

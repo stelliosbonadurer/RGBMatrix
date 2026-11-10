@@ -53,7 +53,7 @@ forms from registry metadata, highlights active state, and can launch, switch, o
 after six-digit pairing. Music FFT links to a focused live-control page at
 `/config/fft`; Wi-Fi provisioning remains separate at `/setup`. The service provides:
 
-- an explicit allowlist containing `system_info`, `fft`, and `sorts`;
+- an explicit allowlist containing `system_info`, `fft`, `sorts`, and `master_theorem`;
 - typed parameter metadata and validation;
 - list, status, run/switch, and stop endpoints;
 - one supervised visualization process at a time;
@@ -155,7 +155,8 @@ Only FFT currently advertises `supports_live_control`. The child owns its curren
 state and control schema; the web service forwards typed, bounded requests over a
 private per-run Unix socket. Changes apply between frames. Every mutation uses the
 active `run_id`, may include `expected_revision`, and returns a fresh snapshot.
-`system_info` and `sorts` return an unsupported snapshot without waiting on a socket.
+`system_info`, `sorts`, and `master_theorem` return an unsupported snapshot without
+waiting on a socket.
 
 Example run body:
 
