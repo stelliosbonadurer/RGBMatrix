@@ -27,6 +27,19 @@ class SystemInfoTests(unittest.TestCase):
         self.assertEqual(pages[0][1], "RGB-Matrix-ABCD")
         self.assertEqual(pages[1][1], "192.168.50.1:8080")
 
+    def test_ethernet_details_identify_wired_connection(self) -> None:
+        pages = connection_details(
+            {
+                "connection_type": "ethernet",
+                "interface": "eth0",
+                "ipv4": "192.168.1.21",
+                "ap": {"active": False},
+            },
+            "123456",
+        )
+        self.assertEqual(pages[0], ("CONNECTION", "ETHERNET"))
+        self.assertEqual(pages[1], ("OPEN URL", "192.168.1.21:8080"))
+
     def test_short_text_is_centered_and_long_text_wraps_continuously(self) -> None:
         self.assertEqual(
             text_positions("123456", glyph_width=10, viewport_width=64, elapsed=99),

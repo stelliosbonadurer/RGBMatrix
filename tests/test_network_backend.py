@@ -41,6 +41,23 @@ class FakeBackend(NetworkManagerBackend):
 
 
 class NetworkBackendTests(unittest.TestCase):
+    def test_ethernet_snapshot_queries_configured_interface(self) -> None:
+        class EthernetRunner:
+            def execute(self, arguments, **_kwargs):
+                self.arguments = list(arguments)
+                return CommandResult(
+                    0,
+                    "GENERAL.STATE:100 (connected)\nGENERAL.CONNECTION:Wired connection 1\nIP4.ADDRESS[1]:10.0.0.8/24\n",
+                    "",
+                )
+
+        runner = EthernetRunner()
+        backend = NetworkManagerBackend(runner, ethernet_interface="enp1s0")
+        snapshot = backend.ethernet_snapshot()
+        self.assertTrue(snapshot.connected)
+        self.assertEqual(snapshot.ipv4, "10.0.0.8")
+        self.assertEqual(runner.arguments[-1], "enp1s0")
+
     def test_active_ssid_uses_in_use_scan_row(self) -> None:
         class ActiveRunner:
             def execute(self, arguments, **_kwargs):

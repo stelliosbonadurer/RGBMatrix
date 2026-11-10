@@ -28,12 +28,15 @@ class NetworkManagerBackend:
         self,
         runner: NmcliRunner,
         interface: str = "wlan0",
+        ethernet_interface: str = "eth0",
         secret_store: NetworkManagerDbusSecrets | None = None,
     ):
-        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", interface):
-            raise ValueError("invalid Wi-Fi interface name")
+        for label, value in (("Wi-Fi", interface), ("Ethernet", ethernet_interface)):
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,32}", value):
+                raise ValueError(f"invalid {label} interface name")
         self.runner = runner
         self.interface = interface
+        self.ethernet_interface = ethernet_interface
         self.secret_store = secret_store
 
     def _require_secret_store(self) -> NetworkManagerDbusSecrets:
@@ -44,9 +47,10 @@ class NetworkManagerBackend:
             )
         return self.secret_store
 
-    def device_snapshot(self) -> DeviceSnapshot:
+    def device_snapshot(self, interface: str | None = None) -> DeviceSnapshot:
+        interface = interface or self.interface
         result = self.runner.execute(
-            ["-t", "--escape", "yes", "-f", "GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS", "device", "show", self.interface]
+            ["-t", "--escape", "yes", "-f", "GENERAL.STATE,GENERAL.CONNECTION,IP4.ADDRESS", "device", "show", interface]
         )
         properties = parse_property_lines(result.stdout)
         state_text = properties.get("GENERAL.STATE", "0")
@@ -61,6 +65,16 @@ class NetworkManagerBackend:
         if ipv4:
             ipv4 = ipv4.split("/", 1)[0]
         return DeviceSnapshot(state_code=state_code, connection=connection, ipv4=ipv4)
+
+    def ethernet_snapshot(self) -> DeviceSnapshot:
+        """Return wired state, treating hardware without Ethernet as disconnected."""
+
+        try:
+            return self.device_snapshot(self.ethernet_interface)
+        except NetworkOperationError:
+            # Some supported installations use Wi-Fi-only hardware. An absent eth0
+            # must not prevent their fallback access point from starting.
+            return DeviceSnapshot(state_code=0, connection=None, ipv4=None)
 
     def wifi_profiles(self) -> list[WifiProfile]:
         result = self.runner.execute(

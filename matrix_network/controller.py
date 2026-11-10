@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .backend import AP_PROFILE_NAME, NetworkManagerBackend
-from .models import NetworkOperationError, NetworkValidationError
+from .models import DeviceSnapshot, NetworkOperationError, NetworkValidationError
 
 
 Clock = Callable[[], float]
@@ -98,6 +98,8 @@ class NetworkController:
         self._mode = "trying"
         self._ssid: str | None = None
         self._ipv4: str | None = None
+        self._active_interface = self.backend.interface
+        self._connection_type = "wifi"
         self._last_error: str | None = None
         self._transition_id = 0
         self._ever_connected = False
@@ -111,7 +113,8 @@ class NetworkController:
             return {
                 "mode": self._mode,
                 "state": self._state,
-                "interface": self.backend.interface,
+                "interface": self._active_interface,
+                "connection_type": self._connection_type,
                 "ipv4": self._ipv4,
                 "ssid": self._ssid,
                 "ap": {
@@ -127,6 +130,7 @@ class NetworkController:
         """Advance policy once; safe to call repeatedly from a monitor thread."""
 
         snapshot = self.backend.device_snapshot()
+        ethernet = self._ethernet_snapshot()
         now = self._clock()
 
         if snapshot.connection == AP_PROFILE_NAME and snapshot.ipv4:
@@ -138,6 +142,26 @@ class NetworkController:
                 error=None,
             )
             self._disconnected_since = None
+            return
+
+        # NetworkManager supports concurrent wired and Wi-Fi connections. Prefer
+        # the wired address for user-facing status and suppress Wi-Fi recovery while
+        # it is usable. NetworkManager's default route metrics also prefer Ethernet
+        # (lower metric) while leaving Wi-Fi available as a hot fallback.
+        if ethernet.connected:
+            self._ever_connected = True
+            self._disconnected_since = None
+            self._attempt_index = 0
+            self._next_attempt_at = now
+            self._set_state(
+                state="lan_connected",
+                mode="lan",
+                ssid=None,
+                ipv4=ethernet.ipv4,
+                error=None,
+                interface=getattr(self.backend, "ethernet_interface", "eth0"),
+                connection_type="ethernet",
+            )
             return
 
         if snapshot.connected:
@@ -363,6 +387,14 @@ class NetworkController:
         except NetworkOperationError:
             return profile_name
 
+    def _ethernet_snapshot(self) -> DeviceSnapshot:
+        """Keep older/test backends Wi-Fi-only without weakening real detection."""
+
+        lookup = getattr(self.backend, "ethernet_snapshot", None)
+        if lookup is None:
+            return DeviceSnapshot(state_code=0, connection=None, ipv4=None)
+        return lookup()
+
     def _set_error(self, message: str) -> None:
         with self._state_lock:
             self._last_error = message[:300]
@@ -374,20 +406,27 @@ class NetworkController:
         ssid: str | None,
         ipv4: str | None,
         error: str | None,
+        interface: str | None = None,
+        connection_type: str = "wifi",
     ) -> None:
         if state not in self.STATES:
             raise ValueError(f"invalid network state: {state}")
         with self._state_lock:
-            changed = (state, mode, ssid, ipv4) != (
+            active_interface = interface or self.backend.interface
+            changed = (state, mode, ssid, ipv4, active_interface, connection_type) != (
                 self._state,
                 self._mode,
                 self._ssid,
                 self._ipv4,
+                self._active_interface,
+                self._connection_type,
             )
             self._state = state
             self._mode = mode
             self._ssid = ssid
             self._ipv4 = ipv4
+            self._active_interface = active_interface
+            self._connection_type = connection_type
             self._last_error = error[:300] if error else None
             if changed:
                 self._transition_id += 1

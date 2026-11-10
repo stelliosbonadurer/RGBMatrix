@@ -13,10 +13,14 @@ def connection_details(
     """Create the three user-facing pages from public network-helper status."""
 
     ap = status.get("ap") if isinstance(status.get("ap"), dict) else {}
+    ethernet = not ap.get("active") and status.get("connection_type") == "ethernet"
     ssid = ap.get("ssid") if ap.get("active") else status.get("ssid")
     address = ap.get("address") if ap.get("active") else status.get("ipv4")
     return (
-        ("CONNECT WIFI", str(ssid or "WAITING...")),
+        (
+            "CONNECTION" if ethernet else "CONNECT WIFI",
+            "ETHERNET" if ethernet else str(ssid or "WAITING..."),
+        ),
         # Modern phone browsers accept a bare IPv4 address and port in the address
         # bar. Omitting the scheme keeps the limited-width matrix line shorter while
         # leaving the actual HTTP service and its URLs unchanged.

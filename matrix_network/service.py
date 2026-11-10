@@ -334,6 +334,7 @@ def _ensure_setup_secret(path: Path) -> str:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Privileged RGB matrix network controller")
     parser.add_argument("--interface", default="wlan0")
+    parser.add_argument("--ethernet-interface", default="eth0")
     parser.add_argument("--socket", default="/run/rgb-matrix-network/control.sock")
     parser.add_argument("--admin-token-file", required=True)
     parser.add_argument("--state-directory", default="/var/lib/rgb-matrix-network")
@@ -370,6 +371,7 @@ def main() -> int:
     backend = NetworkManagerBackend(
         runner,
         interface=args.interface,
+        ethernet_interface=args.ethernet_interface,
         secret_store=secret_store,
     )
     suffix = backend.read_interface_suffix(args.interface)

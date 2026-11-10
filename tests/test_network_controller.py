@@ -9,9 +9,11 @@ from matrix_network.models import DeviceSnapshot, NetworkOperationError, Network
 
 class FakeBackend:
     interface = "wlan0"
+    ethernet_interface = "eth0"
 
     def __init__(self):
         self.snapshot = DeviceSnapshot(30, None, None)
+        self.wired_snapshot = DeviceSnapshot(30, None, None)
         self.saved: list[WifiProfile] = []
         self.activation_results: dict[str, DeviceSnapshot | Exception] = {}
         self.deleted: list[str] = []
@@ -22,6 +24,9 @@ class FakeBackend:
 
     def device_snapshot(self):
         return self.snapshot
+
+    def ethernet_snapshot(self):
+        return self.wired_snapshot
 
     def known_profiles(self):
         return list(self.saved)
@@ -72,6 +77,40 @@ class NetworkControllerTests(unittest.TestCase):
         controller.tick()
         self.assertEqual(controller.status()["mode"], "lan")
         self.assertEqual(controller.status()["ssid"], "Actual Wi-Fi")
+
+    def test_ethernet_is_preferred_while_wifi_remains_connected(self) -> None:
+        backend = FakeBackend()
+        backend.snapshot = DeviceSnapshot(100, "Home", "10.0.0.9")
+        backend.wired_snapshot = DeviceSnapshot(100, "Wired connection 1", "10.0.0.8")
+        controller = self.make_controller(backend, [0.0])
+        controller.tick()
+
+        status = controller.status()
+        self.assertEqual(status["mode"], "lan")
+        self.assertEqual(status["interface"], "eth0")
+        self.assertEqual(status["connection_type"], "ethernet")
+        self.assertEqual(status["ipv4"], "10.0.0.8")
+        self.assertIsNone(status["ssid"])
+        self.assertEqual(backend.activation_attempts, [])
+
+        backend.wired_snapshot = DeviceSnapshot(30, None, None)
+        backend.radio_ssid = "Actual Wi-Fi"
+        controller.tick()
+        fallback = controller.status()
+        self.assertEqual(fallback["connection_type"], "wifi")
+        self.assertEqual(fallback["ipv4"], "10.0.0.9")
+
+    def test_ethernet_prevents_wifi_loss_from_starting_setup_ap(self) -> None:
+        clock = [0.0]
+        backend = FakeBackend()
+        backend.wired_snapshot = DeviceSnapshot(100, "Wired connection 1", "10.0.0.8")
+        controller = self.make_controller(backend, clock)
+        controller.tick()
+        clock[0] = 500.0
+        controller.tick()
+
+        self.assertEqual(backend.started_ap, 0)
+        self.assertEqual(controller.status()["connection_type"], "ethernet")
 
     def test_no_known_network_starts_ap_only_after_boot_grace(self) -> None:
         clock = [0.0]

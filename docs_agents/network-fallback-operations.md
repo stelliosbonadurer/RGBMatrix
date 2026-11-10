@@ -12,10 +12,15 @@ Current deployment: `raspberrypi.local` / last known DHCP address `192.168.1.204
 
 ## Behavior
 
-`matrix_network` is a root-owned, NetworkManager-only controller for `wlan0`. It
-leaves an existing local IPv4 connection alone. Without one, it tries saved Wi-Fi
+`matrix_network` is a root-owned, NetworkManager-only controller for `eth0` and
+`wlan0`. It prefers a wired local IPv4 connection while allowing Wi-Fi to remain
+connected as fallback. Without either LAN connection, it tries saved Wi-Fi
 profiles, waits 60 seconds after boot (120 seconds after losing a working LAN), and
 then activates the project-owned setup AP. Internet reachability is not required.
+
+NetworkManager's default automatic route metrics prefer Ethernet over Wi-Fi. The
+controller also reports the Ethernet address/interface whenever both links are up,
+and does not start Wi-Fi recovery or the setup AP while Ethernet is healthy.
 
 - Setup SSID: `RGB-Matrix-` plus the final four hexadecimal MAC digits.
 - Setup address: `192.168.50.1/24`.

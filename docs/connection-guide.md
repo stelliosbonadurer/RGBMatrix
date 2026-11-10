@@ -1,8 +1,10 @@
 # Connecting to the RGB Matrix Raspberry Pi
 
-The Pi normally connects to a saved Wi-Fi network and runs its control service on
-port 8080. Use the hostname first because normal Wi-Fi addresses come from DHCP and
-can change.
+The Pi prefers Ethernet when a wired link has a local IPv4 address and otherwise
+uses a saved Wi-Fi network. It runs its control service on port 8080. Use the hostname
+first because LAN addresses normally come from DHCP and can change. Ethernet and
+Wi-Fi may remain connected simultaneously; NetworkManager gives Ethernet the lower
+default route metric, so traffic uses the cable while Wi-Fi remains a fallback.
 
 ## Quick connection
 
@@ -62,6 +64,7 @@ After connecting over SSH, confirm the Pi's current addresses with:
 ```bash
 hostname -I
 nmcli -t -f GENERAL.CONNECTION,IP4.ADDRESS device show wlan0
+nmcli -t -f GENERAL.CONNECTION,IP4.ADDRESS device show eth0
 ```
 
 ## Web and service checks
