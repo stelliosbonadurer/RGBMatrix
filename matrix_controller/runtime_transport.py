@@ -39,6 +39,14 @@ MAX_OPERATION_LENGTH = 64
 MAX_REQUEST_ID_LENGTH = 128
 DEFAULT_TIMEOUT_SECONDS = 1.0
 MAX_TIMEOUT_SECONDS = 10.0
+# The RGB matrix native library initializes GPIO as root, then deliberately drops
+# the visualization to the system ``daemon`` account. That child must be able to
+# traverse to and connect to the supervisor-owned endpoint after the UID change.
+# Endpoint discovery and authentication remain capability-based: parent/child
+# directories cannot be listed by other users, each path has high entropy, and every
+# request carries an independent 256-bit one-run token.
+ENDPOINT_DIRECTORY_MODE = 0o711
+ENDPOINT_SOCKET_MODE = 0o622
 
 
 class RuntimeTransportError(RuntimeError):
@@ -342,8 +350,10 @@ class RuntimeControlServer:
         root = Path(runtime_dir) if runtime_dir is not None else None
         if root is not None:
             root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Keep the filesystem component compact: sockaddr_un is only about 104
+        # bytes on macOS, and development temp roots can already be quite long.
         self._directory = Path(tempfile.mkdtemp(prefix="rm-", dir=str(root) if root else None))
-        self._directory.chmod(0o700)
+        self._directory.chmod(ENDPOINT_DIRECTORY_MODE)
         self._socket_path = self._directory / "control.sock"
         self._listener: socket.socket | None = None
         self._connection: socket.socket | None = None
@@ -356,7 +366,7 @@ class RuntimeControlServer:
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             listener.bind(str(self._socket_path))
-            os.chmod(self._socket_path, 0o600)
+            os.chmod(self._socket_path, ENDPOINT_SOCKET_MODE)
             listener.listen(1)
         except Exception:
             listener.close()

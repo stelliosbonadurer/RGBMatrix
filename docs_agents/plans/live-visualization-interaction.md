@@ -116,7 +116,9 @@ returns the resulting snapshot; errors use bounded machine-readable codes such a
 
 Use a private Unix-domain socket per visualization run. The supervisor creates it in
 a private runtime directory, gives the child the endpoint plus a one-run capability,
-and removes it after the process is reaped. Use mode `0600`; never expose this socket
+and removes it after the process is reaped. The dropped visualization UID needs
+search/connect access, so protect the socket with an unlistable high-entropy path and
+a per-run cryptographic capability; never expose this socket
 over TCP or let the browser connect to it directly.
 
 Newline-delimited, size-bounded JSON is sufficient. Messages include protocol
@@ -149,8 +151,8 @@ without requiring WebSockets. Add server-sent events or WebSockets later only if
 polling is visibly inadequate or the preview frame transport makes an existing push
 channel economical.
 
-Show a `Live controls` panel only when the active process advertises support. The
-panel should:
+Expose Music FFT through a dedicated `/config/fft` page linked from its visualization
+card. Render controls only when the active process advertises support. The page should:
 
 - show values from the runtime snapshot, not launch-form defaults;
 - group global, layer, theme, and diagnostic controls;

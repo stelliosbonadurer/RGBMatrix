@@ -70,6 +70,7 @@ matrix_controller/
 ├── supervisor.py      one-child state machine and process-group teardown
 ├── static/index.html  responsive visualization control page
 ├── static/control.*   generated launch forms, pairing, status, and browser behavior
+├── static/fft-config.* dedicated Music FFT start/stop and live-control page
 ├── static/setup.html  minimal phone Wi-Fi provisioning page
 └── web_service.py     authenticated standard-library HTTP API and network proxy
 ```

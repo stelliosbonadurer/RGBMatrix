@@ -8,10 +8,10 @@ import inspect
 import ipaddress
 import json
 import math
-import math
 import os
 import signal
 import threading
+from http.cookies import CookieError, SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,6 +33,11 @@ MAX_RUNTIME_CHANGES = 32
 MAX_RUNTIME_PATH_LENGTH = 256
 MAX_RUNTIME_ACTION_LENGTH = 128
 MAX_RUNTIME_TARGET_LENGTH = 256
+CONTROL_SESSION_COOKIE = "rgb_matrix_session"
+BROWSER_SESSION_HEADER = "X-RGB-Matrix-Session"
+# Temporary trusted-LAN convenience requested during UI development. Keep this
+# explicit and easy to remove; it intentionally weakens possession-based pairing.
+TEMPORARY_FALLBACK_PAIRING_CODE = "000000"
 
 
 class _RuntimeResponseError(RuntimeError):
@@ -284,10 +289,14 @@ def build_handler(
             path = urlsplit(self.path).path
             if path == "/":
                 self._send_control_page()
+            elif path == "/config/fft":
+                self._send_fft_config_page()
             elif path == "/static/control.css":
                 self._send_static_file("control.css", "text/css; charset=utf-8")
             elif path == "/static/control.js":
                 self._send_static_file("control.js", "text/javascript; charset=utf-8")
+            elif path == "/static/fft-config.js":
+                self._send_static_file("fft-config.js", "text/javascript; charset=utf-8")
             elif path == "/setup":
                 self._send_setup_page()
             elif path in {"/generate_204", "/hotspot-detect.html", "/connecttest.txt", "/ncsi.txt"}:
@@ -314,11 +323,11 @@ def build_handler(
                 self._send_json(HTTPStatus.OK, supervisor.status())
             elif path == "/api/v1/runtime":
                 if not self._is_control_authorized():
-                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing bearer token")
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
                 else:
                     self._handle_runtime_snapshot()
             elif path == "/api/v1/pairing/status":
-                supplied_token = self._bearer_token()
+                supplied_token = self._control_session_token()
                 self._send_json(
                     HTTPStatus.OK,
                     {
@@ -343,6 +352,7 @@ def build_handler(
                             "GET /api/v1/pairing/status",
                             "GET /api/v1/network/status",
                             "GET /setup",
+                            "GET /config/fft",
                             "POST /api/v1/run",
                             "POST /api/v1/stop",
                             "POST /api/v1/pairing/exchange",
@@ -364,9 +374,30 @@ def build_handler(
                         payload["code"],
                         client_id=self.client_address[0],
                     )
+                    browser_session = self.headers.get(BROWSER_SESSION_HEADER) == "cookie"
+                    response_body: dict[str, Any] = {
+                        "paired": True,
+                        "expires_in": result.expires_in,
+                    }
+                    response_headers = None
+                    if browser_session:
+                        # The browser never receives the opaque credential in JSON or
+                        # JavaScript-accessible storage. Path=/ shares it across the
+                        # catalog, FFT controls, and future controller pages.
+                        response_headers = {
+                            "Set-Cookie": self._session_cookie_header(
+                                result.token,
+                                max_age=result.expires_in,
+                            )
+                        }
+                    else:
+                        # Preserve the pairing endpoint's bearer-token contract for
+                        # non-browser clients that explicitly manage credentials.
+                        response_body["token"] = result.token
                     self._send_json(
                         HTTPStatus.OK,
-                        {"token": result.token, "expires_in": result.expires_in},
+                        response_body,
+                        headers=response_headers,
                     )
                     return
                 if path == "/api/v1/pairing/logout":
@@ -375,8 +406,15 @@ def build_handler(
                     if not self._is_control_authorized():
                         self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid session")
                         return
-                    pairing.revoke_session(self._bearer_token())
-                    self._send_json(HTTPStatus.OK, {"revoked": True})
+                    if not self._cookie_mutation_is_same_origin():
+                        self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
+                        return
+                    pairing.revoke_session(self._control_session_token())
+                    self._send_json(
+                        HTTPStatus.OK,
+                        {"revoked": True},
+                        headers={"Set-Cookie": self._expired_session_cookie_header()},
+                    )
                     return
                 if path == "/api/v1/network/provision":
                     self._handle_network_request(
@@ -411,7 +449,10 @@ def build_handler(
                     return
 
                 if not self._is_control_authorized():
-                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing bearer token")
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                    return
+                if not self._cookie_mutation_is_same_origin():
+                    self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
                     return
 
                 if path == "/api/v1/runtime/actions":
@@ -466,7 +507,10 @@ def build_handler(
                 self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
                 return
             if not self._is_control_authorized():
-                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing bearer token")
+                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                return
+            if not self._cookie_mutation_is_same_origin():
+                self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
                 return
             try:
                 command = _parse_runtime_patch(self._read_json_object())
@@ -524,7 +568,14 @@ def build_handler(
             if network_client is None:
                 self._send_error_json(HTTPStatus.SERVICE_UNAVAILABLE, "network control is unavailable")
                 return
-            if pairing.is_session_token(token):
+            has_admin_bearer = (
+                token is not None
+                and api_token is not None
+                and hmac.compare_digest(token, api_token)
+            )
+            if pairing.is_session_token(token) or (
+                pairing.is_session_token(self._cookie_token()) and not has_admin_bearer
+            ):
                 self._send_error_json(
                     HTTPStatus.FORBIDDEN,
                     "temporary visualization sessions cannot administer networking",
@@ -573,8 +624,56 @@ def build_handler(
             return supplied_token is not None and hmac.compare_digest(supplied_token, api_token)
 
         def _is_control_authorized(self) -> bool:
-            supplied_token = self._bearer_token()
+            supplied_token = self._control_session_token()
             return self._is_admin_authorized() or pairing.is_session_token(supplied_token)
+
+        def _control_session_token(self) -> str | None:
+            """Prefer an explicit bearer token, then fall back to the browser cookie."""
+
+            return self._bearer_token() or self._cookie_token()
+
+        def _cookie_token(self) -> str | None:
+            raw_cookie = self.headers.get("Cookie")
+            if not raw_cookie:
+                return None
+            cookies = SimpleCookie()
+            try:
+                cookies.load(raw_cookie)
+            except CookieError:
+                return None
+            morsel = cookies.get(CONTROL_SESSION_COOKIE)
+            if morsel is None or not morsel.value:
+                return None
+            return morsel.value
+
+        def _cookie_mutation_is_same_origin(self) -> bool:
+            """Require an exact Origin match only when a cookie grants access.
+
+            Bearer clients remain usable from scripts and terminals without browser
+            headers. Browsers send Origin on fetch-based POST/PATCH requests, so an
+            unrelated site cannot silently drive the controller with ambient cookies.
+            """
+
+            bearer = self._bearer_token()
+            if bearer is not None and (
+                self._is_admin_authorized() or pairing.is_session_token(bearer)
+            ):
+                return True
+            cookie_token = self._cookie_token()
+            if not pairing.is_session_token(cookie_token):
+                return True
+            host = self.headers.get("Host")
+            origin = self.headers.get("Origin")
+            if not host or not origin:
+                return False
+            parsed = urlsplit(origin)
+            return (
+                parsed.scheme == "http"
+                and parsed.netloc.casefold() == host.casefold()
+                and parsed.path in {"", "/"}
+                and not parsed.query
+                and not parsed.fragment
+            )
 
         def _is_loopback_client(self) -> bool:
             return _is_loopback_address(self.client_address[0])
@@ -586,9 +685,47 @@ def build_handler(
                 return None
             return supplied[len(prefix) :]
 
+        @staticmethod
+        def _session_cookie_header(token: str, *, max_age: int) -> str:
+            cookie = SimpleCookie()
+            cookie[CONTROL_SESSION_COOKIE] = token
+            morsel = cookie[CONTROL_SESSION_COOKIE]
+            morsel["path"] = "/"
+            morsel["max-age"] = str(max_age)
+            morsel["httponly"] = True
+            morsel["samesite"] = "Strict"
+            # Secure cannot be used until the LAN service supports HTTPS. The cookie
+            # remains host-only because no Domain attribute is set.
+            return morsel.OutputString()
+
+        @staticmethod
+        def _expired_session_cookie_header() -> str:
+            cookie = SimpleCookie()
+            cookie[CONTROL_SESSION_COOKIE] = ""
+            morsel = cookie[CONTROL_SESSION_COOKIE]
+            morsel["path"] = "/"
+            morsel["max-age"] = "0"
+            morsel["expires"] = "Thu, 01 Jan 1970 00:00:00 GMT"
+            morsel["httponly"] = True
+            morsel["samesite"] = "Strict"
+            return morsel.OutputString()
+
         def _send_control_page(self) -> None:
             self._send_static_file(
                 "index.html",
+                "text/html; charset=utf-8",
+                content_security_policy=(
+                    "default-src 'self'; connect-src 'self'; script-src 'self'; "
+                    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
+                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+                ),
+            )
+
+        def _send_fft_config_page(self) -> None:
+            """Serve the focused music-control UI under an explicit route."""
+
+            self._send_static_file(
+                "fft-config.html",
                 "text/html; charset=utf-8",
                 content_security_policy=(
                     "default-src 'self'; connect-src 'self'; script-src 'self'; "
@@ -788,7 +925,10 @@ def main() -> int:
             supervisor,
             api_token=token,
             network_client=NetworkClient(args.network_socket),
-            pairing_manager=PairingManager(boot_code),
+            pairing_manager=PairingManager(
+                boot_code,
+                additional_codes=(TEMPORARY_FALLBACK_PAIRING_CODE,),
+            ),
         ),
     )
 

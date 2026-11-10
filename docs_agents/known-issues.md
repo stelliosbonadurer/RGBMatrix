@@ -38,16 +38,20 @@ These observations were verified against the code when this guide was written. R
 - The `/` phone UI lists visualizations, reports current state, and quits the active
   process. Starting/switching visualizations and changing parameters still require
   the JSON API. `/setup` remains a separate Wi-Fi provisioning page.
-- Parameters are launch-time settings. Calling `run` again stops and restarts the child;
-  live FFT frame-boundary IPC is not implemented.
+- Matrix and process parameters are launch-time settings. Music FFT also exposes
+  frame-boundary live controls through its dedicated configuration page.
 - The systemd unit is installed and tested on the current Pi, but assumes its specific
   checkout/interpreter paths and existing passwordless `sudo -n`; it is not yet a
   portable installer.
-- POST actions use a bearer token over plain HTTP. Bind beyond loopback only on a
-  trusted LAN, and do not expose port 8080 to the internet.
+- Browser actions use a host-only HttpOnly cookie, while direct API actions use a
+  bearer token. Both travel over plain HTTP. Bind beyond loopback only on a trusted
+  LAN, and do not expose port 8080 to the internet.
 - Six-digit pairing improves phone usability but not transport security. A device
   capable of sniffing the trusted LAN can observe a pairing exchange or bearer token;
   HTTPS remains necessary before using this on an untrusted network.
+- `000000` is temporarily accepted as a fixed visualization pairing code during UI
+  development. This makes trusted-LAN membership the effective pairing boundary and
+  must be removed before broader deployment.
 - GET status/list endpoints are intentionally unauthenticated in the MVP.
 - The fallback profile/controller and physical recovery watcher are installed on the
   current Pi, but an attended LAN-to-AP transition and real button press remain to be

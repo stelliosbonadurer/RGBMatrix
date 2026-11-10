@@ -41,6 +41,25 @@ class PairingManagerTests(unittest.TestCase):
         self.assertEqual(str(wrong.exception), "invalid pairing code")
         self.assertEqual(str(malformed.exception), str(wrong.exception))
 
+    def test_explicit_fallback_code_is_accepted_without_replacing_boot_code(self) -> None:
+        clock = [0.0]
+        tokens = iter(("a" * 32, "b" * 32))
+        manager = self.make_manager(
+            clock,
+            additional_codes=("000000",),
+            token_factory=lambda: next(tokens),
+        )
+
+        fallback = manager.exchange("000000", client_id="phone-a")
+        rotating = manager.exchange("012345", client_id="phone-b")
+        self.assertTrue(manager.is_session_token(fallback.token))
+        self.assertTrue(manager.is_session_token(rotating.token))
+
+    def test_fallback_codes_must_have_the_same_strict_shape(self) -> None:
+        clock = [0.0]
+        with self.assertRaisesRegex(ValueError, "exactly six digits"):
+            self.make_manager(clock, additional_codes=("always",))
+
     def test_client_rate_limit_and_global_failure_limit(self) -> None:
         clock = [0.0]
         manager = self.make_manager(

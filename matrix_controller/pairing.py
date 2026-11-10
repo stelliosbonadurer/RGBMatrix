@@ -49,6 +49,7 @@ class PairingManager:
         self,
         boot_code: str,
         *,
+        additional_codes: tuple[str, ...] = (),
         session_ttl_seconds: int = 4 * 60 * 60,
         attempt_window_seconds: int = 60,
         max_attempts_per_client: int = 5,
@@ -66,8 +67,12 @@ class PairingManager:
         )
         if any(value <= 0 for value in values):
             raise ValueError("pairing limits must be positive")
-        if re.fullmatch(r"\d{6}", boot_code) is None:
-            raise ValueError("boot pairing code must contain exactly six digits")
+        accepted_codes = (boot_code, *additional_codes)
+        if any(
+            type(code) is not str or re.fullmatch(r"\d{6}", code) is None
+            for code in accepted_codes
+        ):
+            raise ValueError("pairing codes must contain exactly six digits")
         self.session_ttl_seconds = session_ttl_seconds
         self.attempt_window_seconds = attempt_window_seconds
         self.max_attempts_per_client = max_attempts_per_client
@@ -76,7 +81,11 @@ class PairingManager:
         self._clock = clock
         self._token_factory = token_factory or (lambda: secrets.token_urlsafe(32))
         self._lock = threading.RLock()
-        self._code_digest = self._digest(boot_code)
+        # Store only digests so neither the rotating code nor temporary fallback
+        # codes are retained as plaintext in this long-lived object.
+        self._code_digests = tuple(
+            dict.fromkeys(self._digest(code) for code in accepted_codes)
+        )
         self._global_attempts: deque[float] = deque()
         self._client_attempts: dict[str, deque[float]] = {}
         self._sessions: OrderedDict[str, float] = OrderedDict()
@@ -109,10 +118,13 @@ class PairingManager:
             self._global_attempts.append(now)
 
             valid_shape = type(code) is str and re.fullmatch(r"\d{6}", code) is not None
-            valid_code = (
-                valid_shape
-                and hmac.compare_digest(self._digest(code), self._code_digest)
-            )
+            valid_code = False
+            if valid_shape:
+                supplied_digest = self._digest(code)
+                # Evaluate every configured code so the comparison does not reveal
+                # whether the rotating or fallback code matched.
+                for accepted_digest in self._code_digests:
+                    valid_code |= hmac.compare_digest(supplied_digest, accepted_digest)
             if not valid_code:
                 raise PairingError(401, "invalid pairing code")
 

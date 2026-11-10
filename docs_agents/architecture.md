@@ -5,9 +5,9 @@
 `matrix_controller` is deliberately hardware-independent. `Registry` exposes only the
 reviewed `system_info`, `fft`, and `sorts` definitions. `ParameterSpec` normalizes JSON/CLI values and
 constructs fixed argument vectors. `VisualizationSupervisor` serializes lifecycle
-operations with one lock and owns at most one child process group. The HTTP layer only
-parses requests, checks the bearer token for POST operations, and delegates to the
-supervisor.
+operations with one lock and owns at most one child process group. The HTTP layer
+parses requests, checks an HttpOnly browser session or explicit bearer token for
+control operations, and delegates to the supervisor.
 
 ```text
 launch HTTP -> typed allowlist -> exclusive subprocess supervisor -> child process
@@ -19,9 +19,12 @@ live HTTP ---------------------> private per-run Unix socket ------> runtime que
 ```
 
 Launch parameters remain restart/switch operations. FFT additionally opts into a
-versioned live-control protocol. The supervisor creates a mode-0600 Unix socket and
-one-run capability, passes them only in the child environment, and proxies bounded
-JSON requests. `system_info` and `sorts` do not create runtime endpoints. Run IDs and
+versioned live-control protocol. Because the native matrix library drops the child to
+the `daemon` UID after GPIO initialization, the supervisor uses unlistable
+search-only directories and a connectable Unix socket. The endpoint path has high
+entropy and every request requires a separate 256-bit one-run capability. The
+supervisor passes the path and capability only in the child environment and proxies
+bounded JSON requests. `system_info` and `sorts` do not create runtime endpoints. Run IDs and
 state revisions reject stale browser commands. The service never invokes a shell or
 the heuristic developer launcher.
 

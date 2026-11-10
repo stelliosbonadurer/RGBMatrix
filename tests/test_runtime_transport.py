@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import stat
 import tempfile
 import threading
 import time
@@ -89,6 +90,12 @@ class RuntimeTransportTests(unittest.TestCase):
         self.assertEqual(environment["RGB_MATRIX_RUN_ID"], "run-17")
         self.assertEqual(environment["RGB_MATRIX_RUNTIME_TOKEN"], endpoint.token)
         self.assertTrue(endpoint.socket_path.exists())
+        self.assertEqual(
+            stat.S_IMODE(endpoint.socket_path.parent.stat().st_mode),
+            0o711,
+        )
+        self.assertEqual(stat.S_IMODE(endpoint.socket_path.stat().st_mode), 0o622)
+        self.assertGreaterEqual(len(endpoint.socket_path.parent.name), 11)
 
     def test_stale_child_identity_is_rejected(self) -> None:
         # The active client is already connected; the server accepts a replacement

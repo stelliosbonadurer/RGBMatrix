@@ -510,6 +510,29 @@ h1 span {
   cursor: pointer;
 }
 
+a.configure-button {
+  display: grid;
+  place-items: center;
+  text-align: center;
+  text-decoration: none;
+}
+
+.card-actions {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .7rem;
+}
+
+.card-actions .configure-button { margin-top: 1.25rem; }
+.card-actions .primary-configure {
+  color: #071014;
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+.card-actions .primary-configure:hover { background: #92f2ff; }
+
 .configure-button:hover,
 .launch-button:hover:not(:disabled) { background: #30394f; }
 
@@ -612,6 +635,38 @@ footer {
   font-size: .76rem;
 }
 
+.music-config-page { padding-top: clamp(2.5rem, 6vw, 5rem); }
+.music-config-hero { max-width: 52rem; }
+.music-config-hero h1 { font-size: clamp(3rem, 9vw, 6.5rem); }
+
+.runtime-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: .65rem;
+}
+
+.runtime-actions .compact-button,
+.runtime-actions .quit-button {
+  width: auto;
+  min-height: 3.25rem;
+  margin: 0;
+  padding-inline: 1.2rem;
+}
+
+.dedicated-controls { margin-top: 1rem; }
+
+.controls-empty {
+  padding: clamp(1.25rem, 4vw, 2rem);
+  color: var(--muted);
+  background: rgb(9 11 18 / 55%);
+  border: 1px dashed #353d53;
+  border-radius: .7rem;
+}
+
+.controls-empty[hidden] { display: none; }
+.controls-empty strong { display: block; color: var(--text); }
+.controls-empty p { max-width: 45rem; margin: .5rem 0 0; line-height: 1.55; }
+
 @keyframes shimmer { to { background-position-x: -220%; } }
 
 @media (max-width: 42rem) {
@@ -619,12 +674,16 @@ footer {
   .site-header { min-height: 4.25rem; }
   main { padding-top: 3.5rem; }
   .runtime-panel { align-items: stretch; flex-direction: column; }
+  .runtime-actions { flex-direction: column; }
+  .runtime-actions .compact-button,
+  .runtime-actions .quit-button { width: 100%; }
   .quit-button { width: 100%; }
   .access-panel { grid-template-columns: 1fr; gap: 1rem; }
   .pairing-row { grid-template-columns: 1fr; }
   .pair-button { width: 100%; }
   .visualization-grid { grid-template-columns: 1fr; }
   .visualization-card { min-height: 14rem; }
+  .card-actions { grid-template-columns: 1fr; gap: 0; }
   .parameter-fields { grid-template-columns: 1fr; }
   .runtime-control-fields { grid-template-columns: 1fr; }
   footer { gap: .5rem; flex-direction: column; }

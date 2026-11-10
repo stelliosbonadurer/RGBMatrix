@@ -121,15 +121,29 @@ class WebServiceTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def request(self, path: str, *, payload=None, token: str | None = None, method=None):
+    def request(
+        self,
+        path: str,
+        *,
+        payload=None,
+        token: str | None = None,
+        method=None,
+        headers: dict[str, str] | None = None,
+        include_headers: bool = False,
+    ):
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(self.base_url + path, data=data, method=method)
         if data is not None:
             request.add_header("Content-Type", "application/json")
         if token is not None:
             request.add_header("Authorization", f"Bearer {token}")
+        for name, value in (headers or {}).items():
+            request.add_header(name, value)
         with urllib.request.urlopen(request, timeout=2) as response:
-            return response.status, json.load(response)
+            body = json.load(response)
+            if include_headers:
+                return response.status, body, response.headers
+            return response.status, body
 
     def request_raw(self, path: str):
         with urllib.request.urlopen(self.base_url + path, timeout=2) as response:
@@ -156,6 +170,25 @@ class WebServiceTests(unittest.TestCase):
         self.assertIn("/api/v1/run", script)
         self.assertIn("/api/v1/stop", script)
         self.assertIn("createParameterField", script)
+        self.assertIn("/config/fft", script)
+
+        config_status, config_headers, config_page = self.request_raw("/config/fft")
+        self.assertEqual(config_status, 200)
+        self.assertEqual(config_headers.get_content_type(), "text/html")
+        self.assertIn("Music Controls", config_page)
+        self.assertIn('id="music-controls"', config_page)
+        self.assertIn("default-src 'self'", config_headers["Content-Security-Policy"])
+
+        config_js_status, config_js_headers, config_script = self.request_raw(
+            "/static/fft-config.js"
+        )
+        self.assertEqual(config_js_status, 200)
+        self.assertEqual(config_js_headers.get_content_type(), "text/javascript")
+        self.assertIn("/api/v1/runtime", config_script)
+        self.assertIn("/api/v1/runtime/actions", config_script)
+        self.assertIn("/api/v1/pairing/exchange", config_script)
+        self.assertIn("X-RGB-Matrix-Session", config_script)
+        self.assertNotIn("sessionStorage", config_script)
 
     def test_read_endpoints_do_not_require_token(self) -> None:
         status, body = self.request("/api/v1/visualizations")
@@ -318,6 +351,117 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         with self.assertRaises(urllib.error.HTTPError) as logged_out:
             self.request("/api/v1/stop", payload={}, token=first["token"])
+        self.assertEqual(logged_out.exception.code, 401)
+        logged_out.exception.close()
+
+    def test_browser_pairing_cookie_survives_pages_and_requires_same_origin_for_mutation(self) -> None:
+        status, paired, response_headers = self.request(
+            "/api/v1/pairing/exchange",
+            payload={"code": "012345"},
+            headers={"X-RGB-Matrix-Session": "cookie"},
+            include_headers=True,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(paired["paired"])
+        self.assertNotIn("token", paired)
+
+        set_cookie = response_headers["Set-Cookie"]
+        self.assertIn("rgb_matrix_session=", set_cookie)
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=Strict", set_cookie)
+        self.assertIn("Path=/", set_cookie)
+        self.assertIn("Max-Age=14400", set_cookie)
+        self.assertNotIn("Secure", set_cookie)
+        cookie = set_cookie.split(";", 1)[0]
+
+        status, pairing_status = self.request(
+            "/api/v1/pairing/status",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(pairing_status["authorized"])
+        self.assertTrue(pairing_status["temporary_session"])
+
+        # Reading state is safe without an Origin header. Mutations using ambient
+        # cookie authority must prove that the browser is on this exact origin.
+        status, runtime = self.request(
+            "/api/v1/runtime",
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(runtime["visualization_id"], "fft")
+
+        with self.assertRaises(urllib.error.HTTPError) as missing_origin:
+            self.request("/api/v1/stop", payload={}, headers={"Cookie": cookie})
+        self.assertEqual(missing_origin.exception.code, 403)
+        missing_origin.exception.close()
+
+        with self.assertRaises(urllib.error.HTTPError) as wrong_origin:
+            self.request(
+                "/api/v1/stop",
+                payload={},
+                headers={"Cookie": cookie, "Origin": "http://example.invalid"},
+            )
+        self.assertEqual(wrong_origin.exception.code, 403)
+        wrong_origin.exception.close()
+
+        status, runtime = self.request(
+            "/api/v1/runtime",
+            payload={
+                "run_id": 1,
+                "expected_revision": 4,
+                "changes": [{"path": "visualizer.gradient", "value": True}],
+            },
+            method="PATCH",
+            headers={"Cookie": cookie, "Origin": self.base_url},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(runtime["revision"], 5)
+
+        status, runtime = self.request(
+            "/api/v1/runtime/actions",
+            payload={
+                "run_id": 1,
+                "expected_revision": 5,
+                "action": "dynamic.reseed",
+                "args": {},
+            },
+            headers={"Cookie": cookie, "Origin": self.base_url},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(runtime["revision"], 6)
+
+        status, _body = self.request(
+            "/api/v1/stop",
+            payload={},
+            headers={"Cookie": cookie, "Origin": self.base_url},
+        )
+        self.assertEqual(status, 200)
+
+        with self.assertRaises(urllib.error.HTTPError) as blocked_network:
+            self.request(
+                "/api/v1/network/provision",
+                payload={
+                    "ssid": "Home",
+                    "passphrase": "password",
+                    "hidden": False,
+                    "confirm_disconnect": True,
+                },
+                headers={"Cookie": cookie, "Origin": self.base_url},
+            )
+        self.assertEqual(blocked_network.exception.code, 403)
+        blocked_network.exception.close()
+
+        status, _body, logout_headers = self.request(
+            "/api/v1/pairing/logout",
+            payload={},
+            headers={"Cookie": cookie, "Origin": self.base_url},
+            include_headers=True,
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("Max-Age=0", logout_headers["Set-Cookie"])
+        with self.assertRaises(urllib.error.HTTPError) as logged_out:
+            self.request("/api/v1/runtime", headers={"Cookie": cookie})
         self.assertEqual(logged_out.exception.code, 401)
         logged_out.exception.close()
 

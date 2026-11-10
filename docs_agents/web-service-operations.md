@@ -32,8 +32,12 @@ Verified on the Pi after the generated-launch/config deployment:
   slowdown-2 defaults plus all 18 managed matrix parameters;
 - the deployed browser assets contain the generated launch form and `/api/v1/run`
   client path;
-- the deployed registry advertises FFT live-control support, the private runtime
-  directory is mode `0700`, and the service health check succeeds after restart;
+- the deployed registry advertises FFT live-control support; its runtime directory is
+  search-only (`0711`) so the matrix library's dropped child UID can reach a
+  randomized, capability-authenticated endpoint without listing other runs;
+- after the cross-UID transport fix, a real FFT launch on the Pi connected after
+  privilege drop and returned revision `0` with 25 schema-driven controls; supervisor
+  status reported `runtime_control.connected=true`;
 - an authenticated finite `sorts`/`quick` launch reached the real native matrix path,
   used the configured native options, exited with code 0, and returned the supervisor
   to `idle`; `system_info` was then restored.
@@ -44,17 +48,17 @@ latency remains accepted; this is an audio-availability caveat, not a performanc
 
 ## What is implemented
 
-The responsive `/` page lists the managed visualizations, generates typed parameter
-forms from registry metadata, launches or switches the selected visualization,
-highlights active state, polls supervisor status, and can stop it after six-digit
-pairing. Wi-Fi provisioning is a separate phone page at `/setup`. The service provides:
+The responsive `/` page lists the managed visualizations, generates typed launch
+forms from registry metadata, highlights active state, and can launch, switch, or stop
+after six-digit pairing. Music FFT links to a focused live-control page at
+`/config/fft`; Wi-Fi provisioning remains separate at `/setup`. The service provides:
 
 - an explicit allowlist containing `system_info`, `fft`, and `sorts`;
 - typed parameter metadata and validation;
 - list, status, run/switch, and stop endpoints;
 - one supervised visualization process at a time;
 - process-group SIGTERM with timeout/SIGKILL escalation;
-- bearer-token protection for state-changing requests; and
+- HttpOnly browser-session cookies plus bearer-token support for API clients; and
 - a systemd unit template for boot startup.
 
 At a real Pi boot, `boot_code.py` tags a random six-digit code with the kernel boot ID
@@ -68,10 +72,19 @@ process owns GPIO.
 The boot code exchanges for random four-hour visualization-only tokens and can pair
 multiple devices during that boot. Temporary tokens cannot use network administration
 routes, are capped/rate-limited in memory, and are all revoked when the service
-restarts. The browser keeps its token in `sessionStorage`, so it
-survives a refresh in the same tab but is discarded when that tab closes. Tokens and
-codes never appear in URLs or request logs. Visualization launch and parameter
-controls use the same API and validation contract as direct clients.
+restarts. Browsers receive the temporary token only as a host-only, HttpOnly,
+`SameSite=Strict` cookie with a four-hour `Max-Age` and `Path=/`; JavaScript never
+receives or stores the credential. Cookie-authenticated POST/PATCH requests require an
+exact `Origin`/`Host` match. Non-browser clients can still request and use a bearer
+token. Tokens and codes never appear in URLs or request logs. Visualization launch
+and parameter controls use the same API and validation contract as direct clients.
+
+Temporary development exception: the web service currently passes `000000` as an
+additional accepted pairing code. The boot-generated code also remains valid, and all
+normal attempt throttles and session limits apply. Remove
+`TEMPORARY_FALLBACK_PAIRING_CODE` from `web_service.py` before any untrusted-LAN or
+internet-facing deployment; while enabled, knowledge of the displayed random code is
+not an access boundary.
 
 Read the same code locally without handling the permanent token:
 
@@ -122,7 +135,8 @@ GET /api/v1/visualizations
 GET /api/v1/status
 ```
 
-State-changing endpoints require `Authorization: Bearer TOKEN`:
+State-changing endpoints accept the paired browser cookie. Direct API clients use
+`Authorization: Bearer TOKEN`:
 
 ```text
 POST /api/v1/run

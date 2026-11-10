@@ -100,13 +100,19 @@ ssh stelliosbonadurer@raspberrypi.local \
 2. Enter the six digits under **Six-digit phone code**.
 3. Tap **Pair phone**.
 
-To start or switch visualizations, select **Configure** on a card, adjust the generated
-settings, and choose **Launch visualization**. The current visualization is stopped
-before the replacement starts. Hardware fields such as dimensions and GPIO slowdown
-are advanced settings; incorrect values can produce a blank or unstable panel.
+During current UI development, `000000` is also always accepted. This deliberately
+weakens pairing to trusted-LAN access and must be removed before the controller is
+used on an untrusted network or exposed outside the LAN. The rotating matrix code
+continues to work normally.
 
-While Music FFT is running, a **Live controls** panel appears. It reads current state
-from the visualization process and can change themes, display modes, zoom, layers,
+To start or switch most visualizations, select **Configure** on a card, adjust the
+generated settings, and choose **Launch visualization**. Music FFT has separate
+**Configure** and **Launch settings** buttons. **Configure** opens the dedicated music
+page at `/config/fft`; **Launch settings** exposes matrix and startup parameters on the
+main page. The current visualization is stopped before its replacement starts.
+
+The dedicated music page can start or stop Music FFT and reads current state directly
+from the visualization process. It can change themes, display modes, zoom, layers,
 layer order/visibility/boost, dynamic-theme behavior, and bounded audio or scaling
 parameters without restarting. Keyboard changes made over SSH appear on the next
 phone poll. Controls marked `rebuild` refresh derived FFT bins in-process; matrix
@@ -115,11 +121,16 @@ hardware and audio-device geometry still require a new launch.
 The code remains the same for the current Pi boot and can pair multiple local devices;
 a full reboot rotates it. The resulting phone session can control visualizations but
 cannot change Wi-Fi. It expires after four hours, when the web-service process
-restarts, or when **Forget access in this tab** is selected. Closing the browser tab
-also removes it from that browser because it is stored only in `sessionStorage`.
+restarts, or when **Forget access** is selected. The controller stores it as an
+HttpOnly browser cookie, so it survives navigation between the visualization catalog
+and music controls without exposing the credential to JavaScript. Cookies are scoped
+to the address used while pairing: `raspberrypi.local` and `192.168.1.204` count as
+different hosts, so consistently use one address.
 
-Pairing is a trusted-LAN convenience feature: this service uses plain HTTP, so do not
-use it on an untrusted network or expose port 8080 to the internet.
+Pairing is a trusted-LAN convenience feature: the cookie is HttpOnly, host-only, and
+SameSite=Strict, and cookie-authenticated changes require the same HTTP origin. The
+service still uses plain HTTP, so do not use it on an untrusted network or expose port
+8080 to the internet.
 
 ## Changing launch defaults
 

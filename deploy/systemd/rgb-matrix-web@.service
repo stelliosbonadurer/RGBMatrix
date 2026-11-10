@@ -16,7 +16,10 @@ WorkingDirectory=/home/%i/rgb_Matrix
 StateDirectory=rgb-matrix-controller
 StateDirectoryMode=0750
 RuntimeDirectory=rgb-matrix-controller
-RuntimeDirectoryMode=0700
+# The matrix library drops the visualization child to another UID after GPIO setup.
+# Search-only access lets that child reach its randomized per-run endpoint without
+# allowing directory listing; the protocol also requires a 256-bit capability.
+RuntimeDirectoryMode=0711
 Environment=PYTHONUNBUFFERED=1
 Environment=RGBMATRIX_STATE_DIR=/var/lib/rgb-matrix-controller
 Environment=RGBMATRIX_RUNTIME_DIR=/run/rgb-matrix-controller

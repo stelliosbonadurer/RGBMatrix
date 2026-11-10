@@ -28,15 +28,6 @@ let launchPendingId = null;
 let runtimeCommandPending = false;
 let expandedVisualizationId = null;
 let authorizationStatus = null;
-let controlToken = '';
-
-// Session storage is intentionally used instead of local storage. The bearer token
-// survives an accidental refresh but disappears when this browser tab is closed.
-try {
-  controlToken = sessionStorage.getItem('rgb-matrix-api-token') || '';
-} catch (_error) {
-  // Privacy modes may disable storage; the page remains usable with the input alone.
-}
 
 elements.pairingCode.addEventListener('input', () => {
   elements.pairingCode.value = elements.pairingCode.value.replace(/\D/g, '').slice(0, 6);
@@ -46,22 +37,6 @@ elements.pairingCode.addEventListener('input', () => {
 elements.pairingCode.addEventListener('keydown', event => {
   if (event.key === 'Enter') elements.pairButton.click();
 });
-
-function storeToken(token) {
-  try {
-    if (token) {
-      sessionStorage.setItem('rgb-matrix-api-token', token);
-    } else {
-      sessionStorage.removeItem('rgb-matrix-api-token');
-    }
-  } catch (_error) {
-    // Do not block controls when browser storage is unavailable.
-  }
-}
-
-function authorizationHeaders() {
-  return controlToken ? {'Authorization': `Bearer ${controlToken}`} : {};
-}
 
 async function readJson(response) {
   let body = {};
@@ -92,24 +67,23 @@ function clearMessage() {
 }
 
 function renderAuthorization() {
-  const hasToken = Boolean(controlToken);
   const authorized = Boolean(authorizationStatus?.authorized);
   if (authorized && authorizationStatus.temporary_session) {
     elements.accessStatus.textContent = 'This phone is paired for visualization controls.';
   } else if (authorized) {
     elements.accessStatus.textContent = 'This browser has control access.';
-  } else if (hasToken && authorizationStatus !== null) {
-    elements.accessStatus.textContent = 'This browser session is no longer valid. Enter the code again.';
+  } else if (authorizationStatus === null) {
+    elements.accessStatus.textContent = 'Checking this browser session…';
   } else {
     elements.accessStatus.textContent = 'Enter the six-digit code shown on the matrix.';
   }
-  elements.forgetButton.hidden = !hasToken;
+  elements.forgetButton.hidden = !authorizationStatus?.temporary_session;
 }
 
 async function refreshAuthorization() {
   try {
     authorizationStatus = await readJson(await fetch('/api/v1/pairing/status', {
-      headers: authorizationHeaders(),
+      credentials: 'same-origin',
       cache: 'no-store',
     }));
   } catch (_error) {
@@ -205,7 +179,7 @@ function readLaunchParameters(form, item) {
 }
 
 async function launchVisualization(item, form) {
-  if (!controlToken) {
+  if (!authorizationStatus?.authorized) {
     showMessage('Enter the six-digit pairing code before launching a visualization.', true);
     elements.pairingCode.focus();
     return;
@@ -219,17 +193,15 @@ async function launchVisualization(item, form) {
     const parameters = readLaunchParameters(form, item);
     await readJson(await fetch('/api/v1/run', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${controlToken}`,
-        'Content-Type': 'application/json',
-      },
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({visualization_id: item.id, parameters}),
     }));
     expandedVisualizationId = null;
     showMessage(`${item.name} is now running on the matrix.`);
   } catch (error) {
     if (error.status === 401) {
-      authorizationStatus = null;
+      authorizationStatus = {authorized: false, temporary_session: false};
       renderAuthorization();
       elements.pairingCode.focus();
     }
@@ -289,16 +261,33 @@ function renderVisualizations() {
       footer.append(audio);
     }
 
-    const configureButton = document.createElement('button');
-    configureButton.className = 'configure-button';
-    configureButton.type = 'button';
-    configureButton.textContent = expandedVisualizationId === item.id ? 'Close controls' : 'Configure';
-    configureButton.setAttribute('aria-expanded', String(expandedVisualizationId === item.id));
-    configureButton.setAttribute('aria-controls', `launch-form-${item.id}`);
-    configureButton.addEventListener('click', () => {
+    const cardActions = document.createElement('div');
+    cardActions.className = 'card-actions';
+
+    // FFT has enough live controls to deserve a focused screen. Keep launch-time
+    // settings available here, but make the primary Configure action navigate to
+    // the dedicated music page instead of opening an easy-to-miss inline panel.
+    if (item.id === 'fft') {
+      const liveConfigureLink = document.createElement('a');
+      liveConfigureLink.className = 'configure-button primary-configure';
+      liveConfigureLink.href = '/config/fft';
+      liveConfigureLink.textContent = 'Configure';
+      cardActions.append(liveConfigureLink);
+    }
+
+    const launchSettingsButton = document.createElement('button');
+    launchSettingsButton.className = 'configure-button';
+    launchSettingsButton.type = 'button';
+    launchSettingsButton.textContent = expandedVisualizationId === item.id
+      ? 'Close launch settings'
+      : item.id === 'fft' ? 'Launch settings' : 'Configure';
+    launchSettingsButton.setAttribute('aria-expanded', String(expandedVisualizationId === item.id));
+    launchSettingsButton.setAttribute('aria-controls', `launch-form-${item.id}`);
+    launchSettingsButton.addEventListener('click', () => {
       expandedVisualizationId = expandedVisualizationId === item.id ? null : item.id;
       renderVisualizations();
     });
+    cardActions.append(launchSettingsButton);
 
     const form = document.createElement('form');
     form.id = `launch-form-${item.id}`;
@@ -336,7 +325,7 @@ function renderVisualizations() {
       launchVisualization(item, form);
     });
 
-    card.append(top, title, description, footer, configureButton, form);
+    card.append(top, title, description, footer, cardActions, form);
     elements.grid.append(card);
   });
 }
@@ -418,7 +407,8 @@ async function applyRuntimeChange(control, input) {
     if (Number.isInteger(currentRuntime.revision)) payload.expected_revision = currentRuntime.revision;
     currentRuntime = await readJson(await fetch('/api/v1/runtime', {
       method: 'PATCH',
-      headers: {...authorizationHeaders(), 'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
     }));
     clearMessage();
@@ -458,7 +448,8 @@ async function invokeRuntimeAction(control) {
     if (Number.isInteger(currentRuntime.revision)) payload.expected_revision = currentRuntime.revision;
     currentRuntime = await readJson(await fetch('/api/v1/runtime/actions', {
       method: 'POST',
-      headers: {...authorizationHeaders(), 'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload),
     }));
     clearMessage();
@@ -609,14 +600,14 @@ async function loadVisualizations() {
 }
 
 async function refreshRuntime({reportErrors = false} = {}) {
-  if (!controlToken) {
+  if (!authorizationStatus?.authorized) {
     currentRuntime = null;
     renderLiveControls();
     return;
   }
   try {
     currentRuntime = await readJson(await fetch('/api/v1/runtime', {
-      headers: authorizationHeaders(),
+      credentials: 'same-origin',
       cache: 'no-store',
     }));
     renderLiveControls();
@@ -646,7 +637,7 @@ async function refreshStatus({reportErrors = false} = {}) {
 }
 
 elements.quitButton.addEventListener('click', async () => {
-  if (!controlToken) {
+  if (!authorizationStatus?.authorized) {
     showMessage('Enter the six-digit pairing code before quitting the visualization.', true);
     elements.pairingCode.focus();
     return;
@@ -658,10 +649,8 @@ elements.quitButton.addEventListener('click', async () => {
   try {
     currentStatus = await readJson(await fetch('/api/v1/stop', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${controlToken}`,
-        'Content-Type': 'application/json',
-      },
+      credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json'},
       body: '{}',
     }));
     showMessage('The visualization was stopped and the matrix is ready.');
@@ -686,11 +675,13 @@ elements.pairButton.addEventListener('click', async () => {
   try {
     const result = await readJson(await fetch('/api/v1/pairing/exchange', {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-RGB-Matrix-Session': 'cookie',
+      },
       body: JSON.stringify({code}),
     }));
-    controlToken = result.token;
-    storeToken(result.token);
     elements.pairingCode.value = '';
     await refreshAuthorization();
     await refreshRuntime({reportErrors: false});
@@ -703,24 +694,24 @@ elements.pairButton.addEventListener('click', async () => {
 });
 
 elements.forgetButton.addEventListener('click', async () => {
-  if (controlToken && authorizationStatus?.temporary_session) {
+  if (authorizationStatus?.temporary_session) {
     try {
       await readJson(await fetch('/api/v1/pairing/logout', {
         method: 'POST',
-        headers: {...authorizationHeaders(), 'Content-Type': 'application/json'},
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json'},
         body: '{}',
       }));
-    } catch (_error) {
-      // Local removal still protects this browser tab if the controller is offline.
+    } catch (error) {
+      showMessage(`Could not remove access: ${error.message}`, true);
+      return;
     }
   }
-  controlToken = '';
-  storeToken('');
-  authorizationStatus = null;
+  authorizationStatus = {authorized: false, temporary_session: false};
   currentRuntime = null;
   renderAuthorization();
   renderLiveControls();
-  showMessage('Access was removed from this browser tab.');
+  showMessage('Access was removed from this browser.');
 });
 
 async function initialize() {

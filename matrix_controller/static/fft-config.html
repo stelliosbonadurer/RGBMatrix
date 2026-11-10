@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b12">
+  <title>Music Controls · RGB Matrix</title>
+  <link rel="stylesheet" href="/static/control.css">
+  <script src="/static/fft-config.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#music-controls">Skip to music controls</a>
+
+  <header class="site-header">
+    <a class="brand" href="/" aria-label="Back to RGB Matrix control home">
+      <span class="pixel-mark" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </span>
+      <span>RGB MATRIX</span>
+    </a>
+    <a class="utility-link" href="/">← Visualizations</a>
+  </header>
+
+  <main class="music-config-page">
+    <section class="music-config-hero" aria-labelledby="page-title">
+      <p class="eyebrow">MUSIC VISUALIZER</p>
+      <h1 id="page-title">Shape the<br><span>sound.</span></h1>
+      <p class="lede">Tune the running visualization in real time. Changes are applied at frame boundaries without restarting the display.</p>
+    </section>
+
+    <section class="runtime-panel" aria-labelledby="runtime-title">
+      <div class="runtime-copy">
+        <p class="section-label" id="runtime-title">MUSIC OUTPUT</p>
+        <div class="runtime-state">
+          <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="current-name">Checking the matrix…</strong>
+            <p id="current-detail" aria-live="polite">Connecting to the controller.</p>
+          </div>
+        </div>
+      </div>
+      <div class="runtime-actions">
+        <button id="start-button" class="launch-button compact-button" type="button" disabled>Start music</button>
+        <button id="quit-button" class="quit-button" type="button" disabled>
+          <span class="stop-icon" aria-hidden="true">■</span>
+          <span class="button-label">Quit music</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="access-panel" aria-labelledby="access-title">
+      <div class="access-intro">
+        <h2 id="access-title">Control access</h2>
+        <p id="access-status">Checking this browser session…</p>
+        <p class="terminal-hint">Temporary development code: <code>000000</code>. The rotating code shown on the matrix also works.</p>
+      </div>
+      <div class="access-controls">
+        <div class="pairing-row">
+          <label class="token-field" for="pairing-code">
+            <span>Six-digit phone code</span>
+            <input id="pairing-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="000000">
+          </label>
+          <button id="pair-button" class="pair-button" type="button">Pair phone</button>
+        </div>
+        <button id="forget-button" class="text-button" type="button" hidden>Forget this device</button>
+      </div>
+    </section>
+
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+    <section id="music-controls" class="live-controls-panel dedicated-controls" aria-labelledby="live-controls-title">
+      <div class="section-heading live-controls-heading">
+        <div>
+          <p class="eyebrow">LIVE TUNING</p>
+          <h2 id="live-controls-title">Music controls</h2>
+          <p id="live-controls-detail" class="panel-detail">Start the music visualization to load its controls.</p>
+        </div>
+        <span id="live-controls-connection" class="connection-badge offline">Offline</span>
+      </div>
+      <div id="live-controls-empty" class="controls-empty">
+        <strong>No live music session</strong>
+        <p>Pair this phone, then start the music visualization. Its themes, layers, peaks, motion, and audio tuning controls will appear here.</p>
+      </div>
+      <div id="live-controls-groups" class="live-controls-groups" aria-live="polite" aria-busy="true"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Music controls · Local network</span>
+    <span id="last-updated">Waiting for status</span>
+  </footer>
+</body>
+</html>
