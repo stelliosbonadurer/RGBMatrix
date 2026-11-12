@@ -163,6 +163,20 @@ class TraversalTests(unittest.TestCase):
         final = list(traversal_frames(graph, "dijkstra", "edge"))[-1]
         self.assertEqual(final.final_path_edges, frozenset({1, 2}))
 
+    def test_dijkstra_replaces_predecessor_without_forgetting_exploration(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(40, 2)),
+            (Edge(0, 0, 1, 1), Edge(1, 0, 2, 5), Edge(2, 1, 2, 1)),
+            False,
+            0,
+            2,
+        )
+        frames = list(traversal_frames(graph, "dijkstra", "edge"))
+        relaxed = next(frame for frame in frames if frame.examined_edge == 2)
+        self.assertEqual(relaxed.predecessor_edges, frozenset({0, 2}))
+        self.assertEqual(relaxed.traversed_edges, frozenset({0, 1, 2}))
+        self.assertNotIn(1, relaxed.predecessor_edges)
+
 
 class GraphRenderingTests(unittest.TestCase):
     def test_config_and_current_state_colors_are_used(self) -> None:
@@ -232,8 +246,9 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn(config.colors.dijkstra_low_weight, canvas.pixels.values())
         self.assertIn(config.colors.dijkstra_high_weight, canvas.pixels.values())
 
-    def test_directed_edge_uses_three_orange_pixels_nearest_destination(self) -> None:
+    def test_directed_edge_uses_configured_orange_pixels_nearest_destination(self) -> None:
         config = load_render_config()
+        self.assertEqual(config.direction_marker_pixels, 2)
         graph = Graph(
             (Point(5, 5), Point(20, 5)),
             (Edge(0, 0, 1, 1),),
@@ -256,7 +271,7 @@ class GraphRenderingTests(unittest.TestCase):
             point for point, color in canvas.pixels.items()
             if color == config.colors.direction_marker
         }
-        self.assertEqual(orange_pixels, {(17, 5), (18, 5), (19, 5)})
+        self.assertEqual(orange_pixels, {(18, 5), (19, 5)})
         self.assertEqual(canvas.pixels[(20, 5)], config.colors.target_node)
 
     def test_completed_dijkstra_only_keeps_the_shortest_path_green(self) -> None:
@@ -283,13 +298,14 @@ class GraphRenderingTests(unittest.TestCase):
             frozenset({0, 1}),
             complete=True,
             target_reached=True,
+            predecessor_edges=frozenset({0, 1, 2}),
         )
         renderer = GraphRenderer(config, "dijkstra")
         self.assertEqual(renderer._edge_color(graph.edges[0], complete), config.colors.shortest_path)
         self.assertEqual(renderer._edge_color(graph.edges[1], complete), config.colors.shortest_path)
         self.assertEqual(
             renderer._edge_color(graph.edges[2], complete),
-            config.colors.dijkstra_high_weight,
+            config.colors.predecessor_edge,
         )
         self.assertEqual(
             renderer._edge_color(graph.edges[3], complete),

@@ -23,6 +23,7 @@ class GraphColors:
     current_node: Color
     unvisited_edge: Color
     traversed_edge: Color
+    predecessor_edge: Color
     current_edge: Color
     direction_marker: Color
     cycle_edge: Color
@@ -34,6 +35,7 @@ class GraphColors:
 @dataclass(frozen=True)
 class RenderConfig:
     node_size: int
+    direction_marker_pixels: int
     colors: GraphColors
 
 
@@ -44,11 +46,20 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
         raise ValueError(f"could not read graph rendering config: {path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON in graph rendering config: {exc}") from exc
-    if set(data) != {"node_size", "colors"}:
-        raise ValueError("graph rendering config must contain only node_size and colors")
+    if set(data) != {"node_size", "direction_marker_pixels", "colors"}:
+        raise ValueError(
+            "graph rendering config must contain only node_size, "
+            "direction_marker_pixels, and colors"
+        )
     node_size = data["node_size"]
     if type(node_size) is not int or not 1 <= node_size <= 2:
         raise ValueError("node_size must be 1 or 2")
+    direction_marker_pixels = data["direction_marker_pixels"]
+    if (
+        type(direction_marker_pixels) is not int
+        or not 1 <= direction_marker_pixels <= 8
+    ):
+        raise ValueError("direction_marker_pixels must be an integer from 1 to 8")
 
     expected = set(GraphColors.__dataclass_fields__)
     supplied = set(data["colors"])
@@ -62,7 +73,7 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
             details.append(f"unknown: {', '.join(extra)}")
         raise ValueError(f"invalid graph colors ({'; '.join(details)})")
     colors = GraphColors(**{name: _parse_color(name, data["colors"][name]) for name in expected})
-    return RenderConfig(node_size, colors)
+    return RenderConfig(node_size, direction_marker_pixels, colors)
 
 
 def _parse_color(name: str, value: object) -> Color:
@@ -91,6 +102,7 @@ class GraphRenderer:
                     graph.points[edge.source],
                     graph.points[edge.target],
                     self.config.colors.direction_marker,
+                    self.config.direction_marker_pixels,
                 )
         for index, point in enumerate(graph.points):
             self._draw_node(canvas, point, self._node_color(index, graph, frame))
@@ -103,6 +115,8 @@ class GraphRenderer:
             return colors.shortest_path
         if edge.index in frame.cycle_edges:
             return colors.cycle_edge
+        if edge.index in frame.predecessor_edges:
+            return colors.predecessor_edge
         if edge.index in frame.traversed_edges and not (
             self.traversal == "dijkstra" and frame.complete
         ):
@@ -134,10 +148,16 @@ class GraphRenderer:
             _set_pixel(canvas, x, y, color)
 
     @staticmethod
-    def _draw_direction_marker(canvas, start: Point, end: Point, color: Color) -> None:
+    def _draw_direction_marker(
+        canvas,
+        start: Point,
+        end: Point,
+        color: Color,
+        pixel_count: int,
+    ) -> None:
         # Exclude the endpoint because the destination node is drawn over it later.
         edge_pixels = list(_line_pixels(start.x, start.y, end.x, end.y))
-        for x, y in edge_pixels[max(1, len(edge_pixels) - 4) : -1]:
+        for x, y in edge_pixels[max(1, len(edge_pixels) - pixel_count - 1) : -1]:
             _set_pixel(canvas, x, y, color)
 
 

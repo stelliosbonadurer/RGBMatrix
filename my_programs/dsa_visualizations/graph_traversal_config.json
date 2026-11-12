@@ -1,5 +1,6 @@
 {
   "node_size": 1,
+  "direction_marker_pixels": 2,
   "colors": {
     "background": [0, 0, 0],
     "node": [160, 160, 255],
@@ -8,6 +9,7 @@
     "current_node": [255, 100, 0],
     "unvisited_edge": [210, 210, 210],
     "traversed_edge": [0, 210, 60],
+    "predecessor_edge": [0, 170, 255],
     "current_edge": [255, 80, 180],
     "direction_marker": [255, 100, 0],
     "cycle_edge": [180, 40, 255],

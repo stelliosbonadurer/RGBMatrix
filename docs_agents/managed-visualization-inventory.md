@@ -140,8 +140,8 @@ nodes on the 64x64 panel, builds short straight-line edges without crossings, an
 replays the same graph for a reproducible seed. Connected undirected and weakly
 connected directed graphs begin with a Euclidean spanning tree. Strong directed graphs
 begin with an oriented cycle. Additional short non-crossing edges are added only when
-cycles are enabled. Directed edges use three orange pixels immediately before the
-destination node instead of arrowheads.
+cycles are enabled. Directed edges use a configurable number of orange pixels
+immediately before the destination node instead of arrowheads; the default is two.
 
 `e=0` selects a dependent default: an undirected graph uses `n-1` with cycles
 disabled and `ceil(1.5n)` with cycles enabled; a directed graph uses `ceil(1.5n)` and
@@ -154,6 +154,8 @@ Frames can advance by processed node or examined edge. The completed frame is he
 `holding_period * frame_duration`, then the same traversal replays. DFS colors every
 edge in a discovered cycle. Dijkstra maps unvisited weights 1 through 9 from white to
 yellow, colors examined edges separately, and highlights the final shortest path.
+During Dijkstra, explored edges and the current predecessor tree use separate colors;
+when relaxation replaces a predecessor, the old edge returns to the explored color.
 Nodes are one pixel and retain their normal, start, or target color after processing;
 only the currently processed node changes color. Rendering colors are editable in
 `my_programs/dsa_visualizations/graph_traversal_config.json`.

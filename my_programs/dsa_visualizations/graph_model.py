@@ -69,6 +69,7 @@ class TraversalFrame:
     final_path_edges: frozenset[int]
     complete: bool = False
     target_reached: bool = False
+    predecessor_edges: frozenset[int] = frozenset()
 
 
 def edge_bounds(options: GraphOptions) -> EdgeBounds:
@@ -379,6 +380,7 @@ def _frame(
     cycles: set[int],
     final_path: set[int] | None = None,
     *,
+    predecessors: set[int] | None = None,
     complete: bool = False,
     target_reached: bool = False,
 ) -> TraversalFrame:
@@ -390,8 +392,9 @@ def _frame(
         frozenset(traversed),
         frozenset(cycles),
         frozenset(final_path or ()),
-        complete,
-        target_reached,
+        complete=complete,
+        target_reached=target_reached,
+        predecessor_edges=frozenset(predecessors or ()),
     )
 
 
@@ -518,9 +521,36 @@ def _dijkstra_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFra
                 parent_node[neighbor] = current
                 heapq.heappush(queue, (candidate, neighbor))
             if step_mode == "edge":
-                yield _frame(current, edge.index, settled, {item[1] for item in queue}, traversed, set())
+                yield _frame(
+                    current,
+                    edge.index,
+                    settled,
+                    {item[1] for item in queue},
+                    traversed,
+                    set(),
+                    predecessors=set(parent_edge.values()),
+                )
         if step_mode == "node":
-            yield _frame(current, None, settled, {item[1] for item in queue}, traversed, set())
+            yield _frame(
+                current,
+                None,
+                settled,
+                {item[1] for item in queue},
+                traversed,
+                set(),
+                predecessors=set(parent_edge.values()),
+            )
 
     path = _path_edges(parent_edge, parent_node, graph.target, graph.start) if reached else set()
-    yield _frame(None, None, settled, set(), traversed, set(), path, complete=True, target_reached=reached)
+    yield _frame(
+        None,
+        None,
+        settled,
+        set(),
+        traversed,
+        set(),
+        path,
+        predecessors=set(parent_edge.values()),
+        complete=True,
+        target_reached=reached,
+    )
