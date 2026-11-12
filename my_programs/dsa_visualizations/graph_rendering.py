@@ -24,6 +24,7 @@ class GraphColors:
     unvisited_edge: Color
     traversed_edge: Color
     current_edge: Color
+    direction_marker: Color
     cycle_edge: Color
     shortest_path: Color
     dijkstra_low_weight: Color
@@ -85,7 +86,12 @@ class GraphRenderer:
             color = self._edge_color(edge, frame)
             self._draw_line(canvas, graph.points[edge.source], graph.points[edge.target], color)
             if graph.directed:
-                self._draw_arrow(canvas, graph.points[edge.source], graph.points[edge.target], color)
+                self._draw_direction_marker(
+                    canvas,
+                    graph.points[edge.source],
+                    graph.points[edge.target],
+                    self.config.colors.direction_marker,
+                )
         for index, point in enumerate(graph.points):
             self._draw_node(canvas, point, self._node_color(index, graph, frame))
 
@@ -128,19 +134,11 @@ class GraphRenderer:
             _set_pixel(canvas, x, y, color)
 
     @staticmethod
-    def _draw_arrow(canvas, start: Point, end: Point, color: Color) -> None:
-        dx = end.x - start.x
-        dy = end.y - start.y
-        length = max(1.0, (dx * dx + dy * dy) ** 0.5)
-        unit_x, unit_y = dx / length, dy / length
-        base_x = end.x - unit_x * 3.0
-        base_y = end.y - unit_y * 3.0
-        perpendicular_x, perpendicular_y = -unit_y, unit_x
-        for direction in (-1, 1):
-            wing_x = round(base_x - unit_x * 2 + direction * perpendicular_x * 1.5)
-            wing_y = round(base_y - unit_y * 2 + direction * perpendicular_y * 1.5)
-            for x, y in _line_pixels(round(base_x), round(base_y), wing_x, wing_y):
-                _set_pixel(canvas, x, y, color)
+    def _draw_direction_marker(canvas, start: Point, end: Point, color: Color) -> None:
+        # Exclude the endpoint because the destination node is drawn over it later.
+        edge_pixels = list(_line_pixels(start.x, start.y, end.x, end.y))
+        for x, y in edge_pixels[max(1, len(edge_pixels) - 4) : -1]:
+            _set_pixel(canvas, x, y, color)
 
 
 def _blend(low: Color, high: Color, fraction: float) -> Color:

@@ -9,6 +9,7 @@
     "unvisited_edge": [210, 210, 210],
     "traversed_edge": [0, 210, 60],
     "current_edge": [255, 80, 180],
+    "direction_marker": [255, 100, 0],
     "cycle_edge": [180, 40, 255],
     "shortest_path": [80, 255, 80],
     "dijkstra_low_weight": [235, 235, 235],

@@ -330,7 +330,7 @@ GRAPH_TRAVERSAL_PARAMETERS: tuple[ParameterSpec, ...] = (
         "--directed",
         "bool",
         False,
-        "Generate directed edges and render arrow markers.",
+        "Generate directed edges and render orange destination markers.",
         negative_cli_flag="--undirected",
     ),
     ParameterSpec(

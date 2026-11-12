@@ -232,6 +232,33 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn(config.colors.dijkstra_low_weight, canvas.pixels.values())
         self.assertIn(config.colors.dijkstra_high_weight, canvas.pixels.values())
 
+    def test_directed_edge_uses_three_orange_pixels_nearest_destination(self) -> None:
+        config = load_render_config()
+        graph = Graph(
+            (Point(5, 5), Point(20, 5)),
+            (Edge(0, 0, 1, 1),),
+            True,
+            0,
+            1,
+        )
+        frame = TraversalFrame(
+            None,
+            None,
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+        )
+        canvas = RecordingCanvas()
+        GraphRenderer(config, "bfs").render(canvas, graph, frame)
+        orange_pixels = {
+            point for point, color in canvas.pixels.items()
+            if color == config.colors.direction_marker
+        }
+        self.assertEqual(orange_pixels, {(17, 5), (18, 5), (19, 5)})
+        self.assertEqual(canvas.pixels[(20, 5)], config.colors.target_node)
+
     def test_completed_dijkstra_only_keeps_the_shortest_path_green(self) -> None:
         config = load_render_config()
         graph = Graph(

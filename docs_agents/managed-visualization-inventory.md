@@ -140,7 +140,8 @@ nodes on the 64x64 panel, builds short straight-line edges without crossings, an
 replays the same graph for a reproducible seed. Connected undirected and weakly
 connected directed graphs begin with a Euclidean spanning tree. Strong directed graphs
 begin with an oriented cycle. Additional short non-crossing edges are added only when
-cycles are enabled.
+cycles are enabled. Directed edges use three orange pixels immediately before the
+destination node instead of arrowheads.
 
 `e=0` selects a dependent default: an undirected graph uses `n-1` with cycles
 disabled and `ceil(1.5n)` with cycles enabled; a directed graph uses `ceil(1.5n)` and
