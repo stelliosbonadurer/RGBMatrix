@@ -119,12 +119,12 @@ runtime/deployment work.
 ## Master Theorem details
 
 The DSA visualization models `T(n) = aT(n/b) + Theta(n^k)`. It calculates exact
-logical levels independently of matrix hardware, renders each displayed level in a
-six-pixel band, aggregates node density when individual nodes become unreadable, and
-highlights the standard Master Theorem case. Managed parameters select a preset or
-custom `a`, `b`, `n`, `k`, base case, animation delay, result hold, and cycle count.
-Animation can be disabled to hold the complete classified tree without replaying the
-level reveal and comparison sweep.
+logical levels independently of matrix hardware. The static matrix view starts with a
+centered, one-pixel input line capped at a tunable 20–32 pixels. Each recursive layer
+then shows its node count and per-node work geometrically: constant work is a point,
+linear work is a line, and quadratic work is a square. Logical node counts that exceed
+the available columns are rendered as density. Recurrence parameters remain managed
+for eventual phone controls, but no parameter labels appear on the matrix.
 
 This visualization uses a project-owned native adapter and does not depend on
 `samplebase`, NumPy, sounddevice, or the FFT package. It is launch/stop-only in the

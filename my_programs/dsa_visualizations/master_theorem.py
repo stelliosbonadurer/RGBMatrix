@@ -52,30 +52,11 @@ def build_analysis(args):
     return analyze_recurrence(spec)
 
 
-def animate(app: NativeMatrixApp, analysis, *, delay: float, hold: float, cycles: int) -> None:
-    renderer = MasterTheoremRenderer(app.width, app.height)
-    visible_count = len(renderer.visible_levels(analysis))
-    completed = 0
-    while cycles == 0 or completed < cycles:
-        for reveal in range(1, visible_count + 1):
-            renderer.render(app.canvas, analysis, reveal_levels=reveal)
-            app.swap_canvas()
-            time.sleep(delay)
-        for level_index in range(visible_count):
-            renderer.render(app.canvas, analysis, highlight_level=level_index)
-            app.swap_canvas()
-            time.sleep(delay)
-        renderer.render(app.canvas, analysis, show_result=True)
-        app.swap_canvas()
-        time.sleep(hold)
-        completed += 1
-
-
 def display_total(app: NativeMatrixApp, analysis) -> None:
-    """Draw the complete classified tree once and hold it until stopped."""
+    """Draw the complete static tree once and hold it until stopped."""
 
     renderer = MasterTheoremRenderer(app.width, app.height)
-    renderer.render(app.canvas, analysis, show_result=True)
+    renderer.render(app.canvas, analysis)
     app.swap_canvas()
     while True:
         time.sleep(3600)
@@ -118,16 +99,7 @@ def main() -> int:
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, _request_exit)
     try:
-        if args.animate:
-            animate(
-                app,
-                analysis,
-                delay=args.delay,
-                hold=args.hold,
-                cycles=args.cycles,
-            )
-        else:
-            display_total(app, analysis)
+        display_total(app, analysis)
     except KeyboardInterrupt:
         print("\nMaster Theorem visualization stopped.")
     finally:

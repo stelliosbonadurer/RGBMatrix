@@ -246,8 +246,8 @@ MASTER_THEOREM_PARAMETERS: tuple[ParameterSpec, ...] = (
         "animate",
         "--animate",
         "bool",
-        True,
-        "Reveal and compare recurrence levels before showing the total result.",
+        False,
+        "Legacy animation switch; the refactored matrix view is static.",
         negative_cli_flag="--no-animate",
     ),
     ParameterSpec(

@@ -6,7 +6,11 @@ import unittest
 
 from my_programs.dsa_visualizations.model import RecurrenceSpec, analyze_recurrence
 from my_programs.dsa_visualizations.native_matrix import NativeMatrixApp
-from my_programs.dsa_visualizations.rendering import CASE_COLORS, MasterTheoremRenderer
+from my_programs.dsa_visualizations.rendering import (
+    INPUT_COLOR,
+    WORK_COLOR,
+    MasterTheoremRenderer,
+)
 from matrix_controller.definitions import application_parameters
 from matrix_controller.registry import build_default_registry
 
@@ -69,73 +73,117 @@ class MasterTheoremModelTests(unittest.TestCase):
 
 
 class MasterTheoremRendererTests(unittest.TestCase):
-    def test_progressive_render_is_bounded_and_deterministic(self) -> None:
+    def test_input_is_a_centered_one_pixel_line_capped_at_32(self) -> None:
         analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=2))
         renderer = MasterTheoremRenderer()
         canvas = RecordingCanvas()
 
-        renderer.render(canvas, analysis, reveal_levels=1)
-        root_frame = dict(canvas.pixels)
-        self.assertTrue(root_frame)
-        self.assertFalse(any(y >= 12 for _, y in root_frame))
-
-        renderer.render(canvas, analysis, reveal_levels=2)
-        self.assertGreater(len(canvas.pixels), len(root_frame))
-        second_frame = dict(canvas.pixels)
-        renderer.render(canvas, analysis, reveal_levels=2)
-        self.assertEqual(canvas.pixels, second_frame)
-
-    def test_quadratic_root_is_a_five_row_box(self) -> None:
-        analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=2))
-        renderer = MasterTheoremRenderer()
-        canvas = RecordingCanvas()
-        renderer.render(canvas, analysis, reveal_levels=1)
-        occupied_tree_rows = {
-            y for (_x, y) in canvas.pixels if 6 <= y < 12
+        renderer.render(canvas, analysis)
+        input_pixels = {
+            x
+            for (x, y), color in canvas.pixels.items()
+            if y == 0 and color == INPUT_COLOR
         }
-        self.assertEqual(occupied_tree_rows, {6, 7, 8, 9, 10, 11})
+        self.assertEqual(input_pixels, set(range(16, 48)))
+        self.assertFalse(any(y == 1 for _x, y in canvas.pixels))
+
+    def test_input_cap_can_be_tuned_from_20_to_32(self) -> None:
+        analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=1))
+        canvas = RecordingCanvas()
+        MasterTheoremRenderer(maximum_input_width=20).render(canvas, analysis)
+        self.assertEqual(
+            {
+                x
+                for (x, y), color in canvas.pixels.items()
+                if y == 0 and color == INPUT_COLOR
+            },
+            set(range(22, 42)),
+        )
+        for invalid in (19, 33):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                MasterTheoremRenderer(maximum_input_width=invalid)
+
+    def test_quadratic_work_draws_one_square_per_child(self) -> None:
+        analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=2))
+        renderer = MasterTheoremRenderer()
+        canvas = RecordingCanvas()
+        renderer.render(canvas, analysis)
+
+        first_layer = {
+            (x, y) for (x, y), color in canvas.pixels.items()
+            if color == WORK_COLOR and 2 <= y < 18
+        }
+        expected = {
+            (x, y)
+            for y in range(2, 18)
+            for x in (*range(15, 31), *range(32, 48))
+        }
+        self.assertEqual(first_layer, expected)
 
     def test_linear_work_is_drawn_as_a_line(self) -> None:
         analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=1))
         renderer = MasterTheoremRenderer()
         canvas = RecordingCanvas()
-        renderer.render(canvas, analysis, reveal_levels=1)
-        occupied_tree_rows = {
-            y for (_x, y) in canvas.pixels if 6 <= y < 12
+        renderer.render(canvas, analysis)
+        first_layer = {
+            (x, y) for (x, y), color in canvas.pixels.items()
+            if color == WORK_COLOR and y == 2
         }
-        self.assertEqual(occupied_tree_rows, {6, 11})
+        self.assertEqual(len(first_layer), 32)
+        self.assertFalse(
+            any(
+                color == WORK_COLOR and y == 3
+                for (_x, y), color in canvas.pixels.items()
+            )
+        )
 
-    def test_single_recursive_child_shrinks_with_problem_size(self) -> None:
-        analysis = analyze_recurrence(RecurrenceSpec(a=1, b=2, n=64, k=0))
+    def test_constant_work_is_one_pixel_per_node(self) -> None:
+        analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=0))
         renderer = MasterTheoremRenderer()
         canvas = RecordingCanvas()
-        renderer.render(canvas, analysis, reveal_levels=3)
-        widths = []
-        for bottom_row in (11, 17, 23):
-            widths.append(len({x for (x, y) in canvas.pixels if y == bottom_row}))
-        self.assertEqual(widths, [64, 32, 16])
+        renderer.render(canvas, analysis)
+        self.assertEqual(
+            len(
+                [
+                    (x, y)
+                    for (x, y), color in canvas.pixels.items()
+                    if y == 2 and color == WORK_COLOR
+                ]
+            ),
+            2,
+        )
+        self.assertEqual(
+            len(
+                [
+                    (x, y)
+                    for (x, y), color in canvas.pixels.items()
+                    if y == 4 and color == WORK_COLOR
+                ]
+            ),
+            4,
+        )
 
-    def test_large_node_counts_are_aggregated_and_result_is_highlighted(self) -> None:
-        analysis = analyze_recurrence(RecurrenceSpec(a=8, b=2, n=64, k=1))
+    def test_legacy_animation_arguments_do_not_change_static_frame(self) -> None:
+        analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=64, k=2))
         renderer = MasterTheoremRenderer()
         canvas = RecordingCanvas()
-        renderer.render(canvas, analysis, show_result=True)
+        renderer.render(canvas, analysis)
+        static_frame = dict(canvas.pixels)
+        renderer.render(
+            canvas,
+            analysis,
+            reveal_levels=1,
+            highlight_level=0,
+            show_result=True,
+        )
+        self.assertEqual(canvas.pixels, static_frame)
 
-        last_display_index = len(renderer.visible_levels(analysis)) - 1
-        last_band_top = 6 + last_display_index * 6
-        white_pixels = [
-            point for point, color in canvas.pixels.items()
-            if color == (255, 255, 255) and last_band_top <= point[1] < last_band_top + 6
-        ]
-        self.assertTrue(white_pixels)
-        self.assertIn(CASE_COLORS[1], canvas.pixels.values())
-
-    def test_deep_tree_keeps_root_levels_and_final_leaf_level(self) -> None:
+    def test_deep_linear_tree_keeps_every_layer_that_fits(self) -> None:
         analysis = analyze_recurrence(RecurrenceSpec(a=2, b=2, n=4096, k=1))
         renderer = MasterTheoremRenderer()
         visible = renderer.visible_levels(analysis)
-        self.assertEqual(len(visible), renderer.maximum_visible_levels)
-        self.assertEqual(visible[0].index, 0)
+        self.assertEqual(len(visible), len(analysis.levels) - 1)
+        self.assertEqual(visible[0].index, 1)
         self.assertEqual(visible[-1].index, len(analysis.levels) - 1)
 
 
