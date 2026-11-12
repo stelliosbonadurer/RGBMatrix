@@ -232,6 +232,47 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn(config.colors.dijkstra_low_weight, canvas.pixels.values())
         self.assertIn(config.colors.dijkstra_high_weight, canvas.pixels.values())
 
+    def test_completed_dijkstra_only_keeps_the_shortest_path_green(self) -> None:
+        config = load_render_config()
+        graph = Graph(
+            (Point(4, 4), Point(20, 4), Point(36, 4), Point(20, 20)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 1, 2, 1),
+                Edge(2, 2, 3, 9),
+                Edge(3, 3, 0, 9),
+            ),
+            False,
+            0,
+            2,
+        )
+        complete = TraversalFrame(
+            None,
+            None,
+            frozenset({0, 1, 2, 3}),
+            frozenset(),
+            frozenset({0, 1, 2, 3}),
+            frozenset(),
+            frozenset({0, 1}),
+            complete=True,
+            target_reached=True,
+        )
+        renderer = GraphRenderer(config, "dijkstra")
+        self.assertEqual(renderer._edge_color(graph.edges[0], complete), config.colors.shortest_path)
+        self.assertEqual(renderer._edge_color(graph.edges[1], complete), config.colors.shortest_path)
+        self.assertEqual(
+            renderer._edge_color(graph.edges[2], complete),
+            config.colors.dijkstra_high_weight,
+        )
+        self.assertEqual(
+            renderer._edge_color(graph.edges[3], complete),
+            config.colors.dijkstra_high_weight,
+        )
+        self.assertNotIn(
+            config.colors.traversed_edge,
+            [renderer._edge_color(edge, complete) for edge in graph.edges],
+        )
+
 
 class GraphTraversalCliTests(unittest.TestCase):
     def test_managed_argv_is_accepted_by_visualization_parser(self) -> None:

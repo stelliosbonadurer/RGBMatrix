@@ -97,7 +97,9 @@ class GraphRenderer:
             return colors.shortest_path
         if edge.index in frame.cycle_edges:
             return colors.cycle_edge
-        if edge.index in frame.traversed_edges:
+        if edge.index in frame.traversed_edges and not (
+            self.traversal == "dijkstra" and frame.complete
+        ):
             return colors.traversed_edge
         if self.traversal == "dijkstra":
             return _blend(colors.dijkstra_low_weight, colors.dijkstra_high_weight, (edge.weight - 1) / 8)
