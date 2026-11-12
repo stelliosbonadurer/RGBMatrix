@@ -13,8 +13,6 @@ INPUT_Y = 0
 FIRST_LAYER_Y = 2
 LAYER_GAP = 1
 NODE_GAP = 1
-MIN_INPUT_WIDTH = 20
-MAX_INPUT_WIDTH = 32
 INPUT_COLOR: Color = (255, 255, 255)
 WORK_COLOR: Color = (65, 155, 255)
 
@@ -35,38 +33,27 @@ class Canvas(Protocol):
 class MasterTheoremRenderer:
     """Draw the input and every recursion layer without labels or animation."""
 
-    def __init__(
-        self,
-        width: int = 64,
-        height: int = 64,
-        *,
-        maximum_input_width: int = MAX_INPUT_WIDTH,
-    ):
+    def __init__(self, width: int = 64, height: int = 64):
         if width < 16 or height < 4:
             raise ValueError("canvas is too small for the Master Theorem layout")
-        if not MIN_INPUT_WIDTH <= maximum_input_width <= MAX_INPUT_WIDTH:
-            raise ValueError(
-                f"maximum_input_width must be between {MIN_INPUT_WIDTH} and "
-                f"{MAX_INPUT_WIDTH}"
-            )
         self.width = width
         self.height = height
-        self.maximum_input_width = maximum_input_width
 
     def input_width(self, analysis: MasterTheoremAnalysis) -> int:
-        """Return the displayed width of n, capped independently of model n."""
+        """Return the literal model n used by the input line."""
 
-        return max(1, min(self.width, self.maximum_input_width, analysis.spec.n))
+        if analysis.spec.n > self.width:
+            raise ValueError("n cannot be wider than the matrix")
+        return analysis.spec.n
 
     def visible_levels(self, analysis: MasterTheoremAnalysis) -> tuple[RecurrenceLevel, ...]:
         """Return the recursive layers that fit below the input line."""
 
         levels: list[RecurrenceLevel] = []
         y = FIRST_LAYER_Y
-        root_width = self.input_width(analysis)
         for level in analysis.levels[1:]:
-            _shape_width, shape_height = self._work_shape(
-                level, analysis.spec.k, root_width, analysis.spec.n
+            _shape_width, shape_height, _pixel_count = self._work_shape(
+                level, analysis.spec.k
             )
             if y + shape_height > self.height:
                 break
@@ -105,10 +92,17 @@ class MasterTheoremRenderer:
 
         y = FIRST_LAYER_Y
         for level in self.visible_levels(analysis):
-            shape_width, shape_height = self._work_shape(
-                level, analysis.spec.k, root_width, analysis.spec.n
+            shape_width, shape_height, pixel_count = self._work_shape(
+                level, analysis.spec.k
             )
-            self._draw_level(canvas, level, y, shape_width, shape_height)
+            self._draw_level(
+                canvas,
+                level,
+                y,
+                shape_width,
+                shape_height,
+                pixel_count,
+            )
             y += shape_height + LAYER_GAP
 
     def _draw_level(
@@ -118,6 +112,7 @@ class MasterTheoremRenderer:
         y: int,
         shape_width: int,
         shape_height: int,
+        pixel_count: int,
     ) -> None:
         node_count = level.node_count
         desired_span = node_count * shape_width + max(0, node_count - 1) * NODE_GAP
@@ -136,13 +131,8 @@ class MasterTheoremRenderer:
         if desired_span <= self.width:
             for node_index in range(node_count):
                 left = span_left + node_index * (shape_width + NODE_GAP)
-                self._fill_rect(
-                    canvas,
-                    left,
-                    y,
-                    left + shape_width - 1,
-                    y + shape_height - 1,
-                    WORK_COLOR,
+                self._draw_work_shape(
+                    canvas, left, y, level, pixel_count
                 )
             return
 
@@ -152,39 +142,52 @@ class MasterTheoremRenderer:
             slot_width = max(1, slot_right - slot_left + 1)
             drawn_width = min(shape_width, slot_width)
             left = slot_left + (slot_width - drawn_width) // 2
-            self._fill_rect(
-                canvas,
-                left,
-                y,
-                left + drawn_width - 1,
-                y + shape_height - 1,
-                WORK_COLOR,
-            )
+            self._draw_work_shape(canvas, left, y, level, pixel_count, drawn_width)
 
     @staticmethod
     def _work_shape(
         level: RecurrenceLevel,
         exponent: float,
-        root_width: int,
-        model_input_size: int,
-    ) -> tuple[int, int]:
-        """Map n^k to a two-dimensional shape at the layer's visual scale.
+    ) -> tuple[int, int, int]:
+        """Return width, height, and exact rounded pixel count for one node.
 
-        n^0 is a point, n^1 is a line, and n^2 is a square. Fractional
-        exponents interpolate between those shapes; powers above two remain
-        squares because the matrix is a two-dimensional display.
+        Work fills vertical columns no taller than the rounded n at this level.
+        Thus n is a vertical line, n^2 is an n-by-n square, and fractional
+        exponents fill full columns followed by a partial final column.
         """
 
-        displayed_n = max(
-            1,
-            round(root_width * level.problem_size / model_input_size),
-        )
-        width = max(1, round(displayed_n ** min(1.0, exponent)))
-        height = max(
-            1,
-            round(displayed_n ** min(1.0, max(0.0, exponent - 1.0))),
-        )
-        return width, height
+        level_n = max(1, round(level.problem_size))
+        pixel_count = max(1, round(level_n**exponent))
+        width = math.ceil(pixel_count / level_n)
+        height = min(level_n, pixel_count)
+        return width, height, pixel_count
+
+    def _draw_work_shape(
+        self,
+        canvas: Canvas,
+        left: int,
+        top: int,
+        level: RecurrenceLevel,
+        pixel_count: int,
+        maximum_width: int | None = None,
+    ) -> None:
+        """Fill one node column-by-column, including a partial last column."""
+
+        column_height = max(1, round(level.problem_size))
+        remaining = pixel_count
+        column = 0
+        while remaining > 0 and (maximum_width is None or column < maximum_width):
+            pixels_in_column = min(column_height, remaining)
+            self._fill_rect(
+                canvas,
+                left + column,
+                top,
+                left + column,
+                top + pixels_in_column - 1,
+                WORK_COLOR,
+            )
+            remaining -= pixels_in_column
+            column += 1
 
     def _fill_rect(
         self,

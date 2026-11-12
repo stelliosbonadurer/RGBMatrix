@@ -120,11 +120,13 @@ runtime/deployment work.
 
 The DSA visualization models `T(n) = aT(n/b) + Theta(n^k)`. It calculates exact
 logical levels independently of matrix hardware. The static matrix view starts with a
-centered, one-pixel input line capped at a tunable 20–32 pixels. Each recursive layer
-then shows its node count and per-node work geometrically: constant work is a point,
-linear work is a line, and quadratic work is a square. Logical node counts that exceed
-the available columns are rendered as density. Recurrence parameters remain managed
-for eventual phone controls, but no parameter labels appear on the matrix.
+centered, one-pixel input line whose width is the literal configured `n` (up to 32).
+Each node at a recursive layer draws `round(n_level^k)` pixels in columns bounded by
+`round(n_level)` high: constant work is a point, linear work is a vertical line,
+quadratic work is a square, and fractional powers fill a partial final column. Logical
+node counts that exceed the available columns are rendered as density. Recurrence
+parameters remain managed for eventual phone controls, but no parameter labels appear
+on the matrix.
 
 This visualization uses a project-owned native adapter and does not depend on
 `samplebase`, NumPy, sounddevice, or the FFT package. It is launch/stop-only in the

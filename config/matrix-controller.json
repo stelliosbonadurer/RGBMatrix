@@ -39,7 +39,7 @@
       "example": "custom",
       "a": 2,
       "b": 2,
-      "n": 64,
+      "n": 32,
       "k": 1.0,
       "base_case": 1,
       "animate": false,

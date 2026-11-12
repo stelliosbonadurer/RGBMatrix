@@ -172,7 +172,7 @@ python3 launch_rgbmatrix.py \
   --program my_programs.dsa_visualizations.master_theorem \
   --a 4 \
   --b 2 \
-  --n 64 \
+  --n 32 \
   --k 1 \
   --cycles 1
 ```

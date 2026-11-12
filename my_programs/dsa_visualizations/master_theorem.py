@@ -32,11 +32,11 @@ class Example:
 
 
 EXAMPLES = {
-    "binary_search": Example(1, 2, 64, 0.0),
-    "merge_sort": Example(2, 2, 64, 1.0),
-    "root_heavy": Example(2, 2, 64, 2.0),
-    "strassen": Example(7, 2, 64, 2.0),
-    "leaf_heavy": Example(4, 2, 64, 1.0),
+    "binary_search": Example(1, 2, 32, 0.0),
+    "merge_sort": Example(2, 2, 32, 1.0),
+    "root_heavy": Example(2, 2, 32, 2.0),
+    "strassen": Example(7, 2, 32, 2.0),
+    "leaf_heavy": Example(4, 2, 32, 1.0),
 }
 
 

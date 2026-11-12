@@ -223,7 +223,7 @@ MASTER_THEOREM_PARAMETERS: tuple[ParameterSpec, ...] = (
     ),
     ParameterSpec("a", "--a", "int", 2, "Recursive calls made by each node.", 1, 8),
     ParameterSpec("b", "--b", "int", 2, "Input-size divisor for each child.", 2, 8),
-    ParameterSpec("n", "--n", "int", 64, "Illustrative root problem size.", 2, 256),
+    ParameterSpec("n", "--n", "int", 32, "Literal root input width in pixels.", 2, 32),
     ParameterSpec(
         "k",
         "--k",
