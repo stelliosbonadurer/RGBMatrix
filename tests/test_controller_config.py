@@ -35,6 +35,9 @@ class ControllerConfigTests(unittest.TestCase):
             config.visualization_defaults["graph_traversal"]["component_mode"],
             "off",
         )
+        self.assertTrue(
+            config.visualization_defaults["graph_traversal"]["ensure_path"]
+        )
         self.assertTrue(config.use_sudo)
         self.assertTrue(config.python_executable.endswith("/fftdemo/.venv/bin/python3"))
 

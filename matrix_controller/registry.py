@@ -31,6 +31,7 @@ def _validate_graph_traversal(parameters: Mapping[str, Any]) -> None:
                 connected=parameters["connected"],
                 allow_cycles=parameters["allow_cycles"],
                 directed=parameters["directed"],
+                ensure_path=parameters["ensure_path"],
                 directed_connectivity=parameters["directed_connectivity"],
                 component_mode=parameters["component_mode"],
                 step_mode=parameters["step_mode"],

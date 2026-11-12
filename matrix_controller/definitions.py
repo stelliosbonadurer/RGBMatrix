@@ -334,6 +334,14 @@ GRAPH_TRAVERSAL_PARAMETERS: tuple[ParameterSpec, ...] = (
         negative_cli_flag="--undirected",
     ),
     ParameterSpec(
+        "ensure_path",
+        "--ensure-path",
+        "bool",
+        True,
+        "Guarantee that the directed start node can reach the target node.",
+        negative_cli_flag="--no-ensure-path",
+    ),
+    ParameterSpec(
         "directed_connectivity",
         "--directed-connectivity",
         "enum",

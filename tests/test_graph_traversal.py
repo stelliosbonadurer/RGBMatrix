@@ -126,6 +126,31 @@ class GraphGenerationTests(unittest.TestCase):
                 if incoming[neighbor] == 0:
                     ready.append(neighbor)
         self.assertEqual(removed, len(graph.points))
+        self.assertIn(graph.target, reachable(graph, graph.start))
+
+    def test_ensure_path_works_without_a_connectivity_guarantee(self) -> None:
+        for allow_cycles in (False, True):
+            with self.subTest(allow_cycles=allow_cycles):
+                graph = generate_graph(
+                    GraphOptions(
+                        n=12,
+                        e=6,
+                        directed=True,
+                        directed_connectivity="none",
+                        ensure_path=True,
+                        allow_cycles=allow_cycles,
+                        seed=27,
+                    )
+                )
+                self.assertIn(graph.target, reachable(graph, graph.start))
+                self.assertEqual(edge_bounds(
+                    GraphOptions(
+                        n=12,
+                        directed=True,
+                        directed_connectivity="none",
+                        ensure_path=True,
+                    )
+                ).minimum, 1)
 
 
 class TraversalTests(unittest.TestCase):
@@ -404,6 +429,7 @@ class GraphTraversalCliTests(unittest.TestCase):
         self.assertEqual(parsed.n, 18)
         self.assertEqual(parsed.traverse, "dijkstra")
         self.assertTrue(parsed.allow_cycles)
+        self.assertTrue(parsed.ensure_path)
         self.assertEqual(parsed.directed_connectivity, "strong")
         self.assertEqual(parsed.component_mode, "strong")
 

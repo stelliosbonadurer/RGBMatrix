@@ -37,6 +37,7 @@ def build_options(args) -> GraphOptions:
         connected=args.connected,
         allow_cycles=args.allow_cycles,
         directed=args.directed,
+        ensure_path=args.ensure_path,
         directed_connectivity=args.directed_connectivity,
         component_mode=args.component_mode,
         step_mode=args.step_mode,

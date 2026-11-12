@@ -55,6 +55,7 @@
       "connected": true,
       "allow_cycles": false,
       "directed": false,
+      "ensure_path": true,
       "directed_connectivity": "weak",
       "component_mode": "off",
       "step_mode": "edge",

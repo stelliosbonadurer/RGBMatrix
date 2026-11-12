@@ -149,6 +149,11 @@ orients acyclic edges according to a seeded topological order. A connected undir
 acyclic graph requires exactly `n-1` edges. Strictly planar graphs have the general
 upper bound `3n-6`; strong directed connectivity requires cycles and at least `n`
 edges. The application reports invalid combinations before matrix initialization.
+Directed graphs default to `ensure_path=true`, which reserves and orients a viable
+start-to-target path even when no overall connectivity guarantee is selected. A
+strongly connected graph satisfies this automatically. The phone form exposes this
+setting only for directed graphs and includes its one-edge minimum in the displayed
+edge constraints.
 
 Frames can advance by processed node or examined edge. The untouched opening frame and
 completed frame are each held for `holding_period * frame_duration`, then the same

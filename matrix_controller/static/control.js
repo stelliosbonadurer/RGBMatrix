@@ -171,11 +171,12 @@ function configureGraphTraversalForm(item, form) {
   const connectedInput = control('connected');
   const cyclesInput = control('allow_cycles');
   const directedInput = control('directed');
+  const ensurePathInput = control('ensure_path');
   const directedConnectivity = control('directed_connectivity');
   const componentMode = control('component_mode');
   const launchButton = form.querySelector('.launch-button');
   if (!nInput || !eInput || !connectedInput || !cyclesInput || !directedInput ||
-      !directedConnectivity || !componentMode) return;
+      !ensurePathInput || !directedConnectivity || !componentMode) return;
 
   const edgeDescription = wrapper('e')?.querySelector('small');
 
@@ -191,6 +192,7 @@ function configureGraphTraversalForm(item, form) {
     const connected = connectedInput.checked;
 
     wrapper('connected').hidden = directed;
+    wrapper('ensure_path').hidden = !directed;
     wrapper('directed_connectivity').hidden = !directed;
 
     const strongGraphAvailable = directed && allowCycles && n >= 3;
@@ -214,7 +216,9 @@ function configureGraphTraversalForm(item, form) {
       : connected;
     const strong = directed && directedConnectivity.value === 'strong';
     const maximum = allowCycles || directed ? (n === 2 ? 1 : 3 * n - 6) : n - 1;
-    const minimum = strong ? n : guaranteed ? n - 1 : 0;
+    const connectivityMinimum = strong ? n : guaranteed ? n - 1 : 0;
+    const pathMinimum = directed && ensurePathInput.checked ? 1 : 0;
+    const minimum = Math.max(connectivityMinimum, pathMinimum);
     const automatic = allowCycles || directed
       ? Math.min(Math.max(Math.ceil(n * 1.5), minimum), maximum)
       : n - 1;

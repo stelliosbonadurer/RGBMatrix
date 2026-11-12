@@ -48,6 +48,7 @@ class GraphOptions:
     connected: bool = True
     allow_cycles: bool = False
     directed: bool = False
+    ensure_path: bool = True
     directed_connectivity: DirectedConnectivity = "weak"
     component_mode: ComponentMode = "off"
     step_mode: StepMode = "edge"
@@ -93,7 +94,9 @@ def edge_bounds(options: GraphOptions) -> EdgeBounds:
 
     if options.allow_cycles or options.directed:
         maximum = 1 if options.n == 2 else 3 * options.n - 6
-        minimum = options.n if strong else (options.n - 1 if guaranteed else 0)
+        connectivity_minimum = options.n if strong else (options.n - 1 if guaranteed else 0)
+        path_minimum = 1 if options.directed and options.ensure_path else 0
+        minimum = max(connectivity_minimum, path_minimum)
         automatic = min(max(math.ceil(options.n * 1.5), minimum), maximum)
     else:
         maximum = options.n - 1
@@ -165,8 +168,16 @@ def generate_graph(options: GraphOptions, width: int = 64, height: int = 64) -> 
     for layout_attempt in range(100):
         rng = random.Random(options.seed + layout_attempt * 104_729)
         points = _place_points(options.n, width, height, rng)
+        start, target = _farthest_pair(points)
         try:
-            pairs, strong_cycle = _select_planar_edges(points, edge_count, options, rng)
+            pairs, strong_cycle = _select_planar_edges(
+                points,
+                edge_count,
+                options,
+                rng,
+                start,
+                target,
+            )
         except ValueError:
             continue
 
@@ -177,10 +188,27 @@ def generate_graph(options: GraphOptions, width: int = 64, height: int = 64) -> 
         }
         topological_order = list(range(options.n))
         rng.shuffle(topological_order)
+        if (
+            options.directed
+            and options.ensure_path
+            and not options.allow_cycles
+            and topological_order.index(start) > topological_order.index(target)
+        ):
+            start_position = topological_order.index(start)
+            target_position = topological_order.index(target)
+            topological_order[start_position], topological_order[target_position] = (
+                topological_order[target_position],
+                topological_order[start_position],
+            )
         topological_rank = {node: rank for rank, node in enumerate(topological_order)}
+        viable_path_orientation = {
+            frozenset((start, target)): (start, target)
+        } if options.directed and options.ensure_path and not strong_cycle else {}
         for index, (left, right) in enumerate(pairs):
             if options.directed:
                 orientation = strong_orientations.get(frozenset((left, right)))
+                if orientation is None:
+                    orientation = viable_path_orientation.get(frozenset((left, right)))
                 if orientation is None:
                     if not options.allow_cycles:
                         orientation = (
@@ -190,12 +218,11 @@ def generate_graph(options: GraphOptions, width: int = 64, height: int = 64) -> 
                         )
                     else:
                         orientation = (left, right) if rng.random() < 0.5 else (right, left)
-                source, target = orientation
+                edge_source, edge_target = orientation
             else:
-                source, target = left, right
-            edges.append(Edge(index, source, target, rng.randint(1, 9)))
+                edge_source, edge_target = left, right
+            edges.append(Edge(index, edge_source, edge_target, rng.randint(1, 9)))
 
-        start, target = _farthest_pair(points)
         return Graph(tuple(points), tuple(edges), options.directed, start, target)
 
     raise ValueError(
@@ -234,6 +261,8 @@ def _select_planar_edges(
     edge_count: int,
     options: GraphOptions,
     rng: random.Random,
+    start: int,
+    target: int,
 ) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     candidates = [
         (left, right)
@@ -248,6 +277,13 @@ def _select_planar_edges(
     selected_keys: set[frozenset[int]] = set()
     strong_cycle: list[tuple[int, int]] = []
     is_strong = options.directed and options.directed_connectivity == "strong"
+
+    if options.directed and options.ensure_path and not is_strong:
+        path_edge = (min(start, target), max(start, target))
+        if path_edge not in candidates or not _can_add_edge(points, path_edge, selected):
+            raise ValueError("a direct start-to-target path does not fit this layout")
+        selected.append(path_edge)
+        selected_keys.add(frozenset(path_edge))
 
     if is_strong:
         center_x = sum(point.x for point in points) / len(points)
@@ -271,6 +307,8 @@ def _select_planar_edges(
             options.directed_connectivity == "weak"
         )
         disjoint = _DisjointSet(len(points))
+        for pair in selected:
+            disjoint.union(*pair)
         if guaranteed:
             for pair in candidates:
                 if disjoint.find(pair[0]) == disjoint.find(pair[1]):

@@ -219,6 +219,17 @@ python3 launch_rgbmatrix.py \
   --seed 42
 ```
 
+Directed graphs guarantee a viable start-to-target path by default. Disable that
+guarantee when intentionally demonstrating an unreachable target:
+
+```bash
+python3 launch_rgbmatrix.py \
+  --program my_programs.dsa_visualizations.graph_traversal \
+  --directed \
+  --directed-connectivity none \
+  --no-ensure-path
+```
+
 Show weakly connected components on a graph that is not required to be connected:
 
 ```bash
