@@ -168,10 +168,14 @@ On the completed frame, only the shortest path remains highlighted; every other 
 including non-path predecessor edges, returns to its white-to-yellow weight color.
 Edges leading to already-settled nodes are not examined again because they cannot
 improve a distance; this avoids a predecessor edge flashing as current a second time.
-`component_mode=weak` colors ordinary nodes by weak/undirected component, while
-`component_mode=strong` colors strongly connected components in directed graphs.
-Start, target, and current-node colors retain precedence over component colors. The
-editable component palette contains a distinct color for every possible node.
+`traverse=components` performs an endpoint-free scan of the entire vertex set,
+including isolated vertices. `component_type=weak` animates the stable outer-loop DFS
+partition, while `component_type=strong` animates both passes of Kosaraju's algorithm
+for directed graphs. Component colors appear as vertices are classified and remain
+stable through the completed frame. The start and target have no special size, color,
+or termination behavior in this mode; only the currently examined node temporarily
+overrides its component color. The editable component palette contains a distinct
+color for every possible node.
 Ordinary nodes are one pixel while the start and target default to 2x2; both sizes are
 configurable. Nodes retain their normal, start, or target color after processing; only
 the currently processed node changes color. Rendering colors are editable in
@@ -180,6 +184,23 @@ the currently processed node changes color. Rendering colors are editable in
 The phone launch form conditionally shows undirected or directed connectivity controls
 and recalculates the explicit `e` range plus the automatic value before launch. The
 registry repeats those dependent checks server-side before replacing an active process.
+
+`display_mode=bfs_dfs_split` generates one logical 32x64 graph and renders it into two
+clipped viewports: BFS on the left and DFS on the right. Both algorithms receive the
+same nodes, edges, directions, weights, start, and target. They advance once per shared
+tick; when one finishes first, its completed frame remains visible until the other
+finishes. The opening hold begins before either traversal and the final hold begins only
+after both have completed.
+
+`traverse=prim` and `traverse=kruskal` independently animate minimum spanning tree
+construction on connected, undirected graphs. Prim grows from the start node; Kruskal
+has no start or target semantics and rejects edges that would close a cycle. Both use
+deterministic `(weight, edge_index)` tie-breaking. Accepted and rejected edges have
+separate editable colors during construction. On completion, accepted tree edges stay
+highlighted while every non-tree edge returns to its white-to-yellow weight color.
+`display_mode=prim_kruskal_split` runs Prim on the left and Kruskal on the right using
+the same logical 32x64 weighted graph and holds an early finisher until both minimum
+trees are complete.
 
 ## Supervisor lifecycle
 

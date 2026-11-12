@@ -15,11 +15,16 @@ from my_programs.dsa_visualizations.graph_model import (
     connected_components,
     edge_bounds,
     generate_graph,
+    parallel_traversal_frames,
     resolve_edge_count,
     traversal_frames,
     validate_options,
 )
-from my_programs.dsa_visualizations.graph_rendering import GraphRenderer, load_render_config
+from my_programs.dsa_visualizations.graph_rendering import (
+    GraphRenderer,
+    Viewport,
+    load_render_config,
+)
 from my_programs.dsa_visualizations.native_matrix import NativeMatrixApp
 
 
@@ -81,7 +86,29 @@ class GraphConstraintTests(unittest.TestCase):
                 GraphOptions(n=12, directed=True, directed_connectivity="strong")
             )
         with self.assertRaisesRegex(ValueError, "requires directed=true"):
-            validate_options(GraphOptions(n=12, component_mode="strong"))
+            validate_options(
+                GraphOptions(n=12, traversal="components", component_type="strong")
+            )
+
+    def test_component_traversal_does_not_require_an_endpoint_path(self) -> None:
+        options = GraphOptions(
+            n=12,
+            traversal="components",
+            directed=True,
+            directed_connectivity="none",
+            ensure_path=True,
+        )
+        self.assertEqual(edge_bounds(options).minimum, 0)
+
+    def test_mst_requires_an_undirected_connected_graph(self) -> None:
+        with self.assertRaisesRegex(ValueError, "requires directed=false"):
+            validate_options(GraphOptions(traversal="prim", directed=True))
+        with self.assertRaisesRegex(ValueError, "requires connected=true"):
+            validate_options(GraphOptions(traversal="kruskal", connected=False))
+        with self.assertRaisesRegex(ValueError, "requires connected=true"):
+            validate_options(
+                GraphOptions(display_mode="prim_kruskal_split", connected=False)
+            )
 
 
 class GraphGenerationTests(unittest.TestCase):
@@ -94,6 +121,16 @@ class GraphGenerationTests(unittest.TestCase):
         graph = generate_graph(GraphOptions(n=12, seed=3))
         self.assertEqual(len(graph.edges), 11)
         self.assertEqual(reachable(graph, graph.start), set(range(12)))
+
+    def test_split_graph_uses_one_logical_32_by_64_layout(self) -> None:
+        graph = generate_graph(
+            GraphOptions(n=12, seed=17, display_mode="bfs_dfs_split"),
+            32,
+            64,
+        )
+        self.assertTrue(all(0 <= point.x < 32 for point in graph.points))
+        self.assertTrue(all(0 <= point.y < 64 for point in graph.points))
+        self.assertEqual(len(graph.points), 12)
 
     def test_strong_directed_graph_reaches_every_node_from_every_node(self) -> None:
         graph = generate_graph(
@@ -152,8 +189,38 @@ class GraphGenerationTests(unittest.TestCase):
                     )
                 ).minimum, 1)
 
+    def test_component_graph_generation_ignores_ensure_path(self) -> None:
+        common = {
+            "n": 12,
+            "e": 6,
+            "traversal": "components",
+            "directed": True,
+            "directed_connectivity": "none",
+            "allow_cycles": True,
+            "seed": 41,
+        }
+        with_path_setting = generate_graph(GraphOptions(**common, ensure_path=True))
+        without_path_setting = generate_graph(GraphOptions(**common, ensure_path=False))
+        self.assertEqual(with_path_setting, without_path_setting)
+
 
 class TraversalTests(unittest.TestCase):
+    @staticmethod
+    def mst_graph() -> Graph:
+        return Graph(
+            (Point(2, 2), Point(20, 2), Point(38, 2), Point(56, 2)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 1, 2, 1),
+                Edge(2, 0, 2, 2),
+                Edge(3, 2, 3, 3),
+                Edge(4, 0, 3, 9),
+            ),
+            False,
+            0,
+            3,
+        )
+
     def test_weak_and_strong_component_modes_are_distinct(self) -> None:
         graph = Graph(
             (Point(2, 2), Point(20, 2), Point(20, 20), Point(40, 20)),
@@ -169,6 +236,59 @@ class TraversalTests(unittest.TestCase):
         )
         self.assertEqual(connected_components(graph, "weak"), (0, 0, 0, 0))
         self.assertEqual(connected_components(graph, "strong"), (0, 0, 0, 1))
+
+    def test_weak_component_traversal_scans_every_node_without_a_target(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(38, 2), Point(56, 2)),
+            (Edge(0, 0, 1, 1), Edge(1, 2, 3, 1)),
+            False,
+            0,
+            1,
+        )
+        for step_mode in ("edge", "node"):
+            with self.subTest(step_mode=step_mode):
+                frames = list(traversal_frames(graph, "components", step_mode, "weak"))
+                self.assertEqual(frames[0].component_ids, (-1, -1, -1, -1))
+                self.assertEqual(frames[-1].component_ids, (0, 0, 1, 1))
+                self.assertEqual(frames[-1].visited_nodes, frozenset(range(4)))
+                self.assertTrue(frames[-1].complete)
+                self.assertFalse(frames[-1].target_reached)
+                self.assertTrue(any(frame.current_node == 2 for frame in frames))
+
+    def test_component_traversal_classifies_isolated_vertices(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(38, 2)),
+            (),
+            False,
+            0,
+            2,
+        )
+        frames = list(traversal_frames(graph, "components", "edge", "weak"))
+        self.assertEqual(frames[-1].component_ids, (0, 1, 2))
+        examined_roots = {
+            frame.current_node for frame in frames if frame.current_node is not None
+        }
+        self.assertEqual(examined_roots, {0, 1, 2})
+
+    def test_strong_component_traversal_uses_the_mathematical_partition(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(38, 2), Point(56, 2)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 1, 0, 1),
+                Edge(2, 1, 2, 1),
+                Edge(3, 2, 3, 1),
+                Edge(4, 3, 2, 1),
+            ),
+            True,
+            0,
+            3,
+        )
+        frames = list(traversal_frames(graph, "components", "edge", "strong"))
+        self.assertEqual(frames[-1].component_ids, connected_components(graph, "strong"))
+        self.assertEqual(frames[-1].component_ids, (0, 0, 1, 1))
+        self.assertEqual(frames[-1].visited_nodes, frozenset(range(4)))
+        self.assertFalse(frames[-1].target_reached)
 
     def test_all_methods_finish_and_edge_mode_exposes_current_edges(self) -> None:
         graph = generate_graph(GraphOptions(n=12, allow_cycles=True, seed=4))
@@ -187,6 +307,82 @@ class TraversalTests(unittest.TestCase):
         for method in ("bfs", "dfs", "dijkstra"):
             frames = list(traversal_frames(graph, method, "node"))
             self.assertTrue(all(frame.examined_edge is None for frame in frames))
+
+    def test_parallel_scheduler_holds_the_earlier_finisher(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(12, 2), Point(22, 2), Point(12, 16)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 0, 3, 1),
+                Edge(2, 1, 2, 1),
+            ),
+            False,
+            0,
+            2,
+        )
+        bfs = list(traversal_frames(graph, "bfs", "edge"))
+        dfs = list(traversal_frames(graph, "dfs", "edge"))
+        paired = list(parallel_traversal_frames(graph, "bfs", "dfs", "edge"))
+        self.assertEqual(len(paired), max(len(bfs), len(dfs)))
+        for index, (left, right) in enumerate(paired):
+            self.assertEqual(left, bfs[min(index, len(bfs) - 1)])
+            self.assertEqual(right, dfs[min(index, len(dfs) - 1)])
+        self.assertTrue(paired[-1][0].complete)
+        self.assertTrue(paired[-1][1].complete)
+
+    def test_prim_and_kruskal_build_minimum_trees_with_equal_weight(self) -> None:
+        graph = self.mst_graph()
+        prim = list(traversal_frames(graph, "prim", "edge"))
+        kruskal = list(traversal_frames(graph, "kruskal", "edge"))
+        self.assertEqual(prim[-1].accepted_edges, frozenset({0, 1, 3}))
+        self.assertEqual(kruskal[-1].accepted_edges, frozenset({0, 1, 3}))
+        self.assertEqual(prim[-1].total_weight, 5)
+        self.assertEqual(kruskal[-1].total_weight, 5)
+        self.assertEqual(kruskal[-1].rejected_edges, frozenset({2}))
+        self.assertEqual(prim[-1].tree_nodes, frozenset(range(4)))
+        self.assertEqual(kruskal[-1].tree_nodes, frozenset(range(4)))
+        self.assertTrue(prim[-1].complete)
+        self.assertTrue(kruskal[-1].complete)
+        self.assertFalse(prim[-1].target_reached)
+        self.assertFalse(kruskal[-1].target_reached)
+
+    def test_mst_ties_are_broken_by_edge_index(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(20, 20)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 0, 2, 1),
+                Edge(2, 1, 2, 1),
+            ),
+            False,
+            0,
+            2,
+        )
+        prim = list(traversal_frames(graph, "prim", "node"))[-1]
+        kruskal = list(traversal_frames(graph, "kruskal", "node"))[-1]
+        self.assertEqual(prim.accepted_edges, frozenset({0, 1}))
+        self.assertEqual(kruskal.accepted_edges, frozenset({0, 1}))
+
+    def test_prim_kruskal_split_holds_and_finishes_with_equal_weight(self) -> None:
+        paired = list(
+            parallel_traversal_frames(self.mst_graph(), "prim", "kruskal", "edge")
+        )
+        self.assertTrue(any(left.complete and not right.complete for left, right in paired))
+        self.assertTrue(paired[-1][0].complete)
+        self.assertTrue(paired[-1][1].complete)
+        self.assertEqual(paired[-1][0].total_weight, paired[-1][1].total_weight)
+
+    def test_seeded_graphs_give_prim_and_kruskal_the_same_minimum_weight(self) -> None:
+        for seed in range(12):
+            with self.subTest(seed=seed):
+                graph = generate_graph(
+                    GraphOptions(n=12, allow_cycles=True, seed=seed, traversal="prim")
+                )
+                prim = list(traversal_frames(graph, "prim", "edge"))[-1]
+                kruskal = list(traversal_frames(graph, "kruskal", "edge"))[-1]
+                self.assertEqual(len(prim.accepted_edges), 11)
+                self.assertEqual(len(kruskal.accepted_edges), 11)
+                self.assertEqual(prim.total_weight, kruskal.total_weight)
 
     def test_dfs_marks_the_entire_directed_cycle(self) -> None:
         graph = Graph(
@@ -239,6 +435,131 @@ class TraversalTests(unittest.TestCase):
 
 
 class GraphRenderingTests(unittest.TestCase):
+    def test_explicit_full_viewport_is_pixel_identical_to_default_rendering(self) -> None:
+        config = load_render_config()
+        graph = generate_graph(GraphOptions(n=8, allow_cycles=True, seed=22))
+        frame = list(traversal_frames(graph, "bfs", "edge"))[2]
+        default_canvas = RecordingCanvas()
+        explicit_canvas = RecordingCanvas()
+        renderer = GraphRenderer(config, "bfs")
+        renderer.render(default_canvas, graph, frame)
+        renderer.render(
+            explicit_canvas,
+            graph,
+            frame,
+            viewport=Viewport(0, 0, 64, 64),
+        )
+        self.assertEqual(explicit_canvas.pixels, default_canvas.pixels)
+
+    def test_completed_mst_keeps_only_tree_edges_highlighted(self) -> None:
+        config = load_render_config()
+        graph = TraversalTests.mst_graph()
+        complete = list(traversal_frames(graph, "kruskal", "edge"))[-1]
+        renderer = GraphRenderer(config, "kruskal")
+        empty = TraversalFrame(
+            None,
+            None,
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+        )
+        for edge in graph.edges:
+            color = renderer._edge_color(edge, complete)
+            if edge.index in complete.accepted_edges:
+                self.assertEqual(color, config.colors.mst_accepted_edge)
+            else:
+                self.assertEqual(color, renderer._edge_color(edge, empty))
+                self.assertNotEqual(color, config.colors.mst_rejected_edge)
+
+    def test_mst_endpoint_semantics_match_each_algorithm(self) -> None:
+        config = load_render_config()
+        graph = Graph(
+            (Point(5, 5), Point(20, 5), Point(35, 5)),
+            (),
+            False,
+            0,
+            2,
+        )
+        empty = TraversalFrame(
+            None,
+            None,
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+        )
+        prim_canvas = RecordingCanvas()
+        GraphRenderer(config, "prim").render(prim_canvas, graph, empty)
+        self.assertEqual(prim_canvas.pixels[(5, 5)], config.colors.start_node)
+        self.assertEqual(prim_canvas.pixels[(35, 5)], config.colors.node)
+        self.assertIn((6, 6), prim_canvas.pixels)
+        self.assertNotIn((36, 6), prim_canvas.pixels)
+
+        kruskal_canvas = RecordingCanvas()
+        GraphRenderer(config, "kruskal").render(kruskal_canvas, graph, empty)
+        self.assertEqual(kruskal_canvas.pixels[(5, 5)], config.colors.node)
+        self.assertEqual(kruskal_canvas.pixels[(35, 5)], config.colors.node)
+        self.assertNotIn((6, 6), kruskal_canvas.pixels)
+        self.assertNotIn((36, 6), kruskal_canvas.pixels)
+
+    def test_mst_accepted_edges_draw_above_rejected_edges(self) -> None:
+        config = load_render_config()
+        graph = Graph(
+            (Point(5, 5), Point(20, 5), Point(20, 6)),
+            (Edge(0, 0, 1, 1), Edge(1, 0, 2, 2)),
+            False,
+            0,
+            2,
+        )
+        frame = TraversalFrame(
+            None,
+            None,
+            frozenset({0, 1}),
+            frozenset(),
+            frozenset({0, 1}),
+            frozenset(),
+            frozenset(),
+            accepted_edges=frozenset({0}),
+            rejected_edges=frozenset({1}),
+            tree_nodes=frozenset({0, 1}),
+        )
+        canvas = RecordingCanvas()
+        renderer = GraphRenderer(config, "kruskal")
+        renderer.render(canvas, graph, frame)
+        self.assertEqual(renderer._edge_color(graph.edges[1], frame), config.colors.mst_rejected_edge)
+        self.assertEqual(canvas.pixels[(10, 5)], config.colors.mst_accepted_edge)
+
+    def test_split_viewports_are_exact_translations_and_do_not_cross_the_seam(self) -> None:
+        config = load_render_config()
+        graph = Graph(
+            (Point(3, 4), Point(20, 4), Point(31, 20)),
+            (Edge(0, 0, 1, 1), Edge(1, 1, 2, 1)),
+            False,
+            0,
+            2,
+        )
+        frame = TraversalFrame(
+            1,
+            1,
+            frozenset({0, 1}),
+            frozenset({2}),
+            frozenset({0, 1}),
+            frozenset(),
+            frozenset(),
+        )
+        left = RecordingCanvas()
+        right = RecordingCanvas()
+        renderer = GraphRenderer(config, "bfs")
+        renderer.render(left, graph, frame, viewport=Viewport(0, 0, 32, 64))
+        renderer.render(right, graph, frame, viewport=Viewport(32, 0, 32, 64))
+        translated_left = {(x + 32, y): color for (x, y), color in left.pixels.items()}
+        self.assertEqual(right.pixels, translated_left)
+        self.assertTrue(all(x < 32 for x, _ in left.pixels))
+        self.assertTrue(all(x >= 32 for x, _ in right.pixels))
+
     def test_component_colors_apply_only_to_ordinary_inactive_nodes(self) -> None:
         config = load_render_config()
         self.assertGreaterEqual(len(config.component_colors), 32)
@@ -259,11 +580,25 @@ class GraphRenderingTests(unittest.TestCase):
             frozenset(),
         )
         canvas = RecordingCanvas()
-        GraphRenderer(config, "bfs", (0, 0, 1, 1)).render(canvas, graph, frame)
-        self.assertEqual(canvas.pixels[(5, 5)], config.colors.start_node)
+        frame = TraversalFrame(
+            frame.current_node,
+            frame.examined_edge,
+            frame.visited_nodes,
+            frame.frontier_nodes,
+            frame.traversed_edges,
+            frame.cycle_edges,
+            frame.final_path_edges,
+            component_ids=(0, 0, 1, 1),
+        )
+        GraphRenderer(config, "components").render(canvas, graph, frame)
+        self.assertEqual(canvas.pixels[(5, 5)], config.component_colors[0])
         self.assertEqual(canvas.pixels[(20, 5)], config.component_colors[0])
-        self.assertEqual(canvas.pixels[(35, 5)], config.colors.target_node)
+        self.assertEqual(canvas.pixels[(35, 5)], config.component_colors[1])
         self.assertEqual(canvas.pixels[(50, 5)], config.component_colors[1])
+        self.assertNotIn(config.colors.start_node, canvas.pixels.values())
+        self.assertNotIn(config.colors.target_node, canvas.pixels.values())
+        self.assertNotIn((6, 6), canvas.pixels)
+        self.assertNotIn((36, 6), canvas.pixels)
 
     def test_config_and_current_state_colors_are_used(self) -> None:
         config = load_render_config()
@@ -451,11 +786,12 @@ class GraphTraversalCliTests(unittest.TestCase):
         values = definition.validate_parameters(
             {
                 "n": 18,
-                "traverse": "dijkstra",
+                "display_mode": "bfs_dfs_split",
+                "traverse": "components",
                 "allow_cycles": True,
                 "directed": True,
                 "directed_connectivity": "strong",
-                "component_mode": "strong",
+                "component_type": "strong",
             }
         )
         argv = definition.build_argv("/fixed/python", values)
@@ -464,11 +800,26 @@ class GraphTraversalCliTests(unittest.TestCase):
             parameter.add_to_argparse(app.parser)
         parsed = app.parser.parse_args(argv[2:])
         self.assertEqual(parsed.n, 18)
-        self.assertEqual(parsed.traverse, "dijkstra")
+        self.assertEqual(parsed.display_mode, "bfs_dfs_split")
+        self.assertEqual(parsed.traverse, "components")
         self.assertTrue(parsed.allow_cycles)
         self.assertTrue(parsed.ensure_path)
         self.assertEqual(parsed.directed_connectivity, "strong")
-        self.assertEqual(parsed.component_mode, "strong")
+        self.assertEqual(parsed.component_type, "strong")
+
+    def test_mst_split_managed_argv_is_accepted(self) -> None:
+        definition = build_default_registry().get("graph_traversal")
+        values = definition.validate_parameters(
+            {"display_mode": "prim_kruskal_split", "allow_cycles": True}
+        )
+        argv = definition.build_argv("/fixed/python", values)
+        app = NativeMatrixApp()
+        for parameter in application_parameters("graph_traversal"):
+            parameter.add_to_argparse(app.parser)
+        parsed = app.parser.parse_args(argv[2:])
+        self.assertEqual(parsed.display_mode, "prim_kruskal_split")
+        self.assertTrue(parsed.connected)
+        self.assertFalse(parsed.directed)
 
 
 if __name__ == "__main__":

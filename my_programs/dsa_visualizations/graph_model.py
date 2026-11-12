@@ -7,13 +7,14 @@ import math
 import random
 from collections import deque
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Generator, Iterator, Literal
 
 
-TraversalMethod = Literal["bfs", "dfs", "dijkstra"]
+TraversalMethod = Literal["bfs", "dfs", "dijkstra", "components", "prim", "kruskal"]
 StepMode = Literal["node", "edge"]
 DirectedConnectivity = Literal["strong", "weak", "none"]
-ComponentMode = Literal["off", "weak", "strong"]
+ComponentType = Literal["weak", "strong"]
+DisplayMode = Literal["single", "bfs_dfs_split", "prim_kruskal_split"]
 
 
 @dataclass(frozen=True)
@@ -50,8 +51,9 @@ class GraphOptions:
     directed: bool = False
     ensure_path: bool = True
     directed_connectivity: DirectedConnectivity = "weak"
-    component_mode: ComponentMode = "off"
+    component_type: ComponentType = "weak"
     step_mode: StepMode = "edge"
+    display_mode: DisplayMode = "single"
 
 
 @dataclass(frozen=True)
@@ -73,6 +75,11 @@ class TraversalFrame:
     complete: bool = False
     target_reached: bool = False
     predecessor_edges: frozenset[int] = frozenset()
+    component_ids: tuple[int, ...] = ()
+    accepted_edges: frozenset[int] = frozenset()
+    rejected_edges: frozenset[int] = frozenset()
+    tree_nodes: frozenset[int] = frozenset()
+    total_weight: int = 0
 
 
 def edge_bounds(options: GraphOptions) -> EdgeBounds:
@@ -95,7 +102,13 @@ def edge_bounds(options: GraphOptions) -> EdgeBounds:
     if options.allow_cycles or options.directed:
         maximum = 1 if options.n == 2 else 3 * options.n - 6
         connectivity_minimum = options.n if strong else (options.n - 1 if guaranteed else 0)
-        path_minimum = 1 if options.directed and options.ensure_path else 0
+        path_minimum = (
+            1
+            if options.directed
+            and options.ensure_path
+            and not _is_component_traversal(options)
+            else 0
+        )
         minimum = max(connectivity_minimum, path_minimum)
         automatic = min(max(math.ceil(options.n * 1.5), minimum), maximum)
     else:
@@ -124,19 +137,38 @@ def resolve_edge_count(options: GraphOptions) -> int:
 
 
 def validate_options(options: GraphOptions) -> int:
-    if options.traversal not in {"bfs", "dfs", "dijkstra"}:
-        raise ValueError("traversal must be bfs, dfs, or dijkstra")
+    if options.traversal not in {"bfs", "dfs", "dijkstra", "components", "prim", "kruskal"}:
+        raise ValueError("traversal must be bfs, dfs, dijkstra, components, prim, or kruskal")
     if options.step_mode not in {"node", "edge"}:
         raise ValueError("step_mode must be node or edge")
+    if options.display_mode not in {"single", "bfs_dfs_split", "prim_kruskal_split"}:
+        raise ValueError(
+            "display_mode must be single, bfs_dfs_split, or prim_kruskal_split"
+        )
     if options.directed_connectivity not in {"strong", "weak", "none"}:
         raise ValueError("directed_connectivity must be strong, weak, or none")
-    if options.component_mode not in {"off", "weak", "strong"}:
-        raise ValueError("component_mode must be off, weak, or strong")
-    if options.component_mode == "strong" and not options.directed:
-        raise ValueError("strong component detection requires directed=true")
+    if options.component_type not in {"weak", "strong"}:
+        raise ValueError("component_type must be weak or strong")
+    if _is_component_traversal(options) and options.component_type == "strong" and not options.directed:
+        raise ValueError("strong component traversal requires directed=true")
+    if _is_mst_traversal(options):
+        if options.directed:
+            raise ValueError("minimum spanning tree traversal requires directed=false")
+        if not options.connected:
+            raise ValueError("minimum spanning tree traversal requires connected=true")
     if options.e < 0:
         raise ValueError("e must be zero (automatic) or a positive integer")
     return resolve_edge_count(options)
+
+
+def _is_component_traversal(options: GraphOptions) -> bool:
+    return options.display_mode == "single" and options.traversal == "components"
+
+
+def _is_mst_traversal(options: GraphOptions) -> bool:
+    return options.display_mode == "prim_kruskal_split" or (
+        options.display_mode == "single" and options.traversal in {"prim", "kruskal"}
+    )
 
 
 class _DisjointSet:
@@ -191,6 +223,7 @@ def generate_graph(options: GraphOptions, width: int = 64, height: int = 64) -> 
         if (
             options.directed
             and options.ensure_path
+            and not _is_component_traversal(options)
             and not options.allow_cycles
             and topological_order.index(start) > topological_order.index(target)
         ):
@@ -203,7 +236,12 @@ def generate_graph(options: GraphOptions, width: int = 64, height: int = 64) -> 
         topological_rank = {node: rank for rank, node in enumerate(topological_order)}
         viable_path_orientation = {
             frozenset((start, target)): (start, target)
-        } if options.directed and options.ensure_path and not strong_cycle else {}
+        } if (
+            options.directed
+            and options.ensure_path
+            and not _is_component_traversal(options)
+            and not strong_cycle
+        ) else {}
         for index, (left, right) in enumerate(pairs):
             if options.directed:
                 orientation = strong_orientations.get(frozenset((left, right)))
@@ -278,7 +316,12 @@ def _select_planar_edges(
     strong_cycle: list[tuple[int, int]] = []
     is_strong = options.directed and options.directed_connectivity == "strong"
 
-    if options.directed and options.ensure_path and not is_strong:
+    if (
+        options.directed
+        and options.ensure_path
+        and not _is_component_traversal(options)
+        and not is_strong
+    ):
         path_edge = (min(start, target), max(start, target))
         if path_edge not in candidates or not _can_add_edge(points, path_edge, selected):
             raise ValueError("a direct start-to-target path does not fit this layout")
@@ -393,15 +436,47 @@ def _farthest_pair(points: list[Point]) -> tuple[int, int]:
     )
 
 
-def traversal_frames(graph: Graph, method: TraversalMethod, step_mode: StepMode) -> Iterator[TraversalFrame]:
+def traversal_frames(
+    graph: Graph,
+    method: TraversalMethod,
+    step_mode: StepMode,
+    component_type: ComponentType = "weak",
+) -> Iterator[TraversalFrame]:
     if method == "bfs":
         yield from _bfs_frames(graph, step_mode)
     elif method == "dfs":
         yield from _dfs_frames(graph, step_mode)
     elif method == "dijkstra":
         yield from _dijkstra_frames(graph, step_mode)
+    elif method == "components":
+        yield from _component_frames(graph, step_mode, component_type)
+    elif method == "prim":
+        yield from _prim_frames(graph)
+    elif method == "kruskal":
+        yield from _kruskal_frames(graph)
     else:
         raise ValueError(f"unsupported traversal method: {method}")
+
+
+def parallel_traversal_frames(
+    graph: Graph,
+    left_method: TraversalMethod,
+    right_method: TraversalMethod,
+    step_mode: StepMode,
+) -> Iterator[tuple[TraversalFrame, TraversalFrame]]:
+    """Advance two traversals once per tick and hold either completed side."""
+
+    left_frames = iter(traversal_frames(graph, left_method, step_mode))
+    right_frames = iter(traversal_frames(graph, right_method, step_mode))
+    left = next(left_frames)
+    right = next(right_frames)
+    yield left, right
+    while not (left.complete and right.complete):
+        if not left.complete:
+            left = next(left_frames)
+        if not right.complete:
+            right = next(right_frames)
+        yield left, right
 
 
 def _adjacency(graph: Graph) -> list[list[tuple[int, Edge]]]:
@@ -415,7 +490,7 @@ def _adjacency(graph: Graph) -> list[list[tuple[int, Edge]]]:
     return adjacent
 
 
-def connected_components(graph: Graph, mode: ComponentMode) -> tuple[int, ...]:
+def connected_components(graph: Graph, mode: ComponentType) -> tuple[int, ...]:
     """Return a stable component index for every node.
 
     Weak components ignore edge direction. Strong components use Kosaraju's
@@ -423,10 +498,8 @@ def connected_components(graph: Graph, mode: ComponentMode) -> tuple[int, ...]:
     normalized by their lowest node index so seeded graphs keep stable colors.
     """
 
-    if mode == "off":
-        return tuple(-1 for _ in graph.points)
     if mode not in {"weak", "strong"}:
-        raise ValueError("component mode must be off, weak, or strong")
+        raise ValueError("component type must be weak or strong")
     if mode == "strong" and not graph.directed:
         raise ValueError("strong component detection requires a directed graph")
 
@@ -513,6 +586,11 @@ def _frame(
     predecessors: set[int] | None = None,
     complete: bool = False,
     target_reached: bool = False,
+    component_ids: list[int] | tuple[int, ...] | None = None,
+    accepted: set[int] | None = None,
+    rejected: set[int] | None = None,
+    tree_nodes: set[int] | None = None,
+    total_weight: int = 0,
 ) -> TraversalFrame:
     return TraversalFrame(
         current,
@@ -525,6 +603,11 @@ def _frame(
         complete=complete,
         target_reached=target_reached,
         predecessor_edges=frozenset(predecessors or ()),
+        component_ids=tuple(component_ids or ()),
+        accepted_edges=frozenset(accepted or ()),
+        rejected_edges=frozenset(rejected or ()),
+        tree_nodes=frozenset(tree_nodes or ()),
+        total_weight=total_weight,
     )
 
 
@@ -577,49 +660,398 @@ def _bfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
 def _dfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
     adjacent = _adjacency(graph)
     visited: set[int] = set()
-    active: list[int] = []
     traversed: set[int] = set()
     cycles: set[int] = set()
     parent_edge: dict[int, int] = {}
-    parent_node: dict[int, int] = {}
-    reached = False
 
     yield _frame(None, None, visited, {graph.start}, traversed, cycles)
+    reached = yield from _dfs_walk_frames(
+        graph,
+        step_mode,
+        adjacent,
+        (graph.start,),
+        graph.target,
+        bidirectional=not graph.directed,
+        visited=visited,
+        traversed=traversed,
+        cycles=cycles,
+        parent_edge=parent_edge,
+    )
+    yield _frame(None, None, visited, set(), traversed, cycles, complete=True, target_reached=reached)
 
-    def visit(current: int) -> Iterator[TraversalFrame]:
+
+def _dfs_walk_frames(
+    graph: Graph,
+    step_mode: StepMode,
+    adjacent: list[list[tuple[int, Edge]]],
+    roots: Iterator[int] | tuple[int, ...] | range,
+    stop_target: int | None,
+    *,
+    bidirectional: bool,
+    visited: set[int],
+    traversed: set[int],
+    cycles: set[int],
+    parent_edge: dict[int, int],
+    component_ids: list[int] | None = None,
+    show_component_roots: bool = False,
+) -> Generator[TraversalFrame, None, bool]:
+    """Walk one or more DFS roots, optionally stopping at a search target.
+
+    Ordinary DFS and weak-component traversal share this engine. Component mode
+    passes every vertex as a potential root and assigns a stable component number
+    whenever an unvisited root begins a new walk.
+    """
+
+    active: list[int] = []
+    reached = False
+    next_component = 0
+
+    def visit(current: int, component: int) -> Generator[TraversalFrame, None, None]:
         nonlocal reached
         visited.add(current)
         active.append(current)
-        if step_mode == "node":
-            yield _frame(current, None, visited, set(active), traversed, cycles)
-        if current == graph.target:
+        if component_ids is not None:
+            component_ids[current] = component
+        if step_mode == "node" or (show_component_roots and len(active) == 1):
+            yield _frame(
+                current,
+                None,
+                visited,
+                set(active),
+                traversed,
+                cycles,
+                component_ids=component_ids,
+            )
+        if stop_target is not None and current == stop_target:
             reached = True
             active.pop()
             return
         for neighbor, edge in adjacent[current]:
             if reached:
                 break
-            if not graph.directed and parent_edge.get(current) == edge.index:
+            if bidirectional and parent_edge.get(current) == edge.index:
                 continue
             traversed.add(edge.index)
             if neighbor not in visited:
                 parent_edge[neighbor] = edge.index
-                parent_node[neighbor] = current
                 if step_mode == "edge":
-                    yield _frame(current, edge.index, visited, {neighbor}, traversed, cycles)
-                yield from visit(neighbor)
+                    yield _frame(
+                        current,
+                        edge.index,
+                        visited,
+                        {neighbor},
+                        traversed,
+                        cycles,
+                        component_ids=component_ids,
+                    )
+                yield from visit(neighbor, component)
             elif neighbor in active:
                 cycle_start = active.index(neighbor)
                 cycles.add(edge.index)
                 for cycle_node in active[cycle_start + 1 :]:
                     cycles.add(parent_edge[cycle_node])
                 if step_mode == "edge":
-                    yield _frame(current, edge.index, visited, set(active), traversed, cycles)
+                    yield _frame(
+                        current,
+                        edge.index,
+                        visited,
+                        set(active),
+                        traversed,
+                        cycles,
+                        component_ids=component_ids,
+                    )
         if active and active[-1] == current:
             active.pop()
 
-    yield from visit(graph.start)
-    yield _frame(None, None, visited, set(), traversed, cycles, complete=True, target_reached=reached)
+    for root in roots:
+        if root in visited or reached:
+            continue
+        yield from visit(root, next_component)
+        next_component += 1
+    return reached
+
+
+def _weak_component_adjacency(graph: Graph) -> list[list[tuple[int, Edge]]]:
+    adjacent: list[list[tuple[int, Edge]]] = [[] for _ in graph.points]
+    for edge in graph.edges:
+        adjacent[edge.source].append((edge.target, edge))
+        adjacent[edge.target].append((edge.source, edge))
+    for neighbors in adjacent:
+        neighbors.sort(key=lambda item: item[1].index)
+    return adjacent
+
+
+def _component_frames(
+    graph: Graph,
+    step_mode: StepMode,
+    component_type: ComponentType,
+) -> Iterator[TraversalFrame]:
+    if component_type == "strong":
+        if not graph.directed:
+            raise ValueError("strong component traversal requires a directed graph")
+        yield from _strong_component_frames(graph, step_mode)
+        return
+
+    adjacent = _weak_component_adjacency(graph)
+    visited: set[int] = set()
+    traversed: set[int] = set()
+    cycles: set[int] = set()
+    parent_edge: dict[int, int] = {}
+    component_ids = [-1] * len(graph.points)
+    yield _frame(None, None, visited, set(), traversed, cycles, component_ids=component_ids)
+    yield from _dfs_walk_frames(
+        graph,
+        step_mode,
+        adjacent,
+        range(len(graph.points)),
+        None,
+        bidirectional=True,
+        visited=visited,
+        traversed=traversed,
+        cycles=cycles,
+        parent_edge=parent_edge,
+        component_ids=component_ids,
+        show_component_roots=True,
+    )
+    yield _frame(
+        None,
+        None,
+        visited,
+        set(),
+        traversed,
+        cycles,
+        complete=True,
+        component_ids=component_ids,
+    )
+
+
+def _strong_component_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
+    """Animate both passes of Kosaraju's strongly connected component scan."""
+
+    outgoing = _adjacency(graph)
+    reverse: list[list[tuple[int, Edge]]] = [[] for _ in graph.points]
+    for edge in graph.edges:
+        reverse[edge.target].append((edge.source, edge))
+    for neighbors in reverse:
+        neighbors.sort(key=lambda item: item[1].index)
+
+    component_ids = [-1] * len(graph.points)
+    traversed: set[int] = set()
+    first_visited: set[int] = set()
+    finish_order: list[int] = []
+    yield _frame(None, None, first_visited, set(), traversed, set(), component_ids=component_ids)
+
+    def finish(current: int) -> Iterator[TraversalFrame]:
+        first_visited.add(current)
+        if step_mode == "node":
+            yield _frame(
+                current,
+                None,
+                first_visited,
+                set(),
+                traversed,
+                set(),
+                component_ids=component_ids,
+            )
+        for neighbor, edge in outgoing[current]:
+            traversed.add(edge.index)
+            if step_mode == "edge":
+                yield _frame(
+                    current,
+                    edge.index,
+                    first_visited,
+                    {neighbor},
+                    traversed,
+                    set(),
+                    component_ids=component_ids,
+                )
+            if neighbor not in first_visited:
+                yield from finish(neighbor)
+        finish_order.append(current)
+
+    for root in range(len(graph.points)):
+        if root not in first_visited:
+            yield from finish(root)
+
+    final_ids = connected_components(graph, "strong")
+    assigned: set[int] = set()
+
+    def assign(current: int) -> Iterator[TraversalFrame]:
+        assigned.add(current)
+        component_ids[current] = final_ids[current]
+        if step_mode == "node":
+            yield _frame(
+                current,
+                None,
+                assigned,
+                set(),
+                traversed,
+                set(),
+                component_ids=component_ids,
+            )
+        for neighbor, edge in reverse[current]:
+            traversed.add(edge.index)
+            if step_mode == "edge":
+                yield _frame(
+                    current,
+                    edge.index,
+                    assigned,
+                    {neighbor},
+                    traversed,
+                    set(),
+                    component_ids=component_ids,
+                )
+            if neighbor not in assigned:
+                yield from assign(neighbor)
+
+    for root in reversed(finish_order):
+        if root not in assigned:
+            if step_mode == "edge":
+                component_ids[root] = final_ids[root]
+                assigned.add(root)
+                yield _frame(
+                    root,
+                    None,
+                    assigned,
+                    {root},
+                    traversed,
+                    set(),
+                    component_ids=component_ids,
+                )
+                for neighbor, edge in reverse[root]:
+                    traversed.add(edge.index)
+                    yield _frame(
+                        root,
+                        edge.index,
+                        assigned,
+                        {neighbor},
+                        traversed,
+                        set(),
+                        component_ids=component_ids,
+                    )
+                    if neighbor not in assigned:
+                        yield from assign(neighbor)
+            else:
+                yield from assign(root)
+
+    yield _frame(
+        None,
+        None,
+        assigned,
+        set(),
+        traversed,
+        set(),
+        complete=True,
+        component_ids=component_ids,
+    )
+
+
+def _prim_frames(graph: Graph) -> Iterator[TraversalFrame]:
+    if graph.directed:
+        raise ValueError("Prim requires an undirected graph")
+    tree_nodes = {graph.start}
+    accepted: set[int] = set()
+    traversed: set[int] = set()
+    total_weight = 0
+    yield _frame(
+        None,
+        None,
+        tree_nodes,
+        set(),
+        traversed,
+        set(),
+        tree_nodes=tree_nodes,
+    )
+
+    while len(tree_nodes) < len(graph.points):
+        eligible = [
+            edge
+            for edge in graph.edges
+            if (edge.source in tree_nodes) != (edge.target in tree_nodes)
+        ]
+        if not eligible:
+            raise ValueError("Prim requires a connected graph")
+        edge = min(eligible, key=lambda candidate: (candidate.weight, candidate.index))
+        new_node = edge.target if edge.source in tree_nodes else edge.source
+        traversed.add(edge.index)
+        accepted.add(edge.index)
+        tree_nodes.add(new_node)
+        total_weight += edge.weight
+        yield _frame(
+            new_node,
+            edge.index,
+            tree_nodes,
+            set(),
+            traversed,
+            set(),
+            accepted=accepted,
+            tree_nodes=tree_nodes,
+            total_weight=total_weight,
+        )
+
+    yield _frame(
+        None,
+        None,
+        tree_nodes,
+        set(),
+        traversed,
+        set(),
+        accepted=accepted,
+        tree_nodes=tree_nodes,
+        total_weight=total_weight,
+        complete=True,
+    )
+
+
+def _kruskal_frames(graph: Graph) -> Iterator[TraversalFrame]:
+    if graph.directed:
+        raise ValueError("Kruskal requires an undirected graph")
+    disjoint = _DisjointSet(len(graph.points))
+    accepted: set[int] = set()
+    rejected: set[int] = set()
+    traversed: set[int] = set()
+    tree_nodes: set[int] = set()
+    total_weight = 0
+    yield _frame(None, None, set(), set(), traversed, set())
+
+    for edge in sorted(graph.edges, key=lambda candidate: (candidate.weight, candidate.index)):
+        traversed.add(edge.index)
+        if disjoint.union(edge.source, edge.target):
+            accepted.add(edge.index)
+            tree_nodes.update((edge.source, edge.target))
+            total_weight += edge.weight
+        else:
+            rejected.add(edge.index)
+        yield _frame(
+            None,
+            edge.index,
+            tree_nodes,
+            set(),
+            traversed,
+            set(),
+            accepted=accepted,
+            rejected=rejected,
+            tree_nodes=tree_nodes,
+            total_weight=total_weight,
+        )
+        if len(accepted) == len(graph.points) - 1:
+            break
+
+    if len(accepted) != len(graph.points) - 1:
+        raise ValueError("Kruskal requires a connected graph")
+    yield _frame(
+        None,
+        None,
+        tree_nodes,
+        set(),
+        traversed,
+        set(),
+        accepted=accepted,
+        rejected=rejected,
+        tree_nodes=tree_nodes,
+        total_weight=total_weight,
+        complete=True,
+    )
 
 
 def _dijkstra_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:

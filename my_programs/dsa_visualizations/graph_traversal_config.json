@@ -38,7 +38,7 @@
   ],
   "colors": {
     "background": [0, 0, 0],
-    "node": [160, 160, 255],
+    "node": [255, 0, 255],
     "start_node": [0, 90, 255],
     "target_node": [255, 0, 0],
     "current_node": [255, 100, 0],
@@ -48,8 +48,10 @@
     "current_edge": [255, 80, 180],
     "direction_marker": [255, 100, 0],
     "cycle_edge": [180, 40, 255],
-    "shortest_path": [0, 0, 255],
+    "shortest_path": [255, 0, 0],
     "dijkstra_low_weight": [235, 235, 235],
-    "dijkstra_high_weight": [255, 210, 0]
+    "dijkstra_high_weight": [255, 210, 0],
+    "mst_accepted_edge": [0, 255, 100],
+    "mst_rejected_edge": [255, 60, 60]
   }
 }

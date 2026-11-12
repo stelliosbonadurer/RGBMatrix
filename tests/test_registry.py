@@ -123,7 +123,30 @@ class RegistryTests(unittest.TestCase):
                 }
             )
         with self.assertRaisesRegex(ValidationError, "requires directed=true"):
-            graph.validate_parameters({"component_mode": "strong", "directed": False})
+            graph.validate_parameters(
+                {
+                    "traverse": "components",
+                    "component_type": "strong",
+                    "directed": False,
+                }
+            )
+        values = graph.validate_parameters(
+            {
+                "display_mode": "bfs_dfs_split",
+                "traverse": "components",
+                "component_type": "strong",
+                "directed": False,
+            }
+        )
+        self.assertEqual(values["display_mode"], "bfs_dfs_split")
+        with self.assertRaisesRegex(ValidationError, "requires directed=false"):
+            graph.validate_parameters({"traverse": "prim", "directed": True})
+        with self.assertRaisesRegex(ValidationError, "requires connected=true"):
+            graph.validate_parameters({"traverse": "kruskal", "connected": False})
+        split_values = graph.validate_parameters(
+            {"display_mode": "prim_kruskal_split", "allow_cycles": True}
+        )
+        self.assertEqual(split_values["display_mode"], "prim_kruskal_split")
 
 
 if __name__ == "__main__":

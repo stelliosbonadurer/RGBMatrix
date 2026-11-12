@@ -170,15 +170,19 @@ function configureGraphTraversalForm(item, form) {
   const eInput = control('e');
   const connectedInput = control('connected');
   const cyclesInput = control('allow_cycles');
+  const displayMode = control('display_mode');
+  const traversalInput = control('traverse');
   const directedInput = control('directed');
   const ensurePathInput = control('ensure_path');
   const directedConnectivity = control('directed_connectivity');
-  const componentMode = control('component_mode');
+  const componentType = control('component_type');
   const launchButton = form.querySelector('.launch-button');
-  if (!nInput || !eInput || !connectedInput || !cyclesInput || !directedInput ||
-      !ensurePathInput || !directedConnectivity || !componentMode) return;
+  if (!nInput || !eInput || !connectedInput || !cyclesInput || !displayMode ||
+      !traversalInput || !directedInput || !ensurePathInput || !directedConnectivity ||
+      !componentType) return;
 
   const edgeDescription = wrapper('e')?.querySelector('small');
+  let previousMst = false;
 
   const setOptionAvailable = (select, value, available) => {
     const option = Array.from(select.options).find(candidate => candidate.value === value);
@@ -187,13 +191,28 @@ function configureGraphTraversalForm(item, form) {
 
   const update = () => {
     const n = Number.parseInt(nInput.value, 10);
+    const split = displayMode.value !== 'single';
+    const mst = displayMode.value === 'prim_kruskal_split' || (
+      !split && (traversalInput.value === 'prim' || traversalInput.value === 'kruskal')
+    );
+    if (mst && !previousMst) cyclesInput.checked = true;
+    previousMst = mst;
+    if (mst) {
+      directedInput.checked = false;
+      connectedInput.checked = true;
+    }
     const directed = directedInput.checked;
     const allowCycles = cyclesInput.checked;
     const connected = connectedInput.checked;
+    const traversingComponents = !split && traversalInput.value === 'components';
 
-    wrapper('connected').hidden = directed;
-    wrapper('ensure_path').hidden = !directed;
+    wrapper('traverse').hidden = split;
+    wrapper('connected').hidden = directed || mst;
+    wrapper('directed').hidden = mst;
+    wrapper('ensure_path').hidden = !directed || traversingComponents;
     wrapper('directed_connectivity').hidden = !directed;
+    wrapper('component_type').hidden = !traversingComponents;
+    wrapper('step_mode').hidden = mst;
 
     const strongGraphAvailable = directed && allowCycles && n >= 3;
     setOptionAvailable(directedConnectivity, 'strong', strongGraphAvailable);
@@ -201,8 +220,8 @@ function configureGraphTraversalForm(item, form) {
       directedConnectivity.value = 'weak';
     }
 
-    setOptionAvailable(componentMode, 'strong', directed);
-    if (componentMode.value === 'strong' && !directed) componentMode.value = 'weak';
+    setOptionAvailable(componentType, 'strong', directed);
+    if (componentType.value === 'strong' && !directed) componentType.value = 'weak';
 
     if (!Number.isInteger(n) || n < 2 || n > 32) {
       eInput.setCustomValidity('Choose n from 2 through 32 first.');
@@ -217,7 +236,7 @@ function configureGraphTraversalForm(item, form) {
     const strong = directed && directedConnectivity.value === 'strong';
     const maximum = allowCycles || directed ? (n === 2 ? 1 : 3 * n - 6) : n - 1;
     const connectivityMinimum = strong ? n : guaranteed ? n - 1 : 0;
-    const pathMinimum = directed && ensurePathInput.checked ? 1 : 0;
+    const pathMinimum = directed && !traversingComponents && ensurePathInput.checked ? 1 : 0;
     const minimum = Math.max(connectivityMinimum, pathMinimum);
     const automatic = allowCycles || directed
       ? Math.min(Math.max(Math.ceil(n * 1.5), minimum), maximum)

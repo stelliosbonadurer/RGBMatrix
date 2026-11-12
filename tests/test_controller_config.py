@@ -32,8 +32,12 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertFalse(config.visualization_defaults["master_theorem"]["animate"])
         self.assertEqual(config.visualization_defaults["graph_traversal"]["e"], 0)
         self.assertEqual(
-            config.visualization_defaults["graph_traversal"]["component_mode"],
-            "off",
+            config.visualization_defaults["graph_traversal"]["display_mode"],
+            "single",
+        )
+        self.assertEqual(
+            config.visualization_defaults["graph_traversal"]["component_type"],
+            "weak",
         )
         self.assertTrue(
             config.visualization_defaults["graph_traversal"]["ensure_path"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Animate BFS, DFS, and Dijkstra traversal on a planar graph."""
+"""Animate graph searches and connected-component traversal on a planar graph."""
 
 from __future__ import annotations
 
@@ -18,12 +18,12 @@ for import_root in (PROJECT_ROOT, PROGRAMS_ROOT):
 
 from dsa_visualizations.graph_model import (
     GraphOptions,
-    connected_components,
     generate_graph,
+    parallel_traversal_frames,
     traversal_frames,
     validate_options,
 )
-from dsa_visualizations.graph_rendering import GraphRenderer, load_render_config
+from dsa_visualizations.graph_rendering import GraphRenderer, Viewport, load_render_config
 from dsa_visualizations.native_matrix import NativeMatrixApp
 from matrix_controller.definitions import application_parameters
 
@@ -39,8 +39,9 @@ def build_options(args) -> GraphOptions:
         directed=args.directed,
         ensure_path=args.ensure_path,
         directed_connectivity=args.directed_connectivity,
-        component_mode=args.component_mode,
+        component_type=args.component_type,
         step_mode=args.step_mode,
+        display_mode=args.display_mode,
     )
 
 
@@ -71,27 +72,59 @@ def main() -> int:
         print(f"Warning: this visualization is designed for 64x64; got {app.width}x{app.height}.")
 
     try:
-        graph = generate_graph(options, app.width, app.height)
+        logical_width = app.width // 2 if options.display_mode != "single" else app.width
+        graph = generate_graph(options, logical_width, app.height)
     except ValueError as exc:
         app.parser.error(str(exc))
-    component_ids = (
-        connected_components(graph, options.component_mode)
-        if options.component_mode != "off"
-        else None
-    )
-    renderer = GraphRenderer(render_config, options.traversal, component_ids)
+    if options.display_mode != "single":
+        methods = (
+            ("bfs", "dfs")
+            if options.display_mode == "bfs_dfs_split"
+            else ("prim", "kruskal")
+        )
+        renderers = tuple(GraphRenderer(render_config, method) for method in methods)
+        viewports = (
+            Viewport(0, 0, logical_width, app.height),
+            Viewport(logical_width, 0, logical_width, app.height),
+        )
+    else:
+        renderers = (GraphRenderer(render_config, options.traversal),)
+        viewports = (Viewport(0, 0, app.width, app.height),)
 
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, _request_exit)
     try:
         # Replay the same seeded graph so a managed visualization remains alive and reproducible.
         while True:
-            for frame_index, frame in enumerate(
-                traversal_frames(graph, options.traversal, options.step_mode)
-            ):
-                renderer.render(app.canvas, graph, frame)
+            if options.display_mode != "single":
+                frames = parallel_traversal_frames(
+                    graph,
+                    methods[0],
+                    methods[1],
+                    options.step_mode,
+                )
+            else:
+                frames = (
+                    (frame,)
+                    for frame in traversal_frames(
+                    graph,
+                    options.traversal,
+                    options.step_mode,
+                    options.component_type,
+                )
+                )
+            for frame_index, current_frames in enumerate(frames):
+                app.canvas.Clear()
+                for renderer, viewport, frame in zip(renderers, viewports, current_frames):
+                    renderer.render(
+                        app.canvas,
+                        graph,
+                        frame,
+                        viewport=viewport,
+                        clear=False,
+                    )
                 app.swap_canvas()
-                if frame_index == 0 or frame.complete:
+                if frame_index == 0 or all(frame.complete for frame in current_frames):
                     time.sleep(args.frame_duration * args.holding_period)
                 else:
                     time.sleep(args.frame_duration)

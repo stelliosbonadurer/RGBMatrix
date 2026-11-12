@@ -33,8 +33,9 @@ def _validate_graph_traversal(parameters: Mapping[str, Any]) -> None:
                 directed=parameters["directed"],
                 ensure_path=parameters["ensure_path"],
                 directed_connectivity=parameters["directed_connectivity"],
-                component_mode=parameters["component_mode"],
+                component_type=parameters["component_type"],
                 step_mode=parameters["step_mode"],
+                display_mode=parameters["display_mode"],
             )
         )
     except ValueError as exc:
@@ -122,7 +123,10 @@ def build_default_registry(
             VisualizationSpec(
                 visualization_id="graph_traversal",
                 display_name="Graph Traversal",
-                description="Animates BFS, DFS, and Dijkstra on a reproducible planar graph.",
+                description=(
+                    "Animates graph searches, connected components, and minimum "
+                    "spanning trees on a reproducible planar graph."
+                ),
                 script_path=(
                     root / "my_programs" / "dsa_visualizations" / "graph_traversal.py"
                 ),

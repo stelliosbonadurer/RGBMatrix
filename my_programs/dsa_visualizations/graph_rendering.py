@@ -30,6 +30,8 @@ class GraphColors:
     shortest_path: Color
     dijkstra_low_weight: Color
     dijkstra_high_weight: Color
+    mst_accepted_edge: Color
+    mst_rejected_edge: Color
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,19 @@ class RenderConfig:
     direction_marker_pixels: int
     component_colors: tuple[Color, ...]
     colors: GraphColors
+
+
+@dataclass(frozen=True)
+class Viewport:
+    origin_x: int
+    origin_y: int
+    width: int
+    height: int
+
+    def translate(self, x: int, y: int) -> tuple[int, int] | None:
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return None
+        return self.origin_x + x, self.origin_y + y
 
 
 def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
@@ -121,15 +136,37 @@ class GraphRenderer:
         self.traversal = traversal
         self.component_ids = component_ids
 
-    def render(self, canvas, graph: Graph, frame: TraversalFrame) -> None:
-        canvas.Clear()
+    def render(
+        self,
+        canvas,
+        graph: Graph,
+        frame: TraversalFrame,
+        *,
+        viewport: Viewport | None = None,
+        clear: bool = True,
+    ) -> None:
+        if clear:
+            canvas.Clear()
+        if viewport is None:
+            viewport = Viewport(
+                0,
+                0,
+                getattr(canvas, "width", 64),
+                getattr(canvas, "height", 64),
+            )
         ordered_edges = sorted(
             graph.edges,
             key=lambda edge: self._edge_draw_priority(edge, frame),
         )
         for edge in ordered_edges:
             color = self._edge_color(edge, frame)
-            self._draw_line(canvas, graph.points[edge.source], graph.points[edge.target], color)
+            self._draw_line(
+                canvas,
+                graph.points[edge.source],
+                graph.points[edge.target],
+                color,
+                viewport,
+            )
         if graph.directed:
             for edge in ordered_edges:
                 self._draw_direction_marker(
@@ -138,14 +175,21 @@ class GraphRenderer:
                     graph.points[edge.target],
                     self.config.colors.direction_marker,
                     self.config.direction_marker_pixels,
+                    viewport,
                 )
         for index, point in enumerate(graph.points):
             size = (
                 self.config.endpoint_node_size
-                if index in {graph.start, graph.target}
+                if self._is_endpoint(index, graph)
                 else self.config.node_size
             )
-            self._draw_node(canvas, point, self._node_color(index, graph, frame), size)
+            self._draw_node(
+                canvas,
+                point,
+                self._node_color(index, graph, frame),
+                size,
+                viewport,
+            )
 
     @staticmethod
     def _edge_draw_priority(edge: Edge, frame: TraversalFrame) -> int:
@@ -153,11 +197,15 @@ class GraphRenderer:
 
         if frame.examined_edge == edge.index:
             return 4
-        if edge.index in frame.final_path_edges or edge.index in frame.cycle_edges:
+        if (
+            edge.index in frame.final_path_edges
+            or edge.index in frame.cycle_edges
+            or edge.index in frame.accepted_edges
+        ):
             return 3
         if edge.index in frame.predecessor_edges and not frame.complete:
             return 2
-        if edge.index in frame.traversed_edges:
+        if edge.index in frame.traversed_edges or edge.index in frame.rejected_edges:
             return 1
         return 0
 
@@ -165,6 +213,10 @@ class GraphRenderer:
         colors = self.config.colors
         if frame.examined_edge == edge.index:
             return colors.current_edge
+        if edge.index in frame.accepted_edges:
+            return colors.mst_accepted_edge
+        if edge.index in frame.rejected_edges and not frame.complete:
+            return colors.mst_rejected_edge
         if edge.index in frame.final_path_edges:
             return colors.shortest_path
         if edge.index in frame.cycle_edges:
@@ -174,10 +226,10 @@ class GraphRenderer:
         ):
             return colors.predecessor_edge
         if edge.index in frame.traversed_edges and not (
-            self.traversal == "dijkstra" and frame.complete
+            self.traversal in {"dijkstra", "prim", "kruskal"} and frame.complete
         ):
             return colors.traversed_edge
-        if self.traversal == "dijkstra":
+        if self.traversal in {"dijkstra", "prim", "kruskal"}:
             return _blend(colors.dijkstra_low_weight, colors.dijkstra_high_weight, (edge.weight - 1) / 8)
         return colors.unvisited_edge
 
@@ -185,25 +237,54 @@ class GraphRenderer:
         colors = self.config.colors
         if index == frame.current_node:
             return colors.current_node
-        if index == graph.start:
+        if self.traversal == "prim" and index == graph.start:
             return colors.start_node
-        if index == graph.target:
+        if self.traversal not in {"components", "prim", "kruskal"} and index == graph.start:
+            return colors.start_node
+        if self.traversal not in {"components", "prim", "kruskal"} and index == graph.target:
             return colors.target_node
-        if self.component_ids is not None and self.component_ids[index] >= 0:
-            component = self.component_ids[index]
+        component_ids = frame.component_ids or self.component_ids
+        if component_ids is not None and component_ids[index] >= 0:
+            component = component_ids[index]
             return self.config.component_colors[component % len(self.config.component_colors)]
         return colors.node
 
-    def _draw_node(self, canvas, point: Point, color: Color, size: int) -> None:
+    def _is_endpoint(self, index: int, graph: Graph) -> bool:
+        if self.traversal == "prim":
+            return index == graph.start
+        if self.traversal in {"components", "kruskal"}:
+            return False
+        return index in {graph.start, graph.target}
+
+    def _draw_node(
+        self,
+        canvas,
+        point: Point,
+        color: Color,
+        size: int,
+        viewport: Viewport,
+    ) -> None:
         offset = (size - 1) // 2
         for dx in range(size):
             for dy in range(size):
-                _set_pixel(canvas, point.x + dx - offset, point.y + dy - offset, color)
+                _set_viewport_pixel(
+                    canvas,
+                    viewport,
+                    point.x + dx - offset,
+                    point.y + dy - offset,
+                    color,
+                )
 
     @staticmethod
-    def _draw_line(canvas, start: Point, end: Point, color: Color) -> None:
+    def _draw_line(
+        canvas,
+        start: Point,
+        end: Point,
+        color: Color,
+        viewport: Viewport,
+    ) -> None:
         for x, y in _line_pixels(start.x, start.y, end.x, end.y):
-            _set_pixel(canvas, x, y, color)
+            _set_viewport_pixel(canvas, viewport, x, y, color)
 
     @staticmethod
     def _draw_direction_marker(
@@ -212,11 +293,12 @@ class GraphRenderer:
         end: Point,
         color: Color,
         pixel_count: int,
+        viewport: Viewport,
     ) -> None:
         # Exclude the endpoint because the destination node is drawn over it later.
         edge_pixels = list(_line_pixels(start.x, start.y, end.x, end.y))
         for x, y in edge_pixels[max(1, len(edge_pixels) - pixel_count - 1) : -1]:
-            _set_pixel(canvas, x, y, color)
+            _set_viewport_pixel(canvas, viewport, x, y, color)
 
 
 def _blend(low: Color, high: Color, fraction: float) -> Color:
@@ -247,3 +329,15 @@ def _set_pixel(canvas, x: int, y: int, color: Color) -> None:
     height = getattr(canvas, "height", 64)
     if 0 <= x < width and 0 <= y < height:
         canvas.SetPixel(x, y, *color)
+
+
+def _set_viewport_pixel(
+    canvas,
+    viewport: Viewport,
+    x: int,
+    y: int,
+    color: Color,
+) -> None:
+    translated = viewport.translate(x, y)
+    if translated is not None:
+        _set_pixel(canvas, translated[0], translated[1], color)

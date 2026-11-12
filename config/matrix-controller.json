@@ -50,6 +50,7 @@
     "graph_traversal": {
       "n": 12,
       "e": 0,
+      "display_mode": "single",
       "traverse": "bfs",
       "seed": 0,
       "connected": true,
@@ -57,7 +58,7 @@
       "directed": false,
       "ensure_path": true,
       "directed_connectivity": "weak",
-      "component_mode": "off",
+      "component_type": "weak",
       "step_mode": "edge",
       "frame_duration": 0.2,
       "holding_period": 10
