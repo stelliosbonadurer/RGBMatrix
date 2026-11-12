@@ -155,7 +155,7 @@ class GraphRenderer:
             return 4
         if edge.index in frame.final_path_edges or edge.index in frame.cycle_edges:
             return 3
-        if edge.index in frame.predecessor_edges:
+        if edge.index in frame.predecessor_edges and not frame.complete:
             return 2
         if edge.index in frame.traversed_edges:
             return 1
@@ -169,7 +169,9 @@ class GraphRenderer:
             return colors.shortest_path
         if edge.index in frame.cycle_edges:
             return colors.cycle_edge
-        if edge.index in frame.predecessor_edges:
+        if edge.index in frame.predecessor_edges and not (
+            self.traversal == "dijkstra" and frame.complete
+        ):
             return colors.predecessor_edge
         if edge.index in frame.traversed_edges and not (
             self.traversal == "dijkstra" and frame.complete

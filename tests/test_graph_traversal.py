@@ -433,7 +433,7 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertEqual(renderer._edge_color(graph.edges[1], complete), config.colors.shortest_path)
         self.assertEqual(
             renderer._edge_color(graph.edges[2], complete),
-            config.colors.predecessor_edge,
+            config.colors.dijkstra_high_weight,
         )
         self.assertEqual(
             renderer._edge_color(graph.edges[3], complete),

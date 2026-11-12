@@ -43,12 +43,12 @@
     "target_node": [255, 0, 0],
     "current_node": [255, 100, 0],
     "unvisited_edge": [210, 210, 210],
-    "traversed_edge": [0, 0, 255],
-    "predecessor_edge": [0, 255, 0],
+    "traversed_edge": [0, 255, 0],
+    "predecessor_edge": [0, 0, 255],
     "current_edge": [255, 80, 180],
     "direction_marker": [255, 100, 0],
     "cycle_edge": [180, 40, 255],
-    "shortest_path": [80, 255, 80],
+    "shortest_path": [0, 0, 255],
     "dijkstra_low_weight": [235, 235, 235],
     "dijkstra_high_weight": [255, 210, 0]
   }

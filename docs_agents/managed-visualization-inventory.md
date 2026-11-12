@@ -164,6 +164,8 @@ During Dijkstra, explored edges and the current predecessor tree use separate co
 when relaxation replaces a predecessor, the old edge returns to the explored color.
 Edges are rendered in state layers so the predecessor tree appears above overlapping
 explored edges, with the currently examined edge and final path above the tree.
+On the completed frame, only the shortest path remains highlighted; every other edge,
+including non-path predecessor edges, returns to its white-to-yellow weight color.
 Edges leading to already-settled nodes are not examined again because they cannot
 improve a distance; this avoids a predecessor edge flashing as current a second time.
 `component_mode=weak` colors ordinary nodes by weak/undirected component, while
