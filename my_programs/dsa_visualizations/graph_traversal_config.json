@@ -2,7 +2,7 @@
   "node_size": 1,
   "colors": {
     "background": [0, 0, 0],
-    "node": [160, 160, 160],
+    "node": [160, 160, 255],
     "start_node": [0, 90, 255],
     "target_node": [255, 0, 0],
     "current_node": [255, 100, 0],
