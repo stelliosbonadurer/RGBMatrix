@@ -12,10 +12,12 @@ from my_programs.dsa_visualizations.graph_model import (
     GraphOptions,
     Point,
     TraversalFrame,
+    connected_components,
     edge_bounds,
     generate_graph,
     resolve_edge_count,
     traversal_frames,
+    validate_options,
 )
 from my_programs.dsa_visualizations.graph_rendering import GraphRenderer, load_render_config
 from my_programs.dsa_visualizations.native_matrix import NativeMatrixApp
@@ -78,6 +80,8 @@ class GraphConstraintTests(unittest.TestCase):
             resolve_edge_count(
                 GraphOptions(n=12, directed=True, directed_connectivity="strong")
             )
+        with self.assertRaisesRegex(ValueError, "requires directed=true"):
+            validate_options(GraphOptions(n=12, component_mode="strong"))
 
 
 class GraphGenerationTests(unittest.TestCase):
@@ -125,6 +129,22 @@ class GraphGenerationTests(unittest.TestCase):
 
 
 class TraversalTests(unittest.TestCase):
+    def test_weak_and_strong_component_modes_are_distinct(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(20, 20), Point(40, 20)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 1, 2, 1),
+                Edge(2, 2, 0, 1),
+                Edge(3, 2, 3, 1),
+            ),
+            True,
+            0,
+            3,
+        )
+        self.assertEqual(connected_components(graph, "weak"), (0, 0, 0, 0))
+        self.assertEqual(connected_components(graph, "strong"), (0, 0, 0, 1))
+
     def test_all_methods_finish_and_edge_mode_exposes_current_edges(self) -> None:
         graph = generate_graph(GraphOptions(n=12, allow_cycles=True, seed=4))
         for method in ("bfs", "dfs", "dijkstra"):
@@ -180,8 +200,46 @@ class TraversalTests(unittest.TestCase):
         self.assertEqual(relaxed.traversed_edges, frozenset({0, 1, 2}))
         self.assertNotIn(1, relaxed.predecessor_edges)
 
+    def test_dijkstra_does_not_reexamine_edges_to_settled_nodes(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(20, 2), Point(40, 2)),
+            (Edge(0, 0, 1, 1), Edge(1, 1, 2, 1)),
+            False,
+            0,
+            2,
+        )
+        frames = list(traversal_frames(graph, "dijkstra", "edge"))
+        examined = [frame.examined_edge for frame in frames if frame.examined_edge is not None]
+        self.assertEqual(examined, [0, 1])
+
 
 class GraphRenderingTests(unittest.TestCase):
+    def test_component_colors_apply_only_to_ordinary_inactive_nodes(self) -> None:
+        config = load_render_config()
+        self.assertGreaterEqual(len(config.component_colors), 32)
+        graph = Graph(
+            (Point(5, 5), Point(20, 5), Point(35, 5), Point(50, 5)),
+            (),
+            False,
+            0,
+            2,
+        )
+        frame = TraversalFrame(
+            None,
+            None,
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+            frozenset(),
+        )
+        canvas = RecordingCanvas()
+        GraphRenderer(config, "bfs", (0, 0, 1, 1)).render(canvas, graph, frame)
+        self.assertEqual(canvas.pixels[(5, 5)], config.colors.start_node)
+        self.assertEqual(canvas.pixels[(20, 5)], config.component_colors[0])
+        self.assertEqual(canvas.pixels[(35, 5)], config.colors.target_node)
+        self.assertEqual(canvas.pixels[(50, 5)], config.component_colors[1])
+
     def test_config_and_current_state_colors_are_used(self) -> None:
         config = load_render_config()
         graph = Graph((Point(5, 5), Point(20, 5)), (Edge(0, 0, 1, 5),), False, 0, 1)
@@ -335,6 +393,7 @@ class GraphTraversalCliTests(unittest.TestCase):
                 "allow_cycles": True,
                 "directed": True,
                 "directed_connectivity": "strong",
+                "component_mode": "strong",
             }
         )
         argv = definition.build_argv("/fixed/python", values)
@@ -346,6 +405,7 @@ class GraphTraversalCliTests(unittest.TestCase):
         self.assertEqual(parsed.traverse, "dijkstra")
         self.assertTrue(parsed.allow_cycles)
         self.assertEqual(parsed.directed_connectivity, "strong")
+        self.assertEqual(parsed.component_mode, "strong")
 
 
 if __name__ == "__main__":

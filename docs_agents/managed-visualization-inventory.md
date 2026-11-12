@@ -157,10 +157,20 @@ weights 1 through 9 from white to yellow, colors examined edges separately, and
 highlights the final shortest path.
 During Dijkstra, explored edges and the current predecessor tree use separate colors;
 when relaxation replaces a predecessor, the old edge returns to the explored color.
+Edges leading to already-settled nodes are not examined again because they cannot
+improve a distance; this avoids a predecessor edge flashing as current a second time.
+`component_mode=weak` colors ordinary nodes by weak/undirected component, while
+`component_mode=strong` colors strongly connected components in directed graphs.
+Start, target, and current-node colors retain precedence over component colors. The
+editable component palette contains a distinct color for every possible node.
 Ordinary nodes are one pixel while the start and target default to 2x2; both sizes are
 configurable. Nodes retain their normal, start, or target color after processing; only
 the currently processed node changes color. Rendering colors are editable in
 `my_programs/dsa_visualizations/graph_traversal_config.json`.
+
+The phone launch form conditionally shows undirected or directed connectivity controls
+and recalculates the explicit `e` range plus the automatic value before launch. The
+registry repeats those dependent checks server-side before replacing an active process.
 
 ## Supervisor lifecycle
 

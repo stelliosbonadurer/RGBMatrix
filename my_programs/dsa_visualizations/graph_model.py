@@ -13,6 +13,7 @@ from typing import Iterator, Literal
 TraversalMethod = Literal["bfs", "dfs", "dijkstra"]
 StepMode = Literal["node", "edge"]
 DirectedConnectivity = Literal["strong", "weak", "none"]
+ComponentMode = Literal["off", "weak", "strong"]
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class GraphOptions:
     allow_cycles: bool = False
     directed: bool = False
     directed_connectivity: DirectedConnectivity = "weak"
+    component_mode: ComponentMode = "off"
     step_mode: StepMode = "edge"
 
 
@@ -125,6 +127,10 @@ def validate_options(options: GraphOptions) -> int:
         raise ValueError("step_mode must be node or edge")
     if options.directed_connectivity not in {"strong", "weak", "none"}:
         raise ValueError("directed_connectivity must be strong, weak, or none")
+    if options.component_mode not in {"off", "weak", "strong"}:
+        raise ValueError("component_mode must be off, weak, or strong")
+    if options.component_mode == "strong" and not options.directed:
+        raise ValueError("strong component detection requires directed=true")
     if options.e < 0:
         raise ValueError("e must be zero (automatic) or a positive integer")
     return resolve_edge_count(options)
@@ -371,6 +377,92 @@ def _adjacency(graph: Graph) -> list[list[tuple[int, Edge]]]:
     return adjacent
 
 
+def connected_components(graph: Graph, mode: ComponentMode) -> tuple[int, ...]:
+    """Return a stable component index for every node.
+
+    Weak components ignore edge direction. Strong components use Kosaraju's
+    algorithm and are available only for directed graphs. Component numbers are
+    normalized by their lowest node index so seeded graphs keep stable colors.
+    """
+
+    if mode == "off":
+        return tuple(-1 for _ in graph.points)
+    if mode not in {"weak", "strong"}:
+        raise ValueError("component mode must be off, weak, or strong")
+    if mode == "strong" and not graph.directed:
+        raise ValueError("strong component detection requires a directed graph")
+
+    outgoing: list[list[int]] = [[] for _ in graph.points]
+    reverse: list[list[int]] = [[] for _ in graph.points]
+    for edge in graph.edges:
+        outgoing[edge.source].append(edge.target)
+        reverse[edge.target].append(edge.source)
+        if mode == "weak" or not graph.directed:
+            outgoing[edge.target].append(edge.source)
+            reverse[edge.source].append(edge.target)
+    for neighbors in (*outgoing, *reverse):
+        neighbors.sort()
+
+    if mode == "weak" or not graph.directed:
+        groups = _component_groups(outgoing)
+    else:
+        visited: set[int] = set()
+        finish_order: list[int] = []
+
+        def finish(node: int) -> None:
+            visited.add(node)
+            for neighbor in outgoing[node]:
+                if neighbor not in visited:
+                    finish(neighbor)
+            finish_order.append(node)
+
+        for node in range(len(graph.points)):
+            if node not in visited:
+                finish(node)
+
+        visited.clear()
+        groups: list[set[int]] = []
+
+        def collect(node: int, group: set[int]) -> None:
+            visited.add(node)
+            group.add(node)
+            for neighbor in reverse[node]:
+                if neighbor not in visited:
+                    collect(neighbor, group)
+
+        for node in reversed(finish_order):
+            if node not in visited:
+                group: set[int] = set()
+                collect(node, group)
+                groups.append(group)
+
+    groups.sort(key=min)
+    component_ids = [-1] * len(graph.points)
+    for component_id, group in enumerate(groups):
+        for node in group:
+            component_ids[node] = component_id
+    return tuple(component_ids)
+
+
+def _component_groups(adjacency: list[list[int]]) -> list[set[int]]:
+    groups: list[set[int]] = []
+    visited: set[int] = set()
+    for first in range(len(adjacency)):
+        if first in visited:
+            continue
+        group = {first}
+        visited.add(first)
+        pending = [first]
+        while pending:
+            for neighbor in adjacency[pending.pop()]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    group.add(neighbor)
+                    pending.append(neighbor)
+        groups.append(group)
+    return groups
+
+
 def _frame(
     current: int | None,
     examined: int | None,
@@ -513,6 +605,11 @@ def _dijkstra_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFra
             reached = True
             break
         for neighbor, edge in adjacent[current]:
+            # With nonnegative weights, a settled node cannot be improved. In an
+            # undirected graph this also avoids visually examining every tree edge
+            # a second time in the reverse direction.
+            if neighbor in settled:
+                continue
             traversed.add(edge.index)
             candidate = distance + edge.weight
             if candidate < distances[neighbor]:

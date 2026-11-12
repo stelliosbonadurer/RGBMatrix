@@ -37,6 +37,7 @@ class RenderConfig:
     node_size: int
     endpoint_node_size: int
     direction_marker_pixels: int
+    component_colors: tuple[Color, ...]
     colors: GraphColors
 
 
@@ -51,11 +52,12 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
         "node_size",
         "endpoint_node_size",
         "direction_marker_pixels",
+        "component_colors",
         "colors",
     }:
         raise ValueError(
             "graph rendering config must contain only node_size, endpoint_node_size, "
-            "direction_marker_pixels, and colors"
+            "direction_marker_pixels, component_colors, and colors"
         )
     node_size = data["node_size"]
     if type(node_size) is not int or not 1 <= node_size <= 2:
@@ -69,6 +71,13 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
         or not 1 <= direction_marker_pixels <= 8
     ):
         raise ValueError("direction_marker_pixels must be an integer from 1 to 8")
+    raw_component_colors = data["component_colors"]
+    if not isinstance(raw_component_colors, list) or not raw_component_colors:
+        raise ValueError("component_colors must be a non-empty array of colors")
+    component_colors = tuple(
+        _parse_color(f"component_colors[{index}]", value)
+        for index, value in enumerate(raw_component_colors)
+    )
 
     expected = set(GraphColors.__dataclass_fields__)
     supplied = set(data["colors"])
@@ -82,7 +91,13 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
             details.append(f"unknown: {', '.join(extra)}")
         raise ValueError(f"invalid graph colors ({'; '.join(details)})")
     colors = GraphColors(**{name: _parse_color(name, data["colors"][name]) for name in expected})
-    return RenderConfig(node_size, endpoint_node_size, direction_marker_pixels, colors)
+    return RenderConfig(
+        node_size,
+        endpoint_node_size,
+        direction_marker_pixels,
+        component_colors,
+        colors,
+    )
 
 
 def _parse_color(name: str, value: object) -> Color:
@@ -96,9 +111,15 @@ def _parse_color(name: str, value: object) -> Color:
 
 
 class GraphRenderer:
-    def __init__(self, config: RenderConfig, traversal: str):
+    def __init__(
+        self,
+        config: RenderConfig,
+        traversal: str,
+        component_ids: tuple[int, ...] | None = None,
+    ):
         self.config = config
         self.traversal = traversal
+        self.component_ids = component_ids
 
     def render(self, canvas, graph: Graph, frame: TraversalFrame) -> None:
         canvas.Clear()
@@ -147,6 +168,9 @@ class GraphRenderer:
             return colors.start_node
         if index == graph.target:
             return colors.target_node
+        if self.component_ids is not None and self.component_ids[index] >= 0:
+            component = self.component_ids[index]
+            return self.config.component_colors[component % len(self.config.component_colors)]
         return colors.node
 
     def _draw_node(self, canvas, point: Point, color: Color, size: int) -> None:

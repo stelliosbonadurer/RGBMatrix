@@ -110,6 +110,21 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaises(argparse.ArgumentError):
             parser.parse_args(["--delay", "99"])
 
+    def test_graph_dependent_constraints_are_rejected_before_launch(self) -> None:
+        graph = self.registry.get("graph_traversal")
+        with self.assertRaisesRegex(ValidationError, "at least 11"):
+            graph.validate_parameters({"n": 12, "e": 10, "connected": True})
+        with self.assertRaisesRegex(ValidationError, "allow_cycles=true"):
+            graph.validate_parameters(
+                {
+                    "directed": True,
+                    "directed_connectivity": "strong",
+                    "allow_cycles": False,
+                }
+            )
+        with self.assertRaisesRegex(ValidationError, "requires directed=true"):
+            graph.validate_parameters({"component_mode": "strong", "directed": False})
+
 
 if __name__ == "__main__":
     unittest.main()

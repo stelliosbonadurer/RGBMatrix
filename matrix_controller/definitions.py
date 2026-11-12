@@ -342,6 +342,14 @@ GRAPH_TRAVERSAL_PARAMETERS: tuple[ParameterSpec, ...] = (
         choices=("strong", "weak", "none"),
     ),
     ParameterSpec(
+        "component_mode",
+        "--component-mode",
+        "enum",
+        "off",
+        "Color nodes by weak or strong connected component.",
+        choices=("off", "weak", "strong"),
+    ),
+    ParameterSpec(
         "step_mode",
         "--step-mode",
         "enum",

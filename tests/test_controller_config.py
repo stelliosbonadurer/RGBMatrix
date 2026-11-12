@@ -31,6 +31,10 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertEqual(config.visualization_defaults["master_theorem"]["a"], 2)
         self.assertFalse(config.visualization_defaults["master_theorem"]["animate"])
         self.assertEqual(config.visualization_defaults["graph_traversal"]["e"], 0)
+        self.assertEqual(
+            config.visualization_defaults["graph_traversal"]["component_mode"],
+            "off",
+        )
         self.assertTrue(config.use_sudo)
         self.assertTrue(config.python_executable.endswith("/fftdemo/.venv/bin/python3"))
 

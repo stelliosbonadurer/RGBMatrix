@@ -12,7 +12,7 @@ import argparse
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 
 ParameterKind = Literal["bool", "int", "float", "string", "enum"]
@@ -185,6 +185,7 @@ class VisualizationSpec:
     parameters: tuple[ParameterSpec, ...]
     requires_audio: bool = False
     supports_live_control: bool = False
+    parameter_validator: Callable[[Mapping[str, Any]], None] | None = None
 
     def parameter(self, name: str) -> ParameterSpec:
         for parameter in self.parameters:
@@ -205,12 +206,15 @@ class VisualizationSpec:
         if unknown:
             raise ValidationError(f"unknown parameters: {', '.join(unknown)}")
 
-        return {
+        normalized = {
             parameter.name: parameter.normalize(
                 supplied[parameter.name] if parameter.name in supplied else parameter.default
             )
             for parameter in self.parameters
         }
+        if self.parameter_validator is not None:
+            self.parameter_validator(normalized)
+        return normalized
 
     def build_argv(
         self,

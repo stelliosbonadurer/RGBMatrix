@@ -56,6 +56,7 @@
       "allow_cycles": false,
       "directed": false,
       "directed_connectivity": "weak",
+      "component_mode": "off",
       "step_mode": "edge",
       "frame_duration": 0.2,
       "holding_period": 10

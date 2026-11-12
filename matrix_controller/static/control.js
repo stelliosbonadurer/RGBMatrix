@@ -110,6 +110,7 @@ function parameterValue(item, parameter) {
 function createParameterField(item, parameter) {
   const wrapper = document.createElement('label');
   wrapper.className = `parameter-field${parameter.type === 'bool' ? ' boolean-field' : ''}`;
+  wrapper.dataset.parameterName = parameter.name;
 
   const label = document.createElement('span');
   label.className = 'parameter-label';
@@ -158,6 +159,83 @@ function createParameterField(item, parameter) {
   control.dataset.parameterType = parameter.type;
   control.disabled = launchPendingId === item.id;
   return wrapper;
+}
+
+function configureGraphTraversalForm(item, form) {
+  if (item.id !== 'graph_traversal') return;
+
+  const control = name => form.elements.namedItem(name);
+  const wrapper = name => form.querySelector(`[data-parameter-name="${name}"]`);
+  const nInput = control('n');
+  const eInput = control('e');
+  const connectedInput = control('connected');
+  const cyclesInput = control('allow_cycles');
+  const directedInput = control('directed');
+  const directedConnectivity = control('directed_connectivity');
+  const componentMode = control('component_mode');
+  const launchButton = form.querySelector('.launch-button');
+  if (!nInput || !eInput || !connectedInput || !cyclesInput || !directedInput ||
+      !directedConnectivity || !componentMode) return;
+
+  const edgeDescription = wrapper('e')?.querySelector('small');
+
+  const setOptionAvailable = (select, value, available) => {
+    const option = Array.from(select.options).find(candidate => candidate.value === value);
+    if (option) option.disabled = !available;
+  };
+
+  const update = () => {
+    const n = Number.parseInt(nInput.value, 10);
+    const directed = directedInput.checked;
+    const allowCycles = cyclesInput.checked;
+    const connected = connectedInput.checked;
+
+    wrapper('connected').hidden = directed;
+    wrapper('directed_connectivity').hidden = !directed;
+
+    const strongGraphAvailable = directed && allowCycles && n >= 3;
+    setOptionAvailable(directedConnectivity, 'strong', strongGraphAvailable);
+    if (directedConnectivity.value === 'strong' && !strongGraphAvailable) {
+      directedConnectivity.value = 'weak';
+    }
+
+    setOptionAvailable(componentMode, 'strong', directed);
+    if (componentMode.value === 'strong' && !directed) componentMode.value = 'weak';
+
+    if (!Number.isInteger(n) || n < 2 || n > 32) {
+      eInput.setCustomValidity('Choose n from 2 through 32 first.');
+      if (edgeDescription) edgeDescription.textContent = 'Choose a valid node count to calculate edge limits.';
+      if (launchButton) launchButton.disabled = true;
+      return;
+    }
+
+    const guaranteed = directed
+      ? directedConnectivity.value === 'strong' || directedConnectivity.value === 'weak'
+      : connected;
+    const strong = directed && directedConnectivity.value === 'strong';
+    const maximum = allowCycles || directed ? (n === 2 ? 1 : 3 * n - 6) : n - 1;
+    const minimum = strong ? n : guaranteed ? n - 1 : 0;
+    const automatic = allowCycles || directed
+      ? Math.min(Math.max(Math.ceil(n * 1.5), minimum), maximum)
+      : n - 1;
+    const edgeCount = Number.parseInt(eInput.value, 10);
+
+    eInput.max = String(maximum);
+    const validEdgeCount = edgeCount === 0 || (
+      Number.isInteger(edgeCount) && edgeCount >= minimum && edgeCount <= maximum
+    );
+    eInput.setCustomValidity(
+      validEdgeCount ? '' : `Use 0 for automatic, or choose ${minimum} through ${maximum} edges.`
+    );
+    if (edgeDescription) {
+      edgeDescription.textContent = `0 = automatic (${automatic}). Explicit edge range: ${minimum}–${maximum}.`;
+    }
+    if (launchButton) launchButton.disabled = launchPendingId === item.id || !form.checkValidity();
+  };
+
+  form.addEventListener('input', update);
+  form.addEventListener('change', update);
+  update();
 }
 
 function readLaunchParameters(form, item) {
@@ -294,7 +372,13 @@ function renderVisualizations() {
     form.className = 'launch-form';
     form.hidden = expandedVisualizationId !== item.id;
 
-    const applicationParameters = (item.parameters || []).filter(parameter => !parameter.name.startsWith('led_'));
+    let applicationParameters = (item.parameters || []).filter(parameter => !parameter.name.startsWith('led_'));
+    if (item.id === 'graph_traversal') {
+      applicationParameters = [
+        ...applicationParameters.filter(parameter => !['n', 'e'].includes(parameter.name)),
+        ...applicationParameters.filter(parameter => ['n', 'e'].includes(parameter.name)),
+      ];
+    }
     const matrixParameters = (item.parameters || []).filter(parameter => parameter.name.startsWith('led_'));
     const addGroup = (name, parameters, open) => {
       if (parameters.length === 0) return;
@@ -320,6 +404,7 @@ function renderVisualizations() {
       ? 'Launching…'
       : active ? 'Restart with these settings' : 'Launch visualization';
     form.append(launchButton);
+    configureGraphTraversalForm(item, form);
     form.addEventListener('submit', event => {
       event.preventDefault();
       launchVisualization(item, form);

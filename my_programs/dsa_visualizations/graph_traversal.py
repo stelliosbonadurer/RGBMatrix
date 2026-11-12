@@ -18,9 +18,10 @@ for import_root in (PROJECT_ROOT, PROGRAMS_ROOT):
 
 from dsa_visualizations.graph_model import (
     GraphOptions,
+    connected_components,
     generate_graph,
-    resolve_edge_count,
     traversal_frames,
+    validate_options,
 )
 from dsa_visualizations.graph_rendering import GraphRenderer, load_render_config
 from dsa_visualizations.native_matrix import NativeMatrixApp
@@ -37,6 +38,7 @@ def build_options(args) -> GraphOptions:
         allow_cycles=args.allow_cycles,
         directed=args.directed,
         directed_connectivity=args.directed_connectivity,
+        component_mode=args.component_mode,
         step_mode=args.step_mode,
     )
 
@@ -52,7 +54,7 @@ def main() -> int:
     args = app.process_args()
     options = build_options(args)
     try:
-        resolved_edges = resolve_edge_count(options)
+        resolved_edges = validate_options(options)
         render_config = load_render_config()
     except ValueError as exc:
         app.parser.error(str(exc))
@@ -71,7 +73,12 @@ def main() -> int:
         graph = generate_graph(options, app.width, app.height)
     except ValueError as exc:
         app.parser.error(str(exc))
-    renderer = GraphRenderer(render_config, options.traversal)
+    component_ids = (
+        connected_components(graph, options.component_mode)
+        if options.component_mode != "off"
+        else None
+    )
+    renderer = GraphRenderer(render_config, options.traversal, component_ids)
 
     previous_sigterm = signal.getsignal(signal.SIGTERM)
     signal.signal(signal.SIGTERM, _request_exit)

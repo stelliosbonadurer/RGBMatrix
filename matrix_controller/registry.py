@@ -16,6 +16,30 @@ from .definitions import (
 from .schema import ParameterSpec, ValidationError, VisualizationSpec
 
 
+def _validate_graph_traversal(parameters: Mapping[str, Any]) -> None:
+    """Apply dependent graph constraints before replacing a running program."""
+
+    from my_programs.dsa_visualizations.graph_model import GraphOptions, validate_options
+
+    try:
+        validate_options(
+            GraphOptions(
+                n=parameters["n"],
+                e=parameters["e"],
+                traversal=parameters["traverse"],
+                seed=parameters["seed"],
+                connected=parameters["connected"],
+                allow_cycles=parameters["allow_cycles"],
+                directed=parameters["directed"],
+                directed_connectivity=parameters["directed_connectivity"],
+                component_mode=parameters["component_mode"],
+                step_mode=parameters["step_mode"],
+            )
+        )
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
 class Registry:
     """Immutable-by-convention lookup for code-reviewed visualization entries."""
 
@@ -107,6 +131,7 @@ def build_default_registry(
                     defaults.get("graph_traversal", {}),
                 ),
                 supports_live_control=False,
+                parameter_validator=_validate_graph_traversal,
             ),
             VisualizationSpec(
                 visualization_id="master_theorem",

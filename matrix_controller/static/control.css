@@ -584,6 +584,8 @@ a.configure-button {
   min-width: 0;
 }
 
+.parameter-field[hidden] { display: none; }
+
 .parameter-label {
   color: var(--text);
   font-size: .76rem;

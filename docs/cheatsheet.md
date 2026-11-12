@@ -219,6 +219,22 @@ python3 launch_rgbmatrix.py \
   --seed 42
 ```
 
+Show weakly connected components on a graph that is not required to be connected:
+
+```bash
+python3 launch_rgbmatrix.py \
+  --program my_programs.dsa_visualizations.graph_traversal \
+  --n 16 \
+  --e 10 \
+  --not-connected \
+  --component-mode weak \
+  --seed 42
+```
+
+For a directed graph, use `--component-mode strong` to color strongly connected
+components. The phone controls hide connectivity settings that do not apply and show
+the valid explicit edge range as `n`, connectivity, direction, and cycles change.
+
 Press `Ctrl+C` to stop. Edit
 `my_programs/dsa_visualizations/graph_traversal_config.json` to tune colors.
 

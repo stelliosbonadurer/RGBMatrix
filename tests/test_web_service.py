@@ -170,6 +170,7 @@ class WebServiceTests(unittest.TestCase):
         self.assertIn("/api/v1/run", script)
         self.assertIn("/api/v1/stop", script)
         self.assertIn("createParameterField", script)
+        self.assertIn("configureGraphTraversalForm", script)
         self.assertIn("/config/fft", script)
 
         config_status, config_headers, config_page = self.request_raw("/config/fft")
