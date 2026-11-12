@@ -44,7 +44,7 @@
     "current_node": [255, 100, 0],
     "unvisited_edge": [210, 210, 210],
     "traversed_edge": [0, 210, 60],
-    "predecessor_edge": [0, 170, 255],
+    "predecessor_edge": [80, 255, 80],
     "current_edge": [255, 80, 180],
     "direction_marker": [255, 100, 0],
     "cycle_edge": [180, 40, 255],

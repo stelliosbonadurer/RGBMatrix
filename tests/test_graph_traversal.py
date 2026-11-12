@@ -337,6 +337,43 @@ class GraphRenderingTests(unittest.TestCase):
         self.assertIn(config.colors.dijkstra_low_weight, canvas.pixels.values())
         self.assertIn(config.colors.dijkstra_high_weight, canvas.pixels.values())
 
+    def test_predecessor_tree_is_drawn_above_overlapping_explored_edges(self) -> None:
+        config = load_render_config()
+        graph = Graph(
+            (Point(5, 5), Point(20, 5), Point(20, 6)),
+            (Edge(0, 0, 1, 1), Edge(1, 0, 2, 9)),
+            False,
+            0,
+            2,
+        )
+        frame = TraversalFrame(
+            None,
+            None,
+            frozenset({0}),
+            frozenset({1, 2}),
+            frozenset({0, 1}),
+            frozenset(),
+            frozenset(),
+            predecessor_edges=frozenset({0}),
+        )
+        canvas = RecordingCanvas()
+        renderer = GraphRenderer(config, "dijkstra")
+        renderer.render(canvas, graph, frame)
+        self.assertEqual(canvas.pixels[(10, 5)], config.colors.predecessor_edge)
+
+        current = TraversalFrame(
+            0,
+            1,
+            frame.visited_nodes,
+            frame.frontier_nodes,
+            frame.traversed_edges,
+            frame.cycle_edges,
+            frame.final_path_edges,
+            predecessor_edges=frame.predecessor_edges,
+        )
+        renderer.render(canvas, graph, current)
+        self.assertEqual(canvas.pixels[(10, 5)], config.colors.current_edge)
+
     def test_directed_edge_uses_configured_orange_pixels_nearest_destination(self) -> None:
         config = load_render_config()
         self.assertEqual(config.direction_marker_pixels, 2)

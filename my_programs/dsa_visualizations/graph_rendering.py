@@ -123,10 +123,15 @@ class GraphRenderer:
 
     def render(self, canvas, graph: Graph, frame: TraversalFrame) -> None:
         canvas.Clear()
-        for edge in graph.edges:
+        ordered_edges = sorted(
+            graph.edges,
+            key=lambda edge: self._edge_draw_priority(edge, frame),
+        )
+        for edge in ordered_edges:
             color = self._edge_color(edge, frame)
             self._draw_line(canvas, graph.points[edge.source], graph.points[edge.target], color)
-            if graph.directed:
+        if graph.directed:
+            for edge in ordered_edges:
                 self._draw_direction_marker(
                     canvas,
                     graph.points[edge.source],
@@ -141,6 +146,20 @@ class GraphRenderer:
                 else self.config.node_size
             )
             self._draw_node(canvas, point, self._node_color(index, graph, frame), size)
+
+    @staticmethod
+    def _edge_draw_priority(edge: Edge, frame: TraversalFrame) -> int:
+        """Draw persistent algorithm state above less important edge states."""
+
+        if frame.examined_edge == edge.index:
+            return 4
+        if edge.index in frame.final_path_edges or edge.index in frame.cycle_edges:
+            return 3
+        if edge.index in frame.predecessor_edges:
+            return 2
+        if edge.index in frame.traversed_edges:
+            return 1
+        return 0
 
     def _edge_color(self, edge: Edge, frame: TraversalFrame) -> Color:
         colors = self.config.colors
