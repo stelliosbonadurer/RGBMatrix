@@ -30,6 +30,7 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertEqual(config.visualization_defaults["fft"]["theme"], "ocean")
         self.assertEqual(config.visualization_defaults["master_theorem"]["a"], 2)
         self.assertFalse(config.visualization_defaults["master_theorem"]["animate"])
+        self.assertEqual(config.visualization_defaults["graph_traversal"]["e"], 0)
         self.assertTrue(config.use_sudo)
         self.assertTrue(config.python_executable.endswith("/fftdemo/.venv/bin/python3"))
 
@@ -48,7 +49,7 @@ class ControllerConfigTests(unittest.TestCase):
         )
         defaults = {
             item: config.defaults_for(item)
-            for item in ("system_info", "fft", "sorts", "master_theorem")
+            for item in ("system_info", "fft", "sorts", "master_theorem", "graph_traversal")
         }
         registry = build_default_registry(parameter_defaults=defaults)
         fft = registry.get("fft")

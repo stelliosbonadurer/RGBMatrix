@@ -22,6 +22,7 @@ Only the following programs are exposed through `matrix_controller.Registry`:
 | `fft` | `my_programs/fft_program/main.py` | Ocean theme, overflow on, non-interactive | HUB75 matrix, `rgbmatrix`, NumPy, sounddevice, working audio input |
 | `sorts` | `my_programs/visualize_sorts.py` | Continuous seeded random sorts | HUB75 matrix, `rgbmatrix`, upstream `samplebase.py` |
 | `master_theorem` | `my_programs/dsa_visualizations/master_theorem.py` | Custom `2T(n/2) + Theta(n)` recurrence | HUB75 matrix, `rgbmatrix` |
+| `graph_traversal` | `my_programs/dsa_visualizations/graph_traversal.py` | Seeded, connected BFS on an acyclic planar graph | HUB75 matrix, `rgbmatrix` |
 
 The broader discovery results from `launch_rgbmatrix.py` are developer conveniences,
 not reviewed product entries. Do not automatically copy discovered files into the web
@@ -131,6 +132,29 @@ on the matrix.
 This visualization uses a project-owned native adapter and does not depend on
 `samplebase`, NumPy, sounddevice, or the FFT package. It is launch/stop-only in the
 first release; changing the recurrence starts a replacement process.
+
+## Graph traversal details
+
+The graph traversal visualization supports BFS, DFS, and Dijkstra. It places up to 32
+nodes on the 64x64 panel, builds short straight-line edges without crossings, and
+replays the same graph for a reproducible seed. Connected undirected and weakly
+connected directed graphs begin with a Euclidean spanning tree. Strong directed graphs
+begin with an oriented cycle. Additional short non-crossing edges are added only when
+cycles are enabled.
+
+`e=0` selects a dependent default: an undirected graph uses `n-1` with cycles
+disabled and `ceil(1.5n)` with cycles enabled; a directed graph uses `ceil(1.5n)` and
+orients acyclic edges according to a seeded topological order. A connected undirected
+acyclic graph requires exactly `n-1` edges. Strictly planar graphs have the general
+upper bound `3n-6`; strong directed connectivity requires cycles and at least `n`
+edges. The application reports invalid combinations before matrix initialization.
+
+Frames can advance by processed node or examined edge. The completed frame is held for
+`holding_period * frame_duration`, then the same traversal replays. DFS colors every
+edge in a discovered cycle. Dijkstra maps unvisited weights 1 through 9 from white to
+yellow, colors examined edges separately, and highlights the final shortest path.
+Rendering colors and the 1x1 or 2x2 node size are editable in
+`my_programs/dsa_visualizations/graph_traversal_config.json`.
 
 ## Supervisor lifecycle
 

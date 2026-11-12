@@ -16,6 +16,7 @@ from typing import Any, Mapping
 
 from .definitions import (
     FFT_PARAMETERS,
+    GRAPH_TRAVERSAL_PARAMETERS,
     MASTER_THEOREM_PARAMETERS,
     MATRIX_PARAMETERS,
     SORT_PARAMETERS,
@@ -134,10 +135,17 @@ def load_controller_config(path: Path | None) -> ControllerConfig:
     boot = _require_object(root.get("boot", {}), "boot")
     _reject_unknown(boot, {"visualization_id"}, "boot")
     boot_visualization = boot.get("visualization_id", "system_info")
-    allowed_visualizations = {"system_info", "fft", "sorts", "master_theorem"}
+    allowed_visualizations = {
+        "system_info",
+        "fft",
+        "graph_traversal",
+        "sorts",
+        "master_theorem",
+    }
     if boot_visualization is not None and boot_visualization not in allowed_visualizations:
         raise ControllerConfigError(
-            "boot.visualization_id must be system_info, fft, sorts, master_theorem, or null"
+            "boot.visualization_id must be system_info, fft, graph_traversal, "
+            "sorts, master_theorem, or null"
         )
 
     matrix = _require_object(root.get("matrix", {}), "matrix")
@@ -149,6 +157,9 @@ def load_controller_config(path: Path | None) -> ControllerConfig:
     parameters_by_visualization = {
         "system_info": (),
         "fft": tuple(p for p in FFT_PARAMETERS if p.name not in matrix_names),
+        "graph_traversal": tuple(
+            p for p in GRAPH_TRAVERSAL_PARAMETERS if p.name not in matrix_names
+        ),
         "master_theorem": tuple(
             p for p in MASTER_THEOREM_PARAMETERS if p.name not in matrix_names
         ),

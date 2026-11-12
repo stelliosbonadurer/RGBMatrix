@@ -280,6 +280,96 @@ MASTER_THEOREM_PARAMETERS: tuple[ParameterSpec, ...] = (
 )
 
 
+GRAPH_TRAVERSAL_PARAMETERS: tuple[ParameterSpec, ...] = (
+    *MATRIX_PARAMETERS,
+    ParameterSpec("n", "--n", "int", 12, "Number of graph nodes.", 2, 32),
+    ParameterSpec(
+        "e",
+        "--e",
+        "int",
+        0,
+        "Number of edges; zero selects a valid automatic count based on the other options.",
+        0,
+        90,
+    ),
+    ParameterSpec(
+        "traverse",
+        "--traverse",
+        "enum",
+        "bfs",
+        "Graph traversal algorithm.",
+        choices=("bfs", "dfs", "dijkstra"),
+    ),
+    ParameterSpec(
+        "seed",
+        "--seed",
+        "int",
+        0,
+        "Random seed; identical values reproduce the graph and edge weights.",
+        0,
+        2_147_483_647,
+    ),
+    ParameterSpec(
+        "connected",
+        "--connected",
+        "bool",
+        True,
+        "Guarantee connectivity for an undirected graph.",
+        negative_cli_flag="--not-connected",
+    ),
+    ParameterSpec(
+        "allow_cycles",
+        "--allow-cycles",
+        "bool",
+        False,
+        "Permit cycles in the generated graph.",
+        negative_cli_flag="--no-cycles",
+    ),
+    ParameterSpec(
+        "directed",
+        "--directed",
+        "bool",
+        False,
+        "Generate directed edges and render arrow markers.",
+        negative_cli_flag="--undirected",
+    ),
+    ParameterSpec(
+        "directed_connectivity",
+        "--directed-connectivity",
+        "enum",
+        "weak",
+        "Connectivity guarantee used when directed is enabled.",
+        choices=("strong", "weak", "none"),
+    ),
+    ParameterSpec(
+        "step_mode",
+        "--step-mode",
+        "enum",
+        "edge",
+        "Advance once per examined edge or once per processed node.",
+        choices=("edge", "node"),
+    ),
+    ParameterSpec(
+        "frame_duration",
+        "--frame-duration",
+        "float",
+        0.2,
+        "Seconds each traversal step remains on screen.",
+        0.01,
+        10.0,
+    ),
+    ParameterSpec(
+        "holding_period",
+        "--holding-period",
+        "int",
+        10,
+        "Final-frame duration measured in traversal frames.",
+        1,
+        10_000,
+    ),
+)
+
+
 def application_parameters(visualization_id: str) -> tuple[ParameterSpec, ...]:
     """Return only parameters owned by an application's parser extension.
 
@@ -290,6 +380,7 @@ def application_parameters(visualization_id: str) -> tuple[ParameterSpec, ...]:
 
     all_parameters = {
         "fft": FFT_PARAMETERS,
+        "graph_traversal": GRAPH_TRAVERSAL_PARAMETERS,
         "master_theorem": MASTER_THEOREM_PARAMETERS,
         "sorts": SORT_PARAMETERS,
     }

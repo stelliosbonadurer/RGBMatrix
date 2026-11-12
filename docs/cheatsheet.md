@@ -116,7 +116,7 @@ http://192.168.50.1:8080/setup
 ## Check running matrix processes
 
 ```bash
-pgrep -af 'matrix_controller.web_service|fft_program/main.py|visualize_sorts|system_info.py|master_theorem.py'
+pgrep -af 'matrix_controller.web_service|fft_program/main.py|visualize_sorts|system_info.py|master_theorem.py|graph_traversal.py'
 ```
 
 Stop the web controller before direct visualization tests so two processes do not
@@ -187,6 +187,41 @@ python3 launch_rgbmatrix.py \
   --example merge_sort \
   --no-animate
 ```
+
+## Graph traversal visualization
+
+Connected BFS tree, using automatic `e=n-1`:
+
+```bash
+cd /home/stelliosbonadurer/rgb_Matrix
+python3 launch_rgbmatrix.py \
+  --program my_programs.dsa_visualizations.graph_traversal \
+  --n 16 \
+  --e 0 \
+  --traverse bfs \
+  --seed 42 \
+  --step-mode edge \
+  --frame-duration 0.2 \
+  --holding-period 10
+```
+
+Directed, strongly connected Dijkstra graph:
+
+```bash
+python3 launch_rgbmatrix.py \
+  --program my_programs.dsa_visualizations.graph_traversal \
+  --n 16 \
+  --e 0 \
+  --traverse dijkstra \
+  --directed \
+  --directed-connectivity strong \
+  --allow-cycles \
+  --seed 42
+```
+
+Press `Ctrl+C` to stop. Edit
+`my_programs/dsa_visualizations/graph_traversal_config.json` to tune colors or switch
+between 1x1 and 2x2 nodes.
 
 ## Launcher diagnostics
 

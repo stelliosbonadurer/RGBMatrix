@@ -47,6 +47,19 @@
       "hold": 3.0,
       "cycles": 0
     },
+    "graph_traversal": {
+      "n": 12,
+      "e": 0,
+      "traverse": "bfs",
+      "seed": 0,
+      "connected": true,
+      "allow_cycles": false,
+      "directed": false,
+      "directed_connectivity": "weak",
+      "step_mode": "edge",
+      "frame_duration": 0.2,
+      "holding_period": 10
+    },
     "sorts": {
       "mode": "random",
       "sort": "quick",

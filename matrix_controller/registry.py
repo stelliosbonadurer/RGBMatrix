@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 from .definitions import (
     FFT_PARAMETERS,
+    GRAPH_TRAVERSAL_PARAMETERS,
     MASTER_THEOREM_PARAMETERS,
     MATRIX_PARAMETERS,
     SORT_PARAMETERS,
@@ -91,6 +92,20 @@ def build_default_registry(
                 script_path=root / "my_programs" / "visualize_sorts.py",
                 working_directory=root / "my_programs",
                 parameters=_with_defaults(SORT_PARAMETERS, defaults.get("sorts", {})),
+                supports_live_control=False,
+            ),
+            VisualizationSpec(
+                visualization_id="graph_traversal",
+                display_name="Graph Traversal",
+                description="Animates BFS, DFS, and Dijkstra on a reproducible planar graph.",
+                script_path=(
+                    root / "my_programs" / "dsa_visualizations" / "graph_traversal.py"
+                ),
+                working_directory=root / "my_programs" / "dsa_visualizations",
+                parameters=_with_defaults(
+                    GRAPH_TRAVERSAL_PARAMETERS,
+                    defaults.get("graph_traversal", {}),
+                ),
                 supports_live_control=False,
             ),
             VisualizationSpec(

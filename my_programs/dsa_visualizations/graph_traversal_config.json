@@ -1,0 +1,19 @@
+{
+  "node_size": 2,
+  "colors": {
+    "background": [0, 0, 0],
+    "node": [160, 160, 160],
+    "start_node": [0, 90, 255],
+    "target_node": [255, 0, 0],
+    "current_node": [255, 100, 0],
+    "frontier_node": [0, 220, 255],
+    "visited_node": [0, 145, 70],
+    "unvisited_edge": [210, 210, 210],
+    "traversed_edge": [0, 210, 60],
+    "current_edge": [255, 80, 180],
+    "cycle_edge": [180, 40, 255],
+    "shortest_path": [80, 255, 80],
+    "dijkstra_low_weight": [235, 235, 235],
+    "dijkstra_high_weight": [255, 210, 0]
+  }
+}
