@@ -172,8 +172,50 @@ class GraphRenderingTests(unittest.TestCase):
         canvas = RecordingCanvas()
         GraphRenderer(config, "bfs").render(canvas, graph, frame)
         self.assertIn(config.colors.current_edge, canvas.pixels.values())
-        self.assertIn(config.colors.start_node, canvas.pixels.values())
+        self.assertEqual(canvas.pixels[(5, 5)], config.colors.current_node)
         self.assertIn(config.colors.target_node, canvas.pixels.values())
+
+    def test_processed_nodes_return_to_their_stable_colors(self) -> None:
+        config = load_render_config()
+        self.assertEqual(config.node_size, 1)
+        graph = Graph(
+            (Point(5, 5), Point(20, 5), Point(35, 5)),
+            (Edge(0, 0, 1, 1), Edge(1, 1, 2, 1)),
+            False,
+            0,
+            2,
+        )
+        active = TraversalFrame(
+            1,
+            None,
+            frozenset({0, 1}),
+            frozenset({2}),
+            frozenset({0}),
+            frozenset(),
+            frozenset(),
+        )
+        canvas = RecordingCanvas()
+        renderer = GraphRenderer(config, "bfs")
+        renderer.render(canvas, graph, active)
+        self.assertEqual(canvas.pixels[(5, 5)], config.colors.start_node)
+        self.assertEqual(canvas.pixels[(20, 5)], config.colors.current_node)
+        self.assertEqual(canvas.pixels[(35, 5)], config.colors.target_node)
+
+        complete = TraversalFrame(
+            None,
+            None,
+            frozenset({0, 1, 2}),
+            frozenset(),
+            frozenset({0, 1}),
+            frozenset(),
+            frozenset(),
+            complete=True,
+            target_reached=True,
+        )
+        renderer.render(canvas, graph, complete)
+        self.assertEqual(canvas.pixels[(5, 5)], config.colors.start_node)
+        self.assertEqual(canvas.pixels[(20, 5)], config.colors.node)
+        self.assertEqual(canvas.pixels[(35, 5)], config.colors.target_node)
 
     def test_dijkstra_unvisited_weights_use_different_colors(self) -> None:
         config = load_render_config()

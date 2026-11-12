@@ -220,8 +220,7 @@ python3 launch_rgbmatrix.py \
 ```
 
 Press `Ctrl+C` to stop. Edit
-`my_programs/dsa_visualizations/graph_traversal_config.json` to tune colors or switch
-between 1x1 and 2x2 nodes.
+`my_programs/dsa_visualizations/graph_traversal_config.json` to tune colors.
 
 ## Launcher diagnostics
 

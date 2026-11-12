@@ -21,8 +21,6 @@ class GraphColors:
     start_node: Color
     target_node: Color
     current_node: Color
-    frontier_node: Color
-    visited_node: Color
     unvisited_edge: Color
     traversed_edge: Color
     current_edge: Color
@@ -107,16 +105,12 @@ class GraphRenderer:
 
     def _node_color(self, index: int, graph: Graph, frame: TraversalFrame) -> Color:
         colors = self.config.colors
+        if index == frame.current_node:
+            return colors.current_node
         if index == graph.start:
             return colors.start_node
         if index == graph.target:
             return colors.target_node
-        if index == frame.current_node:
-            return colors.current_node
-        if index in frame.frontier_nodes:
-            return colors.frontier_node
-        if index in frame.visited_nodes:
-            return colors.visited_node
         return colors.node
 
     def _draw_node(self, canvas, point: Point, color: Color) -> None:

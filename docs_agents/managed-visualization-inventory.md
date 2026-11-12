@@ -153,7 +153,8 @@ Frames can advance by processed node or examined edge. The completed frame is he
 `holding_period * frame_duration`, then the same traversal replays. DFS colors every
 edge in a discovered cycle. Dijkstra maps unvisited weights 1 through 9 from white to
 yellow, colors examined edges separately, and highlights the final shortest path.
-Rendering colors and the 1x1 or 2x2 node size are editable in
+Nodes are one pixel and retain their normal, start, or target color after processing;
+only the currently processed node changes color. Rendering colors are editable in
 `my_programs/dsa_visualizations/graph_traversal_config.json`.
 
 ## Supervisor lifecycle
