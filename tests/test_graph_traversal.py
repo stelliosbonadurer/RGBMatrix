@@ -130,6 +130,9 @@ class TraversalTests(unittest.TestCase):
         for method in ("bfs", "dfs", "dijkstra"):
             with self.subTest(method=method):
                 frames = list(traversal_frames(graph, method, "edge"))
+                self.assertIsNone(frames[0].current_node)
+                self.assertIsNone(frames[0].examined_edge)
+                self.assertFalse(frames[0].traversed_edges)
                 self.assertTrue(frames[-1].complete)
                 self.assertTrue(frames[-1].target_reached)
                 self.assertTrue(any(frame.examined_edge is not None for frame in frames))
@@ -192,6 +195,7 @@ class GraphRenderingTests(unittest.TestCase):
     def test_processed_nodes_return_to_their_stable_colors(self) -> None:
         config = load_render_config()
         self.assertEqual(config.node_size, 1)
+        self.assertEqual(config.endpoint_node_size, 2)
         graph = Graph(
             (Point(5, 5), Point(20, 5), Point(35, 5)),
             (Edge(0, 0, 1, 1), Edge(1, 1, 2, 1)),
@@ -212,8 +216,12 @@ class GraphRenderingTests(unittest.TestCase):
         renderer = GraphRenderer(config, "bfs")
         renderer.render(canvas, graph, active)
         self.assertEqual(canvas.pixels[(5, 5)], config.colors.start_node)
+        self.assertEqual(canvas.pixels[(6, 5)], config.colors.start_node)
+        self.assertEqual(canvas.pixels[(5, 6)], config.colors.start_node)
+        self.assertEqual(canvas.pixels[(6, 6)], config.colors.start_node)
         self.assertEqual(canvas.pixels[(20, 5)], config.colors.current_node)
         self.assertEqual(canvas.pixels[(35, 5)], config.colors.target_node)
+        self.assertEqual(canvas.pixels[(36, 6)], config.colors.target_node)
 
         complete = TraversalFrame(
             None,

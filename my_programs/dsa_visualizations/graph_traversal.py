@@ -78,10 +78,12 @@ def main() -> int:
     try:
         # Replay the same seeded graph so a managed visualization remains alive and reproducible.
         while True:
-            for frame in traversal_frames(graph, options.traversal, options.step_mode):
+            for frame_index, frame in enumerate(
+                traversal_frames(graph, options.traversal, options.step_mode)
+            ):
                 renderer.render(app.canvas, graph, frame)
                 app.swap_canvas()
-                if frame.complete:
+                if frame_index == 0 or frame.complete:
                     time.sleep(args.frame_duration * args.holding_period)
                 else:
                     time.sleep(args.frame_duration)

@@ -363,7 +363,7 @@ GRAPH_TRAVERSAL_PARAMETERS: tuple[ParameterSpec, ...] = (
         "--holding-period",
         "int",
         10,
-        "Final-frame duration measured in traversal frames.",
+        "Opening- and final-frame duration measured in traversal frames.",
         1,
         10_000,
     ),

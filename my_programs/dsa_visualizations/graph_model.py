@@ -415,7 +415,7 @@ def _bfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
     traversed: set[int] = set()
     parent_edge: dict[int, int] = {}
     parent_node: dict[int, int] = {}
-    yield _frame(graph.start, None, visited, set(queue), traversed, set())
+    yield _frame(None, None, visited, set(queue), traversed, set())
 
     reached = False
     while queue and not reached:
@@ -454,7 +454,7 @@ def _dfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
     parent_node: dict[int, int] = {}
     reached = False
 
-    yield _frame(graph.start, None, visited, {graph.start}, traversed, cycles)
+    yield _frame(None, None, visited, {graph.start}, traversed, cycles)
 
     def visit(current: int) -> Iterator[TraversalFrame]:
         nonlocal reached
@@ -502,7 +502,7 @@ def _dijkstra_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFra
     parent_edge: dict[int, int] = {}
     parent_node: dict[int, int] = {}
     reached = False
-    yield _frame(graph.start, None, settled, {graph.start}, traversed, set())
+    yield _frame(None, None, settled, {graph.start}, traversed, set())
 
     while queue:
         distance, current = heapq.heappop(queue)

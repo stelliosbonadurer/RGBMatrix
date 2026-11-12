@@ -150,14 +150,16 @@ acyclic graph requires exactly `n-1` edges. Strictly planar graphs have the gene
 upper bound `3n-6`; strong directed connectivity requires cycles and at least `n`
 edges. The application reports invalid combinations before matrix initialization.
 
-Frames can advance by processed node or examined edge. The completed frame is held for
-`holding_period * frame_duration`, then the same traversal replays. DFS colors every
-edge in a discovered cycle. Dijkstra maps unvisited weights 1 through 9 from white to
-yellow, colors examined edges separately, and highlights the final shortest path.
+Frames can advance by processed node or examined edge. The untouched opening frame and
+completed frame are each held for `holding_period * frame_duration`, then the same
+traversal replays. DFS colors every edge in a discovered cycle. Dijkstra maps unvisited
+weights 1 through 9 from white to yellow, colors examined edges separately, and
+highlights the final shortest path.
 During Dijkstra, explored edges and the current predecessor tree use separate colors;
 when relaxation replaces a predecessor, the old edge returns to the explored color.
-Nodes are one pixel and retain their normal, start, or target color after processing;
-only the currently processed node changes color. Rendering colors are editable in
+Ordinary nodes are one pixel while the start and target default to 2x2; both sizes are
+configurable. Nodes retain their normal, start, or target color after processing; only
+the currently processed node changes color. Rendering colors are editable in
 `my_programs/dsa_visualizations/graph_traversal_config.json`.
 
 ## Supervisor lifecycle

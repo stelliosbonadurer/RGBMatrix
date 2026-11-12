@@ -35,6 +35,7 @@ class GraphColors:
 @dataclass(frozen=True)
 class RenderConfig:
     node_size: int
+    endpoint_node_size: int
     direction_marker_pixels: int
     colors: GraphColors
 
@@ -46,14 +47,22 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
         raise ValueError(f"could not read graph rendering config: {path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON in graph rendering config: {exc}") from exc
-    if set(data) != {"node_size", "direction_marker_pixels", "colors"}:
+    if set(data) != {
+        "node_size",
+        "endpoint_node_size",
+        "direction_marker_pixels",
+        "colors",
+    }:
         raise ValueError(
-            "graph rendering config must contain only node_size, "
+            "graph rendering config must contain only node_size, endpoint_node_size, "
             "direction_marker_pixels, and colors"
         )
     node_size = data["node_size"]
     if type(node_size) is not int or not 1 <= node_size <= 2:
         raise ValueError("node_size must be 1 or 2")
+    endpoint_node_size = data["endpoint_node_size"]
+    if type(endpoint_node_size) is not int or not 1 <= endpoint_node_size <= 2:
+        raise ValueError("endpoint_node_size must be 1 or 2")
     direction_marker_pixels = data["direction_marker_pixels"]
     if (
         type(direction_marker_pixels) is not int
@@ -73,7 +82,7 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
             details.append(f"unknown: {', '.join(extra)}")
         raise ValueError(f"invalid graph colors ({'; '.join(details)})")
     colors = GraphColors(**{name: _parse_color(name, data["colors"][name]) for name in expected})
-    return RenderConfig(node_size, direction_marker_pixels, colors)
+    return RenderConfig(node_size, endpoint_node_size, direction_marker_pixels, colors)
 
 
 def _parse_color(name: str, value: object) -> Color:
@@ -105,7 +114,12 @@ class GraphRenderer:
                     self.config.direction_marker_pixels,
                 )
         for index, point in enumerate(graph.points):
-            self._draw_node(canvas, point, self._node_color(index, graph, frame))
+            size = (
+                self.config.endpoint_node_size
+                if index in {graph.start, graph.target}
+                else self.config.node_size
+            )
+            self._draw_node(canvas, point, self._node_color(index, graph, frame), size)
 
     def _edge_color(self, edge: Edge, frame: TraversalFrame) -> Color:
         colors = self.config.colors
@@ -135,8 +149,7 @@ class GraphRenderer:
             return colors.target_node
         return colors.node
 
-    def _draw_node(self, canvas, point: Point, color: Color) -> None:
-        size = self.config.node_size
+    def _draw_node(self, canvas, point: Point, color: Color, size: int) -> None:
         offset = (size - 1) // 2
         for dx in range(size):
             for dy in range(size):
