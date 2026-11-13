@@ -176,10 +176,11 @@ function configureGraphTraversalForm(item, form) {
   const ensurePathInput = control('ensure_path');
   const directedConnectivity = control('directed_connectivity');
   const componentType = control('component_type');
+  const animateBackEdges = control('animate_back_edges');
   const launchButton = form.querySelector('.launch-button');
   if (!nInput || !eInput || !connectedInput || !cyclesInput || !displayMode ||
       !traversalInput || !directedInput || !ensurePathInput || !directedConnectivity ||
-      !componentType) return;
+      !componentType || !animateBackEdges) return;
 
   const edgeDescription = wrapper('e')?.querySelector('small');
   let previousMst = false;
@@ -205,6 +206,11 @@ function configureGraphTraversalForm(item, form) {
     const allowCycles = cyclesInput.checked;
     const connected = connectedInput.checked;
     const traversingComponents = !split && traversalInput.value === 'components';
+    const backEdgesRelevant = !directed && (
+      displayMode.value === 'bfs_dfs_split' || (
+        !split && (traversalInput.value === 'bfs' || traversalInput.value === 'dfs')
+      )
+    );
 
     wrapper('traverse').hidden = split;
     wrapper('connected').hidden = directed || mst;
@@ -213,6 +219,7 @@ function configureGraphTraversalForm(item, form) {
     wrapper('directed_connectivity').hidden = !directed;
     wrapper('component_type').hidden = !traversingComponents;
     wrapper('step_mode').hidden = mst;
+    wrapper('animate_back_edges').hidden = !backEdgesRelevant;
 
     const strongGraphAvailable = directed && allowCycles && n >= 3;
     setOptionAvailable(directedConnectivity, 'strong', strongGraphAvailable);

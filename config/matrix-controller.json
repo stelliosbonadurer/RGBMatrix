@@ -60,6 +60,7 @@
       "directed_connectivity": "weak",
       "component_type": "weak",
       "step_mode": "edge",
+      "animate_back_edges": false,
       "frame_duration": 0.2,
       "holding_period": 10
     },

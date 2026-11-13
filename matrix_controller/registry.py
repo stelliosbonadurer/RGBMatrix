@@ -36,6 +36,7 @@ def _validate_graph_traversal(parameters: Mapping[str, Any]) -> None:
                 component_type=parameters["component_type"],
                 step_mode=parameters["step_mode"],
                 display_mode=parameters["display_mode"],
+                animate_back_edges=parameters["animate_back_edges"],
             )
         )
     except ValueError as exc:

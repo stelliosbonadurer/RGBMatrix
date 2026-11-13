@@ -42,6 +42,7 @@ def build_options(args) -> GraphOptions:
         component_type=args.component_type,
         step_mode=args.step_mode,
         display_mode=args.display_mode,
+        animate_back_edges=args.animate_back_edges,
     )
 
 
@@ -102,6 +103,7 @@ def main() -> int:
                     methods[0],
                     methods[1],
                     options.step_mode,
+                    options.animate_back_edges,
                 )
             else:
                 frames = (
@@ -111,6 +113,7 @@ def main() -> int:
                     options.traversal,
                     options.step_mode,
                     options.component_type,
+                    options.animate_back_edges,
                 )
                 )
             for frame_index, current_frames in enumerate(frames):

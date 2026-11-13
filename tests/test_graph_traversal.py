@@ -308,6 +308,65 @@ class TraversalTests(unittest.TestCase):
             frames = list(traversal_frames(graph, method, "node"))
             self.assertTrue(all(frame.examined_edge is None for frame in frames))
 
+    def test_bfs_and_dfs_share_the_animate_back_edges_option(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(12, 2), Point(22, 2), Point(12, 16)),
+            (
+                Edge(0, 0, 1, 1),
+                Edge(1, 0, 2, 1),
+                Edge(2, 1, 3, 1),
+            ),
+            False,
+            0,
+            3,
+        )
+
+        def examined(method: str, animate: bool) -> list[tuple[int | None, int]]:
+            return [
+                (frame.current_node, frame.examined_edge)
+                for frame in traversal_frames(
+                    graph,
+                    method,  # type: ignore[arg-type]
+                    "edge",
+                    animate_back_edges=animate,
+                )
+                if frame.examined_edge is not None
+            ]
+
+        self.assertEqual(examined("bfs", False), [(0, 0), (0, 1), (1, 2)])
+        self.assertEqual(examined("dfs", False), [(0, 0), (1, 2)])
+        self.assertEqual(
+            examined("bfs", True),
+            [(0, 0), (0, 1), (1, 0), (1, 2)],
+        )
+        self.assertEqual(examined("dfs", True), [(0, 0), (1, 0), (1, 2)])
+        dfs_final = list(
+            traversal_frames(graph, "dfs", "edge", animate_back_edges=True)
+        )[-1]
+        self.assertNotIn(0, dfs_final.cycle_edges)
+
+    def test_split_scheduler_forwards_animate_back_edges_to_both_sides(self) -> None:
+        graph = Graph(
+            (Point(2, 2), Point(12, 2), Point(22, 2)),
+            (Edge(0, 0, 1, 1), Edge(1, 1, 2, 1)),
+            False,
+            0,
+            2,
+        )
+        paired = list(
+            parallel_traversal_frames(
+                graph,
+                "bfs",
+                "dfs",
+                "edge",
+                animate_back_edges=True,
+            )
+        )
+        left_examined = [left.examined_edge for left, _ in paired]
+        right_examined = [right.examined_edge for _, right in paired]
+        self.assertGreaterEqual(left_examined.count(0), 2)
+        self.assertGreaterEqual(right_examined.count(0), 2)
+
     def test_parallel_scheduler_holds_the_earlier_finisher(self) -> None:
         graph = Graph(
             (Point(2, 2), Point(12, 2), Point(22, 2), Point(12, 16)),
@@ -792,6 +851,7 @@ class GraphTraversalCliTests(unittest.TestCase):
                 "directed": True,
                 "directed_connectivity": "strong",
                 "component_type": "strong",
+                "animate_back_edges": True,
             }
         )
         argv = definition.build_argv("/fixed/python", values)
@@ -806,6 +866,7 @@ class GraphTraversalCliTests(unittest.TestCase):
         self.assertTrue(parsed.ensure_path)
         self.assertEqual(parsed.directed_connectivity, "strong")
         self.assertEqual(parsed.component_type, "strong")
+        self.assertTrue(parsed.animate_back_edges)
 
     def test_mst_split_managed_argv_is_accepted(self) -> None:
         definition = build_default_registry().get("graph_traversal")

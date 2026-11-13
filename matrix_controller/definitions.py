@@ -374,6 +374,14 @@ GRAPH_TRAVERSAL_PARAMETERS: tuple[ParameterSpec, ...] = (
         choices=("edge", "node"),
     ),
     ParameterSpec(
+        "animate_back_edges",
+        "--animate-back-edges",
+        "bool",
+        False,
+        "Animate an undirected discovery edge again when examined from its child.",
+        negative_cli_flag="--no-animate-back-edges",
+    ),
+    ParameterSpec(
         "frame_duration",
         "--frame-duration",
         "float",

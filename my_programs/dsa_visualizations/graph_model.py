@@ -54,6 +54,7 @@ class GraphOptions:
     component_type: ComponentType = "weak"
     step_mode: StepMode = "edge"
     display_mode: DisplayMode = "single"
+    animate_back_edges: bool = False
 
 
 @dataclass(frozen=True)
@@ -441,11 +442,12 @@ def traversal_frames(
     method: TraversalMethod,
     step_mode: StepMode,
     component_type: ComponentType = "weak",
+    animate_back_edges: bool = False,
 ) -> Iterator[TraversalFrame]:
     if method == "bfs":
-        yield from _bfs_frames(graph, step_mode)
+        yield from _bfs_frames(graph, step_mode, animate_back_edges)
     elif method == "dfs":
-        yield from _dfs_frames(graph, step_mode)
+        yield from _dfs_frames(graph, step_mode, animate_back_edges)
     elif method == "dijkstra":
         yield from _dijkstra_frames(graph, step_mode)
     elif method == "components":
@@ -463,11 +465,26 @@ def parallel_traversal_frames(
     left_method: TraversalMethod,
     right_method: TraversalMethod,
     step_mode: StepMode,
+    animate_back_edges: bool = False,
 ) -> Iterator[tuple[TraversalFrame, TraversalFrame]]:
     """Advance two traversals once per tick and hold either completed side."""
 
-    left_frames = iter(traversal_frames(graph, left_method, step_mode))
-    right_frames = iter(traversal_frames(graph, right_method, step_mode))
+    left_frames = iter(
+        traversal_frames(
+            graph,
+            left_method,
+            step_mode,
+            animate_back_edges=animate_back_edges,
+        )
+    )
+    right_frames = iter(
+        traversal_frames(
+            graph,
+            right_method,
+            step_mode,
+            animate_back_edges=animate_back_edges,
+        )
+    )
     left = next(left_frames)
     right = next(right_frames)
     yield left, right
@@ -620,7 +637,11 @@ def _path_edges(parent_edge: dict[int, int], parent_node: dict[int, int], target
     return path if current == start else set()
 
 
-def _bfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
+def _bfs_frames(
+    graph: Graph,
+    step_mode: StepMode,
+    animate_back_edges: bool,
+) -> Iterator[TraversalFrame]:
     adjacent = _adjacency(graph)
     queue = deque([graph.start])
     discovered = {graph.start}
@@ -638,6 +659,12 @@ def _bfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
             reached = True
             break
         for neighbor, edge in adjacent[current]:
+            if (
+                not graph.directed
+                and not animate_back_edges
+                and parent_edge.get(current) == edge.index
+            ):
+                continue
             traversed.add(edge.index)
             if neighbor not in discovered:
                 discovered.add(neighbor)
@@ -657,7 +684,11 @@ def _bfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
     yield _frame(None, None, visited, set(queue), traversed, set(), complete=True, target_reached=reached)
 
 
-def _dfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
+def _dfs_frames(
+    graph: Graph,
+    step_mode: StepMode,
+    animate_back_edges: bool,
+) -> Iterator[TraversalFrame]:
     adjacent = _adjacency(graph)
     visited: set[int] = set()
     traversed: set[int] = set()
@@ -676,6 +707,7 @@ def _dfs_frames(graph: Graph, step_mode: StepMode) -> Iterator[TraversalFrame]:
         traversed=traversed,
         cycles=cycles,
         parent_edge=parent_edge,
+        animate_back_edges=animate_back_edges,
     )
     yield _frame(None, None, visited, set(), traversed, cycles, complete=True, target_reached=reached)
 
@@ -692,6 +724,7 @@ def _dfs_walk_frames(
     traversed: set[int],
     cycles: set[int],
     parent_edge: dict[int, int],
+    animate_back_edges: bool = False,
     component_ids: list[int] | None = None,
     show_component_roots: bool = False,
 ) -> Generator[TraversalFrame, None, bool]:
@@ -729,7 +762,20 @@ def _dfs_walk_frames(
         for neighbor, edge in adjacent[current]:
             if reached:
                 break
-            if bidirectional and parent_edge.get(current) == edge.index:
+            is_parent_edge = bidirectional and parent_edge.get(current) == edge.index
+            if is_parent_edge:
+                if animate_back_edges:
+                    traversed.add(edge.index)
+                    if step_mode == "edge":
+                        yield _frame(
+                            current,
+                            edge.index,
+                            visited,
+                            set(active),
+                            traversed,
+                            cycles,
+                            component_ids=component_ids,
+                        )
                 continue
             traversed.add(edge.index)
             if neighbor not in visited:

@@ -160,6 +160,10 @@ completed frame are each held for `holding_period * frame_duration`, then the sa
 traversal replays. DFS colors every edge in a discovered cycle. Dijkstra maps unvisited
 weights 1 through 9 from white to yellow, colors examined edges separately, and
 highlights the final shortest path.
+For undirected BFS and DFS, `animate_back_edges=false` suppresses the redundant reverse
+examination of the edge that discovered the current node. Setting it to `true` animates
+that check consistently in both algorithms; DFS does not misclassify the parent edge as
+a cycle. The same setting applies to both sides of BFS/DFS split mode.
 During Dijkstra, explored edges and the current predecessor tree use separate colors;
 when relaxation replaces a predecessor, the old edge returns to the explored color.
 Edges are rendered in state layers so the predecessor tree appears above overlapping
