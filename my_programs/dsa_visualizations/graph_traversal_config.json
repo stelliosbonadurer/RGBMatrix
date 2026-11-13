@@ -47,7 +47,7 @@
     "predecessor_edge": [0, 0, 255],
     "current_edge": [255, 80, 180],
     "direction_marker": [255, 100, 0],
-    "cycle_edge": [180, 40, 255],
+    "cycle_edge": [100, 255, 100],
     "shortest_path": [255, 0, 0],
     "dijkstra_low_weight": [235, 235, 235],
     "dijkstra_high_weight": [255, 210, 0],
