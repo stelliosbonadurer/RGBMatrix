@@ -1,5 +1,8 @@
 # Product, State, and Control Model
 
+> **Archived failed-refactor reference.** Preserve the product/control concepts, but
+> do not restore the discarded runtime or its hot-path representations unchanged.
+
 ## Product goals
 
 The music page should behave like an editor, not a bank of remote-control switches.
@@ -96,9 +99,49 @@ The recommended visual-layer graph is:
 - A synchronized table with frequency and gain inputs for exact editing.
 - Add, remove, reset, and flatten actions.
 - Validation messages appear at the affected point, not only at page level.
+- An explicit output-bin count and scale selector, for example `64 / Log`.
+- Faint bin-edge lines aligned through the response plot.
+- A `Visual bins` strip directly beneath the plot containing one cell per output
+  bin, aligned to the same X axis.
+- Tap, hover, arrow-key, and numeric-index selection for inspecting an individual
+  visual bin.
 
 The graph may display a downsampled live spectrum as context, but the live trace is
 view-only and must never be required for editing or Apply.
+
+### Visual-bin coverage inspector
+
+The response curve is continuous, but the rendered layer is discrete. The editor
+must make that conversion visible instead of implying that every horizontal pixel
+represents an exact point frequency.
+
+For `N` output bins, the layer compiler creates `N + 1` frequency edges from the
+selected range and scale. Visual bin `i` represents `[edge[i], edge[i + 1])`; the
+final bin includes its upper edge. On a logarithmic graph, logarithmically spaced
+visual bins have equal on-screen widths while their Hz intervals grow toward the
+right.
+
+Selecting a cell highlights the matching vertical slice and reports:
+
+- Visual-bin index and total, such as `Bin 17 of 64`.
+- Exact lower and upper frequency edges.
+- Geometric center for logarithmic bins or arithmetic center for linear bins.
+- Effective gain used by the compiled response curve.
+- Aggregation method, initially mean/RMS as selected by the layer definition.
+- The FFT coefficient indexes/count contributing to the bin.
+- Analyzer coefficient spacing: `sample_rate / fft_samples`.
+- Effective independent frequency resolution: approximately
+  `sample_rate / window_samples`, so zero-padding is not presented as new measured
+  information.
+- Coverage state: normal, empty/interpolated, or undersampled/shared resolution.
+
+Do not label all 64 cells. The aligned band supplies spatial information; one
+selected-bin inspector supplies precise text. Major axis labels remain frequency
+landmarks. Empty or weakly supported bins receive a restrained warning pattern and
+an accessible status, not color alone.
+
+This band represents **visual output bins**, not the analyzer's raw FFT
+coefficients. The UI uses those exact terms consistently.
 
 ## State entities
 
@@ -149,12 +192,13 @@ or preferred rate, but the effective analyzer state must show the actual rate.
   "analysis_source_id": "analyzer-uuid",
   "visible": true,
   "frequency_scale": "log",
+  "bins": 64,
+  "bin_aggregation": "mean",
   "response_points": [
     {"frequency_hz": 60.0, "gain_db": 0.0},
     {"frequency_hz": 250.0, "gain_db": 5.0},
     {"frequency_hz": 1950.0, "gain_db": -8.0}
   ],
-  "bins": 64,
   "normalization": {"mode": "rolling_rms", "headroom": 2.5},
   "smoothing": {"attack_ms": 25.0, "release_ms": 180.0},
   "render": {
@@ -251,4 +295,3 @@ Reload or Save Draft As.
 
 Limits should be advertised by the schema so the browser can give immediate feedback,
 but the service and runtime remain authoritative.
-

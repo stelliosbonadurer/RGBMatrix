@@ -1,0 +1,160 @@
+{
+  "label": "refactored-uncapped-240-target",
+  "captured_at": "2026-11-18",
+  "host": "stelliosbonadurer@10.8.184.98",
+  "duration_seconds": 30.02536837399998,
+  "run_id": "2",
+  "revision": 1,
+  "configuration": {
+    "name": "Pi 64x64 Default 60 FPS",
+    "content_fps_target": 240,
+    "window_function": "hann",
+    "window_samples": 512,
+    "hop_samples": 512,
+    "fft_samples": 8192,
+    "visual_bins": 64,
+    "visual_layers": 1,
+    "gradient": false,
+    "overflow": true,
+    "peaks": false,
+    "shadows": false,
+    "brightness_limit": 1.0
+  },
+  "summary": {
+    "rendered_frames": 1394,
+    "achieved_content_fps": 46.427407072451224,
+    "render_drops": 5827,
+    "render_p50_ms": 15.007612000090376,
+    "render_p95_ms": 23.823074000006272,
+    "render_p99_ms": 28.032375999941905,
+    "render_max_ms": 47.867506999978104,
+    "analyzer_runs": 1036,
+    "analyzer_rate_hz": 34.50415618870837,
+    "missed_hops": 1552,
+    "analyzer_p50_ms": 15.661311000030764,
+    "analyzer_p95_ms": 24.783909999996467,
+    "analyzer_p99_ms": 30.854347000058624,
+    "analyzer_max_ms": 33.100077999961286,
+    "audio_overruns": 1,
+    "audio_underflows": 0,
+    "callback_failures": 0,
+    "callback_status_events": 1,
+    "audio_discontinuities": 1,
+    "duplicate_analyzer_executions": 0,
+    "transform_failures": 0,
+    "process_cpu_percent": 122.06344829306572,
+    "rss_kib_start": 71404,
+    "rss_kib_end": 71404,
+    "process_threads": 7,
+    "snapshot_latency_ms_start": 44.69557899994925,
+    "snapshot_latency_ms_end": 53.54126800000358,
+    "temperature": "temp=56.4'C",
+    "throttled": "throttled=0x0"
+  },
+  "output_totals_at_end": {
+    "frames_published": 14103,
+    "bulk_frames": 14103,
+    "compatibility_pixel_frames": 0,
+    "set_image_calls": 14103,
+    "set_pixel_calls": 0,
+    "swap_calls": 14103
+  },
+  "telemetry_totals_at_end": {
+    "audio": {
+      "ready": true,
+      "running": true,
+      "frames_received": 16190976,
+      "discontinuities": 4,
+      "overruns": 4,
+      "underflows": 0,
+      "callback_status_events": 4,
+      "reconnects": 0,
+      "callback_failures": 0,
+      "ring_capacity_samples": 131072,
+      "ring_retained_samples": 131072,
+      "ring_overwritten_samples": 16059904,
+      "ring_high_water_samples": 131072,
+      "sample_rate": 44100,
+      "channel_count": 1
+    },
+    "scheduler": {
+      "wakeups": 15921,
+      "transforms_started": 15913,
+      "frames_published": 15912,
+      "missed_hops": 15709,
+      "duplicate_executions": 0,
+      "transform_failures": 0
+    },
+    "analyzer": {
+      "compute_id": "fft-de24220f9253ef7ac2fa3b21",
+      "runs": 15913,
+      "published_frames": 15912,
+      "missed_hops": 15709,
+      "duplicate_executions": 0,
+      "transform_failures": 0,
+      "last_end_sample": 16189440
+    },
+    "compositor": {
+      "frames": 14103,
+      "layers_seen": 14103,
+      "visible_layers": 14103,
+      "temporal_updates": 14103,
+      "render_calls": 14103,
+      "dense_render_calls": 0,
+      "span_render_calls": 14103,
+      "hidden_layers_culled": 0,
+      "fully_occluded_layers_culled": 0,
+      "partially_occluded_layers": 0,
+      "full_coverage_frames": 0,
+      "pixels_offered": 7701911,
+      "pixels_claimed": 7701911,
+      "pixels_rejected_occupied": 0
+    }
+  },
+  "counter_window": {
+    "before": {
+      "render_frames": 12709,
+      "render_dropped": 17703,
+      "analyzer_runs": 14877,
+      "analyzer_frames_published": 14876,
+      "analyzer_missed_hops": 14157,
+      "audio_frames_received": 14865408,
+      "audio_overruns": 3,
+      "audio_underflows": 0,
+      "audio_callback_failures": 0
+    },
+    "after": {
+      "render_frames": 14103,
+      "render_dropped": 23530,
+      "analyzer_runs": 15913,
+      "analyzer_frames_published": 15912,
+      "analyzer_missed_hops": 15709,
+      "audio_frames_received": 16190976,
+      "audio_overruns": 4,
+      "audio_underflows": 0,
+      "audio_callback_failures": 0
+    }
+  },
+  "process_sample_window": {
+    "first_sample": {
+      "cpu_seconds": 428.13,
+      "rss_kib": 71404,
+      "threads": 7,
+      "voluntary_context_switches": 102592,
+      "nonvoluntary_context_switches": 2550
+    },
+    "last_sample": {
+      "cpu_seconds": 463.51,
+      "rss_kib": 71404,
+      "threads": 7,
+      "voluntary_context_switches": 112990,
+      "nonvoluntary_context_switches": 2850
+    }
+  },
+  "notes": [
+    "The 240 FPS schema ceiling was used as an effectively uncapped target.",
+    "The bulk SetImage path was active for every published frame.",
+    "The process was not thermally throttled.",
+    "The run used the real iMM-6C source and physical 64x64 HUB75 panel."
+  ]
+}

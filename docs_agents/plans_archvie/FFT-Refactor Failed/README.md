@@ -1,17 +1,36 @@
 # FFT / Music Refactor Plan
 
-Status: planning only — no implementation in this leg
+> **Status: archived plan for a failed implementation.** This plan was implemented
+> and functionally qualified on November 17, 2026, but the November 18 same-hardware
+> comparison showed a major end-to-end performance regression. It is retained to
+> explain the intended contracts and the design choices that must not be repeated.
+> It is not the current architecture or an approved implementation roadmap.
+
+See the archived session evidence:
+
+- [`2026-11-17-fft-refactor-session-summary.md`](../../session%20summaries/2026-11-17-fft-refactor-session-summary.md)
+- [`2026-11-17-tests-fft-refactor.md`](../../session%20summaries/2026-11-17-tests-fft-refactor.md)
+- [`2026-11-18-performance-comparison/README.md`](../../session%20summaries/2026-11-18-performance-comparison/README.md)
+- [`pipeline-comparison-and-next-architecture.md`](../../session%20summaries/2026-11-18-performance-comparison/pipeline-comparison-and-next-architecture.md)
+
+## Historical target
 
 Target: Raspberry Pi 4 at `10.8.184.98`, one 64x64 HUB75 panel, Adafruit
 HAT/Bonnet mapping, current USB microphone, future Bluetooth phone input
 
-This folder is the authoritative plan for turning the current FFT program into a
+This folder was the authoritative plan for turning the then-current FFT program into a
 multi-analyzer, multi-layer music visualization system with a usable phone editor.
 It supersedes the older assumption that every visual layer must share exactly one
 FFT. Audio capture is shared once, while one transform is scheduled for each
 distinct active FFT analyzer configuration.
 
 ## Decisions
+
+These decisions are historical. The configuration/control concepts remain useful,
+but decisions 4 and 8 were implemented with Python-heavy ring, frame, compositor,
+and buffer boundaries that failed in combination. Any successor must use bulk
+array/shared-memory data movement, preserve a direct one-layer fast path, and pass an
+early legacy-relative hardware gate.
 
 1. Keep Python as the product/orchestration language. NumPy performs the FFT in
    compiled code and `rpi-rgb-led-matrix` performs panel refresh in native C++.
@@ -69,10 +88,12 @@ distinct active FFT analyzer configuration.
 
 ## Draft interface mockup
 
-![Draft mobile FFT layer editor](layer-editor-draft.png)
+![Draft mobile FFT layer editor with visual-bin coverage](layer-editor-draft-v2.png)
 
-The mockup shows the intended information hierarchy and draft/Apply workflow. It is
-a product-design reference rather than a pixel-perfect implementation requirement.
+The V2 mockup adds the visual-bin coverage band and selected-bin inspector. The
+original draft remains at [`layer-editor-draft.png`](layer-editor-draft.png) for
+comparison. These are product-design references rather than pixel-perfect
+implementation requirements.
 
 ## Target system at a glance
 
@@ -120,5 +141,6 @@ FFTs, or visible frame regressions.
 | CPU-budget validation before Apply | Distinct-computation estimate, hard limits, staging, and rejection in [CPU-budget validation](02-runtime-and-analysis-architecture.md#cpu-budget-validation) |
 | Processing/missed-hop/audio/frame telemetry | Fixed-size metrics defined in [rendering and telemetry](04-rendering-performance-and-telemetry.md#telemetry-model) |
 | Avoid drawing hidden/covered lower layers | Opaque top-first coverage mask, hidden-layer cull, remaining-mask render, and full-frame early exit |
+| Show the frequency range represented by every visual bin | Aligned visual-bin band, exact edge intervals, and tap/hover inspector in the layer response editor |
 | Current duplicate/repeated FFT defect | Recorded in [current system audit](00-current-system-audit.md#current-data-flow-violations) and removed in roadmap Phase 1 |
 | Bluetooth initially silent, optional Pi output | Analysis-only default and a separate optional playback follow-up in [audio sources](05-audio-sources-and-bluetooth.md) |

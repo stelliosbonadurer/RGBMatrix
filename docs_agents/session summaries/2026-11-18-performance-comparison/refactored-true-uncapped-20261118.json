@@ -1,0 +1,508 @@
+{
+  "captured_at": "2026-11-18",
+  "configuration": {
+    "analyzers": [
+      {
+        "enabled": true,
+        "fft_samples": 8192,
+        "hop_samples": 512,
+        "id": "analyzer-default-current",
+        "name": "Default - Current",
+        "output": "magnitude",
+        "remove_dc": true,
+        "window_function": "hann",
+        "window_samples": 512
+      }
+    ],
+    "id": "configuration-migrated-current",
+    "layer_order_top_to_bottom": [
+      "layer-migrated-1-current-display"
+    ],
+    "name": "Pi 64x64 Default 60 FPS",
+    "output": {
+      "brightness_limit": 1.0,
+      "content_fps": 60
+    },
+    "schema_version": 1,
+    "visual_layers": [
+      {
+        "analysis_source_id": "analyzer-default-current",
+        "bin_aggregation": "mean",
+        "bins": 64,
+        "frequency_scale": "log",
+        "id": "layer-migrated-1-current-display",
+        "name": "Current display",
+        "normalization": {
+          "headroom": 2.5,
+          "mode": "rolling_rms"
+        },
+        "render": {
+          "bars": true,
+          "gradient": false,
+          "overflow": true,
+          "overflow_multiplier": 1.5,
+          "peaks": false,
+          "shadows": false,
+          "theme": "ocean"
+        },
+        "response_points": [
+          {
+            "frequency_hz": 100.0,
+            "gain_db": 3.659770042770764
+          },
+          {
+            "frequency_hz": 180.73765780529692,
+            "gain_db": 6.721151954367571
+          },
+          {
+            "frequency_hz": 326.661009489446,
+            "gain_db": 9.264567977426909
+          },
+          {
+            "frequency_hz": 590.3994575143636,
+            "gain_db": 11.424944625486027
+          },
+          {
+            "frequency_hz": 1067.0741512066395,
+            "gain_db": 13.296197752783803
+          },
+          {
+            "frequency_hz": 1928.6048279366335,
+            "gain_db": 14.943471242139811
+          },
+          {
+            "frequency_hz": 3485.7151943325466,
+            "gain_db": 16.412970214319564
+          },
+          {
+            "frequency_hz": 6300.0,
+            "gain_db": 17.738347482944057
+          }
+        ],
+        "smoothing": {
+          "attack_ms": 9.788075944856088,
+          "release_ms": 47.45610790514952
+        },
+        "type": "fft_bars",
+        "visible": true
+      }
+    ]
+  },
+  "duration_seconds": 30.02068940999993,
+  "environment": {
+    "RGBMATRIX_FFT_UNCAPPED": "1"
+  },
+  "label": "refactored-true-uncapped-no-wait",
+  "process_samples": [
+    {
+      "cpu_seconds": 44.08,
+      "nonvoluntary_context_switches": 577,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 12863
+    },
+    {
+      "cpu_seconds": 45.2,
+      "nonvoluntary_context_switches": 584,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 13185
+    },
+    {
+      "cpu_seconds": 46.28,
+      "nonvoluntary_context_switches": 596,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 13502
+    },
+    {
+      "cpu_seconds": 47.38,
+      "nonvoluntary_context_switches": 621,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 13824
+    },
+    {
+      "cpu_seconds": 48.49,
+      "nonvoluntary_context_switches": 625,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 14152
+    },
+    {
+      "cpu_seconds": 49.6,
+      "nonvoluntary_context_switches": 627,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 14477
+    },
+    {
+      "cpu_seconds": 50.65,
+      "nonvoluntary_context_switches": 627,
+      "rss_kib": 67540,
+      "threads": 7,
+      "voluntary_context_switches": 14793
+    },
+    {
+      "cpu_seconds": 51.75,
+      "nonvoluntary_context_switches": 627,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 15115
+    },
+    {
+      "cpu_seconds": 52.83,
+      "nonvoluntary_context_switches": 633,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 15437
+    },
+    {
+      "cpu_seconds": 53.94,
+      "nonvoluntary_context_switches": 671,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 15752
+    },
+    {
+      "cpu_seconds": 55.04,
+      "nonvoluntary_context_switches": 695,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 16070
+    },
+    {
+      "cpu_seconds": 56.12,
+      "nonvoluntary_context_switches": 696,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 16382
+    },
+    {
+      "cpu_seconds": 57.21,
+      "nonvoluntary_context_switches": 697,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 16689
+    },
+    {
+      "cpu_seconds": 58.34,
+      "nonvoluntary_context_switches": 699,
+      "rss_kib": 67668,
+      "threads": 7,
+      "voluntary_context_switches": 17020
+    },
+    {
+      "cpu_seconds": 59.43,
+      "nonvoluntary_context_switches": 736,
+      "rss_kib": 67796,
+      "threads": 7,
+      "voluntary_context_switches": 17327
+    },
+    {
+      "cpu_seconds": 60.56,
+      "nonvoluntary_context_switches": 754,
+      "rss_kib": 67796,
+      "threads": 7,
+      "voluntary_context_switches": 17669
+    },
+    {
+      "cpu_seconds": 61.66,
+      "nonvoluntary_context_switches": 763,
+      "rss_kib": 67796,
+      "threads": 7,
+      "voluntary_context_switches": 17994
+    },
+    {
+      "cpu_seconds": 62.78,
+      "nonvoluntary_context_switches": 777,
+      "rss_kib": 67796,
+      "threads": 7,
+      "voluntary_context_switches": 18325
+    },
+    {
+      "cpu_seconds": 63.9,
+      "nonvoluntary_context_switches": 800,
+      "rss_kib": 68052,
+      "threads": 7,
+      "voluntary_context_switches": 18646
+    },
+    {
+      "cpu_seconds": 64.99,
+      "nonvoluntary_context_switches": 818,
+      "rss_kib": 68052,
+      "threads": 7,
+      "voluntary_context_switches": 18956
+    },
+    {
+      "cpu_seconds": 66.07,
+      "nonvoluntary_context_switches": 819,
+      "rss_kib": 68052,
+      "threads": 7,
+      "voluntary_context_switches": 19291
+    },
+    {
+      "cpu_seconds": 67.15,
+      "nonvoluntary_context_switches": 821,
+      "rss_kib": 68052,
+      "threads": 7,
+      "voluntary_context_switches": 19620
+    },
+    {
+      "cpu_seconds": 68.22,
+      "nonvoluntary_context_switches": 822,
+      "rss_kib": 68052,
+      "threads": 7,
+      "voluntary_context_switches": 19931
+    },
+    {
+      "cpu_seconds": 69.3,
+      "nonvoluntary_context_switches": 823,
+      "rss_kib": 68180,
+      "threads": 7,
+      "voluntary_context_switches": 20248
+    },
+    {
+      "cpu_seconds": 70.39,
+      "nonvoluntary_context_switches": 847,
+      "rss_kib": 68180,
+      "threads": 7,
+      "voluntary_context_switches": 20557
+    },
+    {
+      "cpu_seconds": 71.5,
+      "nonvoluntary_context_switches": 861,
+      "rss_kib": 68180,
+      "threads": 7,
+      "voluntary_context_switches": 20881
+    },
+    {
+      "cpu_seconds": 72.65,
+      "nonvoluntary_context_switches": 895,
+      "rss_kib": 68180,
+      "threads": 7,
+      "voluntary_context_switches": 21209
+    },
+    {
+      "cpu_seconds": 73.76,
+      "nonvoluntary_context_switches": 903,
+      "rss_kib": 68308,
+      "threads": 7,
+      "voluntary_context_switches": 21532
+    },
+    {
+      "cpu_seconds": 74.88,
+      "nonvoluntary_context_switches": 919,
+      "rss_kib": 68308,
+      "threads": 7,
+      "voluntary_context_switches": 21850
+    },
+    {
+      "cpu_seconds": 76.02,
+      "nonvoluntary_context_switches": 945,
+      "rss_kib": 68308,
+      "threads": 7,
+      "voluntary_context_switches": 22172
+    }
+  ],
+  "revision": 0,
+  "run_id": "2",
+  "summary": {
+    "achieved_content_fps": 70.21824086750728,
+    "analyzer_p50_ms": 27.18877999996039,
+    "analyzer_p95_ms": 42.267623000043386,
+    "analyzer_p99_ms": 46.64983599991501,
+    "analyzer_rate_hz": 21.58511389096049,
+    "analyzer_runs": 648,
+    "audio_overruns": 61,
+    "audio_underflows": 0,
+    "bulk_frames_total": 4885,
+    "callback_failures": 0,
+    "missed_hops": 1714,
+    "pixel_frames_total": 0,
+    "process_cpu_percent": 110.35722580362976,
+    "render_drops": 0,
+    "render_p50_ms": 15.637761000107275,
+    "render_p95_ms": 23.787267999978212,
+    "render_p99_ms": 27.867715999946086,
+    "rendered_frames": 2108,
+    "rss_kib_end": 68564,
+    "rss_kib_start": 67540,
+    "snapshot_latency_ms_end": 52.886209999996936,
+    "snapshot_latency_ms_start": 48.92302899997958,
+    "temperature": "temp=56.9'C",
+    "throttled": "throttled=0x0"
+  },
+  "telemetry_after": {
+    "analyzers": [
+      {
+        "analyzer_compute_id": "fft-de24220f9253ef7ac2fa3b21",
+        "analyzer_ids": [
+          "analyzer-default-current"
+        ],
+        "duplicate_executions": 0,
+        "last_end_sample": 2692096,
+        "missed_hops": 3778,
+        "processing_max_seconds": 0.05108198800007813,
+        "processing_p50_seconds": 0.02718877999996039,
+        "processing_p95_seconds": 0.042267623000043386,
+        "processing_p99_seconds": 0.04664983599991501,
+        "published_frames": 1482,
+        "runs": 1483,
+        "transform_failures": 0
+      }
+    ],
+    "audio": {
+      "callback_failures": 0,
+      "callback_status_events": 166,
+      "discontinuities": 166,
+      "frames_received": 2695680,
+      "overruns": 166,
+      "ready": true,
+      "reconnects": 0,
+      "ring": {
+        "capacity_samples": 131072,
+        "channel_count": 1,
+        "discontinuities": 167,
+        "generation_start_sample": 0,
+        "high_water_samples": 131072,
+        "latest_sample": 2695680,
+        "oldest_sample": 2564608,
+        "overwritten_samples": 2564608,
+        "retained_samples": 131072,
+        "sample_rate": 44100,
+        "samples_written": 2695680,
+        "source_generation": 2
+      },
+      "running": true,
+      "underflows": 0
+    },
+    "render": {
+      "compositor": {
+        "dense_render_calls": 0,
+        "frames": 4885,
+        "full_coverage_frames": 0,
+        "fully_occluded_layers_culled": 0,
+        "hidden_layers_culled": 0,
+        "layers_seen": 4885,
+        "partially_occluded_layers": 0,
+        "pixels_claimed": 2728487,
+        "pixels_offered": 2728487,
+        "pixels_rejected_occupied": 0,
+        "render_calls": 4885,
+        "span_render_calls": 4885,
+        "temporal_updates": 4885,
+        "visible_layers": 4885
+      },
+      "dropped": 0,
+      "frames": 4885,
+      "last_frame_seconds": 0.016508955000062997,
+      "max_frame_seconds": 0.03686935999985508,
+      "output": {
+        "bulk_frames": 4885,
+        "compatibility_pixel_frames": 0,
+        "frames_published": 4885,
+        "set_image_calls": 4885,
+        "set_pixel_calls": 0,
+        "swap_calls": 4885
+      },
+      "p50_frame_seconds": 0.015637761000107275,
+      "p95_frame_seconds": 0.023787267999978212,
+      "p99_frame_seconds": 0.027867715999946086
+    },
+    "scheduler": {
+      "duplicate_executions": 0,
+      "frames_published": 1482,
+      "missed_hops": 3778,
+      "transform_failures": 0,
+      "transforms_started": 1483,
+      "wakeups": 1483
+    }
+  },
+  "telemetry_before": {
+    "analyzers": [
+      {
+        "analyzer_compute_id": "fft-de24220f9253ef7ac2fa3b21",
+        "analyzer_ids": [
+          "analyzer-default-current"
+        ],
+        "duplicate_executions": 0,
+        "last_end_sample": 1482752,
+        "missed_hops": 2064,
+        "processing_max_seconds": 0.06173742500004664,
+        "processing_p50_seconds": 0.02698897000004763,
+        "processing_p95_seconds": 0.0423859210000046,
+        "processing_p99_seconds": 0.05055622500003665,
+        "published_frames": 834,
+        "runs": 835,
+        "transform_failures": 0
+      }
+    ],
+    "audio": {
+      "callback_failures": 0,
+      "callback_status_events": 105,
+      "discontinuities": 105,
+      "frames_received": 1486848,
+      "overruns": 105,
+      "ready": true,
+      "reconnects": 0,
+      "ring": {
+        "capacity_samples": 131072,
+        "channel_count": 1,
+        "discontinuities": 106,
+        "generation_start_sample": 0,
+        "high_water_samples": 131072,
+        "latest_sample": 1486848,
+        "oldest_sample": 1355776,
+        "overwritten_samples": 1355776,
+        "retained_samples": 131072,
+        "sample_rate": 44100,
+        "samples_written": 1486848,
+        "source_generation": 2
+      },
+      "running": true,
+      "underflows": 0
+    },
+    "render": {
+      "compositor": {
+        "dense_render_calls": 0,
+        "frames": 2777,
+        "full_coverage_frames": 0,
+        "fully_occluded_layers_culled": 0,
+        "hidden_layers_culled": 0,
+        "layers_seen": 2777,
+        "partially_occluded_layers": 0,
+        "pixels_claimed": 1525577,
+        "pixels_offered": 1525577,
+        "pixels_rejected_occupied": 0,
+        "render_calls": 2777,
+        "span_render_calls": 2777,
+        "temporal_updates": 2777,
+        "visible_layers": 2777
+      },
+      "dropped": 0,
+      "frames": 2777,
+      "last_frame_seconds": 0.013336895000065851,
+      "max_frame_seconds": 0.03402141599985953,
+      "output": {
+        "bulk_frames": 2777,
+        "compatibility_pixel_frames": 0,
+        "frames_published": 2777,
+        "set_image_calls": 2777,
+        "set_pixel_calls": 0,
+        "swap_calls": 2777
+      },
+      "p50_frame_seconds": 0.014475898999990022,
+      "p95_frame_seconds": 0.0208362749999651,
+      "p99_frame_seconds": 0.023875105999877633
+    },
+    "scheduler": {
+      "duplicate_executions": 0,
+      "frames_published": 834,
+      "missed_hops": 2064,
+      "transform_failures": 0,
+      "transforms_started": 835,
+      "wakeups": 835
+    }
+  }
+}

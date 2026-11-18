@@ -1,5 +1,8 @@
 # Runtime and Multi-Analyzer Architecture
 
+> **Archived failed-refactor reference.** The implemented thread-based data plane
+> failed the November 18 legacy comparison; see the folder [README](README.md).
+
 ## Required invariants
 
 The implementation is not considered correct unless all of these hold:
@@ -171,6 +174,26 @@ interpolated gain coefficients whenever the connected analyzer or response curve
 changes. Per-frame work should then be bounded array operations rather than repeated
 mask discovery.
 
+The compiled projection also exposes read-only metadata for the editor:
+
+- `N + 1` exact visual-bin frequency edges.
+- Center frequency and effective response gain for each visual bin.
+- Raw FFT coefficient indexes and count contributing to each visual bin.
+- Coefficient-grid spacing and effective window resolution.
+- Aggregation weights/method.
+- Empty, interpolated, or undersampled coverage flags.
+
+The browser displays metadata produced by the same compiler used at runtime; it does
+not independently recreate frequency edges in JavaScript. This prevents the graph,
+numeric inspector, and real rendered mapping from drifting apart.
+
+Logarithmic visual-bin edges use log spacing over the layer range; linear mode uses
+linear spacing. The final edge is inclusive. When a visual bin contains no FFT grid
+coefficient, the configured interpolation/fallback rule is explicit and the compiler
+marks that bin. Several narrow visual bins may share effective information when the
+real observation window lacks independent frequency resolution, even if zero-padding
+creates a denser coefficient grid.
+
 Each layer keeps its last consumed analysis-frame sequence. It updates temporal DSP
 only once per new analysis frame, even if the same result is drawn several times.
 Dynamic visual themes may advance on render time, but spectrum smoothing advances on
@@ -269,4 +292,3 @@ unbounded missed work.
   offline status.
 - Invalid Apply: preserve old state and return structured field errors.
 - Source switch failure: keep or restore the previous source and active graph.
-

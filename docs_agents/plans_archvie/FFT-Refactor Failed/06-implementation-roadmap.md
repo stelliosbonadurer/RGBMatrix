@@ -1,5 +1,9 @@
 # Implementation Roadmap and Acceptance Gates
 
+> **Archived failed-refactor reference.** This roadmap's acceptance sequence was
+> insufficient: a thin same-hardware legacy A/B gate must come before the feature
+> surface described here.
+
 No phase should begin by rewriting the application in C++. The plan first corrects
 work scheduling and state boundaries, then measures rendering, then moves only a
 proven hot path if needed.
@@ -53,6 +57,8 @@ Deliverables:
 - Each layer object owns definition, analyzer reference, projection, temporal state,
   renderer, and coverage behavior.
 - Frequency/gain curve compilation.
+- Exact visual-bin edge/center/gain/contributing-coefficient metadata from the same
+  projection compiler used by rendering.
 - Time-based smoothing and peaks.
 - Add, duplicate, remove, rename, hide, and reorder operations on candidate state.
 - Compatibility migration for current bass/mid layers.
@@ -63,6 +69,10 @@ Acceptance:
 - Every layer/analyzer reference is validated before activation.
 - Arbitrary structural edits either apply completely or have no effect.
 - Many layers may consume one analyzer frame.
+- The editor-visible range for every visual bin exactly matches the compiled runtime
+  projection, including the inclusive final upper edge.
+- Empty or resolution-limited visual bins are reported rather than silently
+  presented as independently measured frequency bands.
 - Switching a layer between compatible analyzers rebuilds only affected projection
   and temporal state according to documented rules.
 
@@ -115,6 +125,7 @@ Deliverables:
 - FFT analyzer cells and visual layer stack.
 - Analyzer-source selector on each compatible visual layer.
 - Frequency/gain graph with two to eight points and exact synchronized fields.
+- Aligned visual-bin coverage band and keyboard/touch selected-bin inspector.
 - Add/duplicate/delete/rename/reorder flows.
 - Sticky Apply/Discard and dirty-state handling.
 - Conflict recovery that preserves draft work.
@@ -166,8 +177,8 @@ Acceptance:
 - Zero duplicate FFT identities.
 - Zero steady-state audio overruns in supported configurations.
 - Analyzer p99 remains below 80% of hop interval.
-- Supported 60 FPS configurations remain below 16.7 ms frame p99, or are explicitly
-  classified as 30 FPS with visible UI guidance.
+- The standard 512-window/512-hop/8192-FFT configuration remains below 16.7 ms
+  frame p99 at 60 FPS. A 30 FPS/2048-sample profile is diagnostic fallback only.
 - No thermal throttling in the sustained test.
 - No supported configuration can starve the matrix control/runtime queue.
 
@@ -264,4 +275,3 @@ Acceptance:
 - A full C++ or Rust rewrite without measured justification.
 - Bluetooth-to-Bluetooth audio forwarding.
 - Automatic persistence of every experiment.
-

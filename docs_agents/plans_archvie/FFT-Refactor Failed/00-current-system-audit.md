@@ -1,5 +1,8 @@
 # Current System Audit
 
+> **Archived failed-refactor reference.** Historical evidence only; read the folder
+> [README](README.md) and November 18 performance comparison before reusing it.
+
 This audit records the evidence behind the refactor. The Pi inspection was read-only:
 no packages, services, configuration, pairings, or visualizations were changed.
 
@@ -149,4 +152,3 @@ local IPC or shared memory.
 - [NumPy `rfft` zero-padding behavior](https://numpy.org/doc/stable/reference/generated/numpy.fft.rfft.html)
 - [Raspberry Pi OS Bookworm audio/PipeWire changes](https://www.raspberrypi.com/news/bookworm-the-new-version-of-raspberry-pi-os/)
 - [WirePlumber Bluetooth roles](https://pipewire.pages.freedesktop.org/wireplumber/daemon/configuration/bluetooth.html)
-

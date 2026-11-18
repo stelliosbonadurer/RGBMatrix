@@ -1,0 +1,49 @@
+{
+  "label": "refactored-60-fps-target",
+  "captured_at": "2026-11-18",
+  "host": "stelliosbonadurer@10.8.184.98",
+  "duration_seconds": 30.056873214000007,
+  "configuration": {
+    "name": "Pi 64x64 Default 60 FPS",
+    "content_fps_target": 60,
+    "window_function": "hann",
+    "window_samples": 512,
+    "hop_samples": 512,
+    "fft_samples": 8192,
+    "visual_bins": 64,
+    "visual_layers": 1,
+    "gradient": false,
+    "overflow": true,
+    "peaks": false,
+    "shadows": false,
+    "brightness_limit": 1.0
+  },
+  "summary": {
+    "rendered_frames": 1087,
+    "achieved_content_fps": 36.16477310399982,
+    "render_drops": 716,
+    "render_p50_ms": 15.936095000029127,
+    "render_p95_ms": 22.755384999982198,
+    "render_p99_ms": 25.967412999989392,
+    "analyzer_runs": 1394,
+    "analyzer_rate_hz": 46.37874306069526,
+    "missed_hops": 1194,
+    "analyzer_p50_ms": 9.063920000016878,
+    "analyzer_p95_ms": 21.423717999994096,
+    "analyzer_p99_ms": 23.344887000007475,
+    "audio_overruns": 0,
+    "audio_underflows": 0,
+    "callback_failures": 0,
+    "bulk_frames_total": 2432,
+    "pixel_frames_total": 0,
+    "temperature": "temp=51.1'C",
+    "throttled": "throttled=0x0",
+    "process_cpu_percent": null,
+    "rss_kib": null
+  },
+  "notes": [
+    "Process CPU and RSS were sampled immediately after this window rather than inside the exact counter window, so they are left null here instead of mixing measurement intervals.",
+    "The immediate post-window process sample was approximately 127% CPU and 69,140 KiB RSS.",
+    "The bulk SetImage path was active and the compatibility SetPixel path was unused."
+  ]
+}

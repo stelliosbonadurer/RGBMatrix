@@ -1,5 +1,8 @@
 # Web/Mobile Editor and Persistence
 
+> **Archived failed-refactor reference.** The control-plane ideas remain candidates,
+> but they must follow—not precede—a proven legacy-speed data path.
+
 ## Interaction principle
 
 Editing is local; Apply is remote. Dragging a point, changing an analyzer, or
@@ -34,6 +37,10 @@ conflict banner with:
 - Analyzer selector uses names plus a short settings summary.
 - Advanced analyzer controls remain collapsed by default.
 - The graph supports a temporary enlarged editing sheet on small screens.
+- A thin aligned visual-bin strip remains visible below the curve even when the
+  exact-point controls are collapsed.
+- Tapping a bin opens one compact inspector rather than attempting to label every
+  narrow bin on the axis.
 - Numeric fields use appropriate decimal/numeric keyboards and preserve focus.
 - No full controls-DOM replacement after every poll or edit.
 - Unsaved changes survive a soft page refresh in browser session storage, keyed by
@@ -76,7 +83,8 @@ FFT input: Long Bass Window
 Expanded controls are grouped into:
 
 - Input: layer type and analyzer.
-- Frequency/gain graph and exact point table.
+- Frequency/gain graph, output-bin count/scale, aligned visual-bin strip, selected-bin
+  coverage inspector, and exact response-point table.
 - Dynamics: normalization, headroom, attack, release, peaks.
 - Appearance: theme, gradient, overflow, shadows.
 - Structure: duplicate, save layer, delete.
@@ -84,6 +92,11 @@ Expanded controls are grouped into:
 Changing analyzer updates the draft graph domain and validates existing response
 points. Out-of-range points are not silently clamped; the UI offers an explicit
 clamp or reset action.
+
+The selected-bin inspector is derived from server/runtime projection metadata and
+shows visual range, center, applied gain, contributing FFT coefficients, and coverage
+quality. On phones, left/right buttons or arrow keys move selection one visual bin
+without requiring precise taps on a 64-cell strip.
 
 ## Proposed controller APIs
 
@@ -194,4 +207,3 @@ draft state with the normalized response and clears dirty paths.
 - Graph points have stable accessible names such as `Point 2 frequency` and
   `Point 2 gain`.
 - Reduced-motion preference disables decorative animation, not the matrix output.
-

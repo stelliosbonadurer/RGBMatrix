@@ -1,5 +1,8 @@
 # Audio Sources and Bluetooth Plan
 
+> **Archived failed-refactor reference.** This delivery track was not completed and
+> must not inherit the rejected Python-heavy analyzer/render transport.
+
 This is a separate delivery track that consumes the audio-source and analyzer
 contracts from the FFT/music refactor.
 
@@ -168,4 +171,3 @@ Before adding playback, choose and validate one physical output. The follow-up t
 
 Playback is complete only when it is stable under the same sustained matrix load as
 analysis-only mode.
-

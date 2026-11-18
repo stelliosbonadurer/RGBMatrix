@@ -1,5 +1,8 @@
 # Rendering, Performance, and Telemetry
 
+> **Archived failed-refactor reference.** The implemented compositor/bulk-output path
+> missed its performance goals; its assumptions require end-to-end revalidation.
+
 ## Rendering decision
 
 The first compositor supports opaque topmost-wins layers. Alpha, opacity, additive
@@ -134,7 +137,7 @@ These are starting gates to validate on hardware, not unsupported promises:
 
 | Metric | Initial target |
 | --- | --- |
-| Content publish rate | stable 60 FPS preferred; 30 FPS supported floor |
+| Content publish rate | stable 60 FPS for the standard 512/512/8192 profile |
 | 60 FPS render/composite/upload p99 | below 16.7 ms |
 | Analyzer p99 | below 80% of its hop interval |
 | Audio callback/ring overruns | zero during steady-state test |
@@ -229,4 +232,3 @@ Move composition/frame packing to C++ or Cython only when:
 5. The improvement justifies packaging and cross-architecture maintenance.
 
 A full C++ rewrite is not the next escalation step.
-
