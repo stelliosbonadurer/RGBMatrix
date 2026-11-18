@@ -245,8 +245,8 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         canvas,
         smoothed_bars: np.ndarray,
         peak_heights: Optional[np.ndarray] = None,
-        layer_bars: Optional[List[np.ndarray]] = None,
-        layer_peaks: Optional[List[np.ndarray]] = None
+        layer_bars: Optional[List[Optional[np.ndarray]]] = None,
+        layer_peaks: Optional[List[Optional[np.ndarray]]] = None
     ) -> None:
         """
         Draw vertical bars with configurable gradient and overflow.
@@ -308,8 +308,8 @@ class BarsUnifiedVisualizer(BaseVisualizer):
     def _draw_layers(
         self,
         canvas,
-        layer_bars: List[np.ndarray],
-        layer_peaks: Optional[List[np.ndarray]],
+        layer_bars: List[Optional[np.ndarray]],
+        layer_peaks: Optional[List[Optional[np.ndarray]]],
         height: int,
         shadow_enabled: bool
     ) -> None:

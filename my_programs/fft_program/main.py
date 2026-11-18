@@ -29,6 +29,7 @@ import termios
 import json
 import signal
 import threading
+from typing import cast
 import numpy as np  # type: ignore
 
 # Ensure the fft_program package is importable
@@ -43,7 +44,14 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from config import Settings, load_settings
-from core import MatrixApp, AudioProcessor, ScalingProcessor
+from core import (
+    AudioCapture,
+    AudioProcessor,
+    FrameRenderer,
+    MagnitudeAnalyzer,
+    MatrixApp,
+    ScalingProcessor,
+)
 from themes import get_theme, list_themes
 from visualizers import get_visualizer, draw_peaks
 from matrix_controller.definitions import application_parameters
@@ -400,6 +408,8 @@ def main():
             sensitivity_settings=settings.sensitivity,
             num_bins=app.width
         )
+        capture: AudioCapture = audio
+        analyzer: MagnitudeAnalyzer = audio
         
         # Scaling processor
         scaler = ScalingProcessor(
@@ -417,6 +427,7 @@ def main():
             app.height,
             settings
         )
+        renderer = cast(FrameRenderer, visualizer)
         
         # Apply command line mode overrides
         if gradient_enabled:
@@ -441,8 +452,8 @@ def main():
             """Ensure audio/layer visualizer/scalers are initialized for layered mode."""
             nonlocal layer_scalers
 
-            if not audio.layers_enabled:
-                audio.setup_layers(settings.layers.layers)
+            if not analyzer.layers_enabled:
+                analyzer.setup_layers(settings.layers.layers)
 
             if not visualizer.layer_states:
                 visualizer.setup_layers(
@@ -575,7 +586,7 @@ def main():
     # Main loop
     try:
         keyboard_enabled = not args.non_interactive
-        with ShutdownSignalHandler(), audio, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
+        with ShutdownSignalHandler(), capture, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
             time.sleep(0.5)  # Let audio stream settle
             if runtime_client is not None:
                 def serve_runtime_controls() -> None:
@@ -621,12 +632,12 @@ def main():
                     if message:
                         print(message)
                 # Get FFT data
-                bars = audio.get_fft_magnitudes()
+                bars = analyzer.get_fft_magnitudes()
                 layer_bars_raw = None
                 
                 # Get layer data if enabled
-                if audio.layers_enabled and visualizer.layers_enabled:
-                    layer_bars_raw = audio.get_layer_magnitudes()
+                if analyzer.layers_enabled and visualizer.layers_enabled:
+                    layer_bars_raw = analyzer.get_layer_magnitudes()
                 
                 if bars is None and layer_bars_raw is None:
                     now = time.time()
@@ -672,7 +683,7 @@ def main():
                 
                 # Draw visualization
                 if smoothed_layers is not None and visualizer.layers_enabled:
-                    visualizer.draw(
+                    renderer.draw(
                         app.canvas,
                         smoothed,
                         None,
@@ -680,7 +691,7 @@ def main():
                         layer_peaks=layer_peaks
                     )
                 else:
-                    visualizer.draw(
+                    renderer.draw(
                         app.canvas,
                         smoothed,
                         None
