@@ -40,14 +40,14 @@ the measured source. The versions relevant to step 5 are:
 | Accepted step 4 / step-5 baseline | Local commit `21a13d938be7178799302d35976a1c5c7d4c1065` (`Compile FFT configuration into atomic runtime plans`) | Actual accepted step-4 source and the baseline from which the threaded step-5 candidate is being developed. |
 | Pi repository metadata | Pi checkout pointer `7be139c`, with intentional modified and untracked rejected-refactor/deployment artifacts | Operational checkout only; **not** the accepted step-4 source identity or a measured-version label. |
 | Exact accepted step-3 comparison files | `/home/stelliosbonadurer/rgb_Matrix.step4-predeploy-20261119T014040Z.tar.gz`, SHA-256 `6aa8802ec607274a47592604b9b1e1b65d7eb375ffcbf5ff3bf0755c091e93d4` | Exact files used for the accepted step-3 side of the paired step-4 comparison. This is not a step-5 rollback point. |
-| Step-5 threaded candidate | Current reviewed working tree based on `21a13d938be7178799302d35976a1c5c7d4c1065`; candidate commit pending | Local functional candidate only. It is not deployed or hardware-qualified and must receive an exact committed identity before comparison. |
+| Step-5 threaded candidate | Local commit `5e018a4a3ec36ea81fb985153b2897fd9a3d184a` (`Decouple FFT analysis with latest-value transport`) | Exact locally verified threaded implementation. It is not deployed or hardware-qualified. |
 
 The accepted step-4 baseline file identities remain recorded in
 [`02-compile-configuration-off-hot-path.md`](02-compile-configuration-off-hot-path.md).
-The step-5 hashes below identify the locally verified candidate files; the pending
-commit will provide the stable comparison identity.
+The step-5 hashes below identify the locally verified files in implementation commit
+`5e018a4a3ec36ea81fb985153b2897fd9a3d184a`.
 
-Current reviewed candidate file identities (before the pending candidate commit):
+Reviewed step-5 implementation file identities:
 
 | File | SHA-256 |
 | --- | --- |
@@ -426,6 +426,7 @@ point. No deployment action has been taken while preparing this record.
 The threaded implementation and local functional verification are complete. An
 independent final diff/hot-path review found no concurrency or hot-path blocker; its
 two actionable low-risk gaps (worker `Thread.start()` rollback and direct overflow-band
-coverage) were fixed and the suite was rerun. Before hardware work, the candidate
-still needs an exact commit identity and explicit approval for the Pi deployment and
-paired measurement. Local verification remains separate from Pi qualification.
+coverage) were fixed and the suite was rerun. The exact implementation identity is
+`5e018a4a3ec36ea81fb985153b2897fd9a3d184a`. Before hardware work, the candidate still
+needs explicit approval for the Pi deployment and paired measurement. Local
+verification remains separate from Pi qualification.
