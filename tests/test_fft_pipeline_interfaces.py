@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import inspect
 from pathlib import Path
 import sys
 from types import ModuleType
 import unittest
+from unittest import mock
 
 try:
     import numpy as np
@@ -24,7 +26,7 @@ if str(FFT_ROOT) not in sys.path:
 _sounddevice = ModuleType("sounddevice")
 _sounddevice.query_devices = lambda *_args, **_kwargs: {
     "name": "test input",
-    "default_samplerate": 48_000,
+    "default_samplerate": 44_100,
 }
 
 
@@ -42,6 +44,7 @@ try:
     from config.settings import (  # noqa: E402
         AudioSettings,
         FrequencySettings,
+        LayerConfig,
         SensitivitySettings,
     )
     from core.audio import AudioProcessor  # noqa: E402
@@ -112,7 +115,12 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
         processor = _processor()
         self.assertEqual(processor.audio_settings.block_size, 512)
         self.assertEqual(processor.audio_settings.fft_size, 8192)
+        self.assertEqual(processor.num_bins, 64)
         processor.setup()
+        self.assertEqual(processor.sample_rate, 44_100)
+
+        plan = processor.active_plan
+        self.assertIsNotNone(plan)
 
         positions = np.arange(512, dtype=np.float32)
         samples = (
@@ -123,16 +131,14 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
 
         actual = processor.get_fft_magnitudes()
 
-        windowed = samples * processor.window
-        magnitudes = np.abs(
-            np.fft.rfft(windowed, n=processor.audio_settings.fft_size)
-        )
+        windowed = samples * plan.window
+        magnitudes = np.abs(np.fft.rfft(windowed, n=plan.fft_size))
         expected = np.zeros(processor.num_bins, dtype=np.float32)
-        for index, bin_indices in enumerate(processor.bin_indices):
+        for index, bin_indices in enumerate(plan.bin_indices):
             if len(bin_indices) > 0:
                 expected[index] = (
                     np.mean(magnitudes[bin_indices])
-                    * processor.bin_weights[index]
+                    * plan.bin_weights[index]
                 )
         expected = np.maximum(
             0,
@@ -143,6 +149,78 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
         self.assertEqual(actual.shape, (64,))
         self.assertEqual(actual.dtype, np.float32)
         np.testing.assert_array_equal(actual, expected)
+
+    def test_setup_compiles_once_and_frames_keep_the_same_active_plan(self) -> None:
+        processor = _processor()
+        compile_plan = AudioProcessor.setup.__globals__["compile_standard_analysis_plan"]
+
+        with mock.patch.dict(
+            AudioProcessor.setup.__globals__,
+            {"compile_standard_analysis_plan": mock.Mock(wraps=compile_plan)},
+        ):
+            compile_mock = AudioProcessor.setup.__globals__["compile_standard_analysis_plan"]
+            processor.setup()
+            active_plan = processor.active_plan
+            samples = np.ones((512, 1), dtype=np.float32)
+            processor._audio_callback(samples, 512, None, None)
+
+            first = processor.get_fft_magnitudes()
+            second = processor.get_fft_magnitudes()
+
+        self.assertEqual(compile_mock.call_count, 1)
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertIs(processor.active_plan, active_plan)
+
+    def test_layered_mode_keeps_its_existing_second_fft(self) -> None:
+        processor = _processor()
+        processor.setup()
+        processor.setup_layers([
+            LayerConfig(name="test", freq_range=(100, 6300)),
+        ])
+        samples = np.ones((512, 1), dtype=np.float32)
+        processor._audio_callback(samples, 512, None, None)
+
+        with mock.patch.object(np.fft, "rfft", wraps=np.fft.rfft) as rfft:
+            standard = processor.get_fft_magnitudes()
+            layered = processor.get_layer_magnitudes()
+
+        self.assertEqual(rfft.call_count, 2)
+        self.assertEqual(standard.shape, (64,))
+        self.assertEqual(len(layered), 1)
+        self.assertEqual(layered[0].shape, (64,))
+
+    def test_failed_recompile_leaves_the_active_plan_unchanged(self) -> None:
+        processor = _processor()
+        processor.setup()
+        active_plan = processor.active_plan
+        processor.freq_settings.zoom_presets.append((100, 22_051))
+        processor.freq_settings.zoom_preset_index = len(
+            processor.freq_settings.zoom_presets
+        ) - 1
+
+        with self.assertRaisesRegex(ValueError, "Nyquist"):
+            processor.update_frequency_range()
+
+        self.assertIs(processor.active_plan, active_plan)
+
+    def test_candidate_compiles_off_to_the_side_then_activates_once(self) -> None:
+        processor = _processor()
+        processor.setup()
+        original_plan = processor.active_plan
+        candidate = replace(
+            processor.analysis_candidate,
+            low_freq_weight=1.25,
+            high_freq_weight=9.5,
+        )
+
+        prepared_plan = processor.compile_analysis_candidate(candidate)
+
+        self.assertIs(processor.active_plan, original_plan)
+        self.assertIsNot(prepared_plan, original_plan)
+        processor.activate_analysis_plan(candidate, prepared_plan)
+        self.assertIs(processor.analysis_candidate, candidate)
+        self.assertIs(processor.active_plan, prepared_plan)
 
 
 class PipelineProtocolTests(unittest.TestCase):

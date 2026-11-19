@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from pathlib import Path
 import sys
@@ -27,12 +28,42 @@ from matrix_controller.runtime_transport import (  # noqa: E402
 )
 
 
+@dataclass(frozen=True)
+class FakeAnalysisCandidate:
+    min_freq: float = 100
+    max_freq: float = 6300
+    low_freq_weight: float = 0.45
+    high_freq_weight: float = 10.0
+
+
+@dataclass(frozen=True)
+class FakeAnalysisPlan:
+    candidate: FakeAnalysisCandidate
+
+
 class FakeAudio:
     def __init__(self) -> None:
-        self.updates = 0
+        self.analysis_candidate = FakeAnalysisCandidate()
+        self.active_plan = FakeAnalysisPlan(self.analysis_candidate)
+        self.compiled_candidates = []
+        self.activations = []
+        self.compile_failure = None
+        self.layers_enabled = False
+        self.layer_setup_calls = []
 
-    def update_frequency_range(self) -> None:
-        self.updates += 1
+    def compile_analysis_candidate(self, candidate):
+        self.compiled_candidates.append(candidate)
+        if self.compile_failure is not None:
+            raise self.compile_failure
+        return FakeAnalysisPlan(candidate)
+
+    def activate_analysis_plan(self, candidate, plan) -> None:
+        self.activations.append((candidate, plan))
+        self.analysis_candidate = candidate
+        self.active_plan = plan
+
+    def setup_layers(self, layer_configs) -> None:
+        self.layer_setup_calls.append(layer_configs)
 
 
 class FakeCycler:
@@ -179,7 +210,219 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.controller.handle_key("P")
         self.assertEqual(self.settings.peak.color_mode, "peak")
         self.controller.handle_key("r")
-        self.assertEqual(self.audio.updates, 1)
+        self.assertEqual(self.settings.frequency.zoom_preset_index, 1)
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(len(self.audio.activations), 1)
+        self.assertEqual(self.audio.analysis_candidate.min_freq, 80)
+        self.assertEqual(self.audio.analysis_candidate.max_freq, 1950)
+
+    def test_rebuild_batch_compiles_and_activates_complete_candidate_once(self) -> None:
+        result = self.controller.apply_request({
+            "commands": [
+                {
+                    "op": "set",
+                    "path": "settings.low_freq_weight",
+                    "value": 1.25,
+                },
+                {
+                    "op": "set",
+                    "path": "settings.high_freq_weight",
+                    "value": 9.5,
+                },
+            ]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["snapshot"]["revision"], 1)
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(len(self.audio.activations), 1)
+        candidate = self.audio.compiled_candidates[0]
+        self.assertEqual(candidate.low_freq_weight, 1.25)
+        self.assertEqual(candidate.high_freq_weight, 9.5)
+        self.assertIs(self.audio.analysis_candidate, candidate)
+        self.assertIs(self.audio.active_plan, self.audio.activations[0][1])
+        self.assertEqual(self.settings.sensitivity.low_freq_weight, 1.25)
+        self.assertEqual(self.settings.sensitivity.high_freq_weight, 9.5)
+
+    def test_weight_batch_rebuilds_legacy_layers_once_when_active(self) -> None:
+        self.audio.layers_enabled = True
+
+        result = self.controller.apply_request({
+            "commands": [
+                {
+                    "op": "set",
+                    "path": "settings.low_freq_weight",
+                    "value": 1.25,
+                },
+                {
+                    "op": "set",
+                    "path": "settings.high_freq_weight",
+                    "value": 9.5,
+                },
+            ]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(len(self.audio.layer_setup_calls), 1)
+        self.assertEqual(len(self.audio.activations), 1)
+
+    def test_compile_failure_leaves_all_live_state_unchanged(self) -> None:
+        original_candidate = self.audio.analysis_candidate
+        original_plan = self.audio.active_plan
+        original_low_weight = self.settings.sensitivity.low_freq_weight
+        self.audio.compile_failure = ValueError("candidate cannot be compiled")
+
+        result = self.controller.apply_request({
+            "commands": [
+                {
+                    "op": "set",
+                    "path": "visualizer.gradient",
+                    "value": True,
+                },
+                {
+                    "op": "set",
+                    "path": "settings.low_freq_weight",
+                    "value": 2.0,
+                },
+            ]
+        })
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "invalid_value")
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(self.audio.activations, [])
+        self.assertIs(self.audio.analysis_candidate, original_candidate)
+        self.assertIs(self.audio.active_plan, original_plan)
+        self.assertEqual(
+            self.settings.sensitivity.low_freq_weight,
+            original_low_weight,
+        )
+        self.assertFalse(self.visualizer.gradient_mode)
+        self.assertEqual(self.controller.revision, 0)
+
+    def test_batch_action_failure_precedes_compilation_and_mutation(self) -> None:
+        self.controller.handle_key("l")
+        original_order = list(self.visualizer.draw_order)
+        original_low_weight = self.settings.sensitivity.low_freq_weight
+
+        result = self.controller.apply_request({
+            "commands": [
+                {
+                    "op": "set",
+                    "path": "settings.low_freq_weight",
+                    "value": 2.0,
+                },
+                {
+                    "op": "action",
+                    "path": "layer.move",
+                    "args": {"direction": 1},
+                },
+                {
+                    "op": "action",
+                    "path": "layer.move",
+                    "args": {"direction": 1},
+                },
+            ]
+        })
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["error"]["code"], "unavailable")
+        self.assertEqual(self.audio.compiled_candidates, [])
+        self.assertEqual(self.audio.activations, [])
+        self.assertEqual(self.visualizer.draw_order, original_order)
+        self.assertEqual(
+            self.settings.sensitivity.low_freq_weight,
+            original_low_weight,
+        )
+        self.assertEqual(self.controller.revision, 1)
+
+    def test_zoom_index_stages_the_selected_frequency_range(self) -> None:
+        result = self.controller.apply_request({
+            "commands": [{
+                "op": "set",
+                "path": "settings.zoom_preset_index",
+                "value": 2,
+            }]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.settings.frequency.zoom_preset_index, 2)
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(len(self.audio.activations), 1)
+        candidate = self.audio.analysis_candidate
+        self.assertEqual(candidate.min_freq, 60)
+        self.assertEqual(candidate.max_freq, 14000)
+
+    def test_multiple_zoom_commands_compile_only_the_final_range(self) -> None:
+        result = self.controller.apply_request({
+            "commands": [
+                {"op": "action", "path": "zoom.next"},
+                {"op": "action", "path": "zoom.next"},
+                {"op": "action", "path": "zoom.previous"},
+            ]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.settings.frequency.zoom_preset_index, 1)
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(len(self.audio.activations), 1)
+        candidate = self.audio.analysis_candidate
+        self.assertEqual(candidate.min_freq, 80)
+        self.assertEqual(candidate.max_freq, 1950)
+
+    def test_zoom_and_weights_compile_one_complete_final_candidate(self) -> None:
+        result = self.controller.apply_request({
+            "commands": [
+                {"op": "action", "path": "zoom.next"},
+                {
+                    "op": "set",
+                    "path": "settings.low_freq_weight",
+                    "value": 1.25,
+                },
+                {
+                    "op": "set",
+                    "path": "settings.high_freq_weight",
+                    "value": 9.5,
+                },
+            ]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(self.audio.compiled_candidates), 1)
+        self.assertEqual(len(self.audio.activations), 1)
+        candidate = self.audio.analysis_candidate
+        self.assertEqual(candidate.min_freq, 80)
+        self.assertEqual(candidate.max_freq, 1950)
+        self.assertEqual(candidate.low_freq_weight, 1.25)
+        self.assertEqual(candidate.high_freq_weight, 9.5)
+
+    def test_non_rebuild_controls_do_not_compile_or_replace_plan(self) -> None:
+        original_candidate = self.audio.analysis_candidate
+        original_plan = self.audio.active_plan
+
+        result = self.controller.apply_request({
+            "commands": [
+                {
+                    "op": "set",
+                    "path": "visualizer.gradient",
+                    "value": True,
+                },
+                {
+                    "op": "set",
+                    "path": "settings.smoothing_rise",
+                    "value": 0.75,
+                },
+            ]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(self.visualizer.gradient_mode)
+        self.assertEqual(self.settings.smoothing.rise, 0.75)
+        self.assertEqual(self.audio.compiled_candidates, [])
+        self.assertEqual(self.audio.activations, [])
+        self.assertIs(self.audio.analysis_candidate, original_candidate)
+        self.assertIs(self.audio.active_plan, original_plan)
 
     def test_layer_controls_use_stable_config_names(self) -> None:
         self.controller.handle_key("l")

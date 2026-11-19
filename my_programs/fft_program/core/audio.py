@@ -7,10 +7,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # type: ignore
 from dataclasses import dataclass
-from typing import List, Optional, Callable, Tuple
+from typing import List, Optional
 import sounddevice as sd  # type: ignore
 
 from config.settings import AudioSettings, FrequencySettings, SensitivitySettings
+from core.analysis_plan import (
+    StandardAnalysisCandidate,
+    StandardAnalysisPlan,
+    compile_standard_analysis_plan,
+)
 
 
 @dataclass
@@ -63,15 +68,19 @@ class AudioProcessor:
         self.have_data: bool = False
         self.sample_rate: int = 0
         
-        # FFT state (initialized in setup())
+        # The standard projection is validated now and compiled after setup learns
+        # the device sample rate.  The hot path reads only ``active_plan``.
+        self.analysis_candidate = StandardAnalysisCandidate.from_settings(
+            audio_settings,
+            freq_settings,
+            sensitivity_settings,
+            num_bins,
+        )
+        self.active_plan: Optional[StandardAnalysisPlan] = None
+
+        # Layered mode remains on its existing legacy representation. Its frequency
+        # vector is created lazily only if layered mode is enabled.
         self.freqs: Optional[np.ndarray] = None
-        self.bin_masks: List[np.ndarray] = []
-        self.bin_weights: Optional[np.ndarray] = None
-        self.window: Optional[np.ndarray] = None
-        
-        # Optimized bin lookup (initialized in setup())
-        self.bin_indices: Optional[List[np.ndarray]] = None  # Pre-computed indices for each bin
-        self.empty_bins: Optional[np.ndarray] = None  # Mask for bins with no frequency coverage
         
         # Stream (initialized in start())
         self._stream: Optional[sd.InputStream] = None
@@ -104,25 +113,19 @@ class AudioProcessor:
         print(f"Using device: {device_info['name']} at {self.sample_rate} Hz")
         
         # Report frequency range
-        freq_min = self.freq_settings.active_min_freq
-        freq_max = self.freq_settings.active_max_freq
+        candidate = self.analysis_candidate
+        freq_min = candidate.min_freq
+        freq_max = candidate.max_freq
         mode = "ZOOM MODE" if self.freq_settings.zoom_mode else "Full range"
         print(f"{mode}: {freq_min} Hz - {freq_max} Hz")
         
         # Initialize FFT parameters
         self.latest_samples = np.zeros(self.audio_settings.block_size, dtype=np.float32)
-        self.freqs = np.fft.rfftfreq(self.audio_settings.fft_size, 1 / self.sample_rate)
-        self.bin_masks, self.bin_weights = self._create_frequency_bins(
-            self.freqs, freq_min, freq_max, self.num_bins
-        )
-        self.window = np.hanning(self.audio_settings.block_size)
-        
-        # Pre-compute bin indices for vectorized magnitude calculation
-        self.bin_indices = [np.where(mask)[0] for mask in self.bin_masks]
-        self.empty_bins = np.array([len(idx) == 0 for idx in self.bin_indices])
+        plan = self.compile_analysis_candidate(candidate)
+        self.activate_analysis_plan(candidate, plan)
         
         # Check bin coverage
-        empty_count = np.sum(self.empty_bins)
+        empty_count = sum(len(indices) == 0 for indices in plan.bin_indices)
         if empty_count > 0:
             print(f"Warning: {empty_count} bins have no frequency coverage. "
                   f"Consider increasing FFT_SIZE.")
@@ -135,21 +138,37 @@ class AudioProcessor:
         
         Call this after modifying freq_settings (e.g., changing zoom preset).
         """
-        freq_min = self.freq_settings.active_min_freq
-        freq_max = self.freq_settings.active_max_freq
-        
-        self.bin_masks, self.bin_weights = self._create_frequency_bins(
-            self.freqs, freq_min, freq_max, self.num_bins
+        candidate = StandardAnalysisCandidate.from_settings(
+            self.audio_settings,
+            self.freq_settings,
+            self.sensitivity_settings,
+            self.num_bins,
         )
-        
-        # Re-compute bin indices
-        self.bin_indices = [np.where(mask)[0] for mask in self.bin_masks]
-        self.empty_bins = np.array([len(idx) == 0 for idx in self.bin_indices])
+        plan = self.compile_analysis_candidate(candidate)
+        self.activate_analysis_plan(candidate, plan)
         
         # Warn about empty bins
-        empty_count = np.sum(self.empty_bins)
+        empty_count = sum(len(indices) == 0 for indices in plan.bin_indices)
         if empty_count > 0:
             print(f"Warning: {empty_count} bins have no frequency coverage.")
+
+    def compile_analysis_candidate(
+        self,
+        candidate: StandardAnalysisCandidate,
+    ) -> StandardAnalysisPlan:
+        """Compile a candidate without changing the active runtime plan."""
+        if self.sample_rate <= 0:
+            raise RuntimeError("Call setup() before compiling an analysis candidate")
+        return compile_standard_analysis_plan(candidate, self.sample_rate)
+
+    def activate_analysis_plan(
+        self,
+        candidate: StandardAnalysisCandidate,
+        plan: StandardAnalysisPlan,
+    ) -> None:
+        """Publish one complete standard-analysis plan between frames."""
+        self.analysis_candidate = candidate
+        self.active_plan = plan
     
     def setup_layers(self, layer_configs: List) -> None:
         """
@@ -158,8 +177,13 @@ class AudioProcessor:
         Args:
             layer_configs: List of LayerConfig objects defining each layer
         """
-        if self.freqs is None:
+        if self.sample_rate <= 0:
             raise RuntimeError("Call setup() before setup_layers()")
+        if self.freqs is None:
+            self.freqs = np.fft.rfftfreq(
+                self.audio_settings.fft_size,
+                1 / self.sample_rate,
+            )
         
         self.layers_enabled = True
         self.num_layers = len(layer_configs)
@@ -204,10 +228,14 @@ class AudioProcessor:
         
         if not self.layers_enabled:
             return None
+
+        plan = self.active_plan
+        if plan is None:
+            raise RuntimeError("Call setup() before get_layer_magnitudes()")
         
         # Apply window and compute FFT with zero-padding (done ONCE)
-        x = self.latest_samples * self.window
-        X = np.fft.rfft(x, n=self.audio_settings.fft_size)
+        x = self.latest_samples * plan.window
+        X = np.fft.rfft(x, n=plan.fft_size)
         mag = np.abs(X)
         
         # Extract bins for each layer (cheap O(bins) per layer)
@@ -278,51 +306,6 @@ class AudioProcessor:
         
         return bins, np.array(weights)
     
-    def _create_frequency_bins(
-        self,
-        freqs: np.ndarray,
-        fmin: float,
-        fmax: float,
-        n: int
-    ) -> tuple:
-        """
-        Create logarithmic frequency bins with frequency-dependent weights.
-        
-        Weights interpolate from low_freq_weight to high_freq_weight to compensate
-        for the natural 1/f rolloff of most audio content.
-        
-        Args:
-            freqs: Array of FFT frequency values
-            fmin: Minimum frequency
-            fmax: Maximum frequency
-            n: Number of bins
-        
-        Returns:
-            Tuple of (bin_masks, bin_weights)
-        """
-        edges = np.logspace(np.log10(fmin), np.log10(fmax), n + 1)
-        bins = []
-        weights = []
-        
-        low_weight = self.sensitivity_settings.low_freq_weight
-        high_weight = self.sensitivity_settings.high_freq_weight
-        
-        for i in range(n):
-            mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
-            bins.append(mask)
-            
-            # Calculate center frequency
-            center_freq = (edges[i] + edges[i + 1]) / 2
-            
-            # Normalized position: 0 at fmin, 1 at fmax (log scale)
-            norm_pos = np.log10(center_freq / fmin) / np.log10(fmax / fmin)
-            
-            # Weight curve: interpolate from low to high weight
-            weight = low_weight + (high_weight - low_weight) * (norm_pos ** 1.5)
-            weights.append(weight)
-        
-        return bins, np.array(weights)
-    
     def _audio_callback(self, indata, frames, time_info, status):
         """Callback function for audio input stream."""
         if status:
@@ -359,17 +342,21 @@ class AudioProcessor:
         """
         if not self.have_data or self.latest_samples is None:
             return None
+
+        plan = self.active_plan
+        if plan is None:
+            raise RuntimeError("Call setup() before get_fft_magnitudes()")
         
         # Apply window and compute FFT with zero-padding
-        x = self.latest_samples * self.window
-        X = np.fft.rfft(x, n=self.audio_settings.fft_size)
+        x = self.latest_samples * plan.window
+        X = np.fft.rfft(x, n=plan.fft_size)
         mag = np.abs(X)
         
         # Vectorized magnitude calculation using pre-computed bin indices
-        bars = np.zeros(self.num_bins, dtype=np.float32)
-        for i, indices in enumerate(self.bin_indices):
+        bars = np.zeros(len(plan.bin_indices), dtype=np.float32)
+        for i, indices in enumerate(plan.bin_indices):
             if len(indices) > 0:
-                bars[i] = np.mean(mag[indices]) * self.bin_weights[i]
+                bars[i] = np.mean(mag[indices]) * plan.bin_weights[i]
         
         # Apply noise floor (vectorized)
         bars = np.maximum(0, bars - self.sensitivity_settings.noise_floor)

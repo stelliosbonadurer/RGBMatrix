@@ -20,7 +20,7 @@ create a worker thread or mutate matrix/audio state from a request thread.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional
@@ -276,9 +276,114 @@ class FftRuntimeController:
         # therefore never leave the first command partially applied.
         for command in commands:
             self._validate_command(command)
+        self._validate_batch_actions(commands)
+        prepared_analysis = self._prepare_analysis_update(commands)
         for command in commands:
-            self._apply_command(command)
+            self._apply_command(
+                command,
+                rebuild_analysis=prepared_analysis is None,
+            )
+        if prepared_analysis is not None:
+            candidate, plan, rebuild_layers = prepared_analysis
+            if rebuild_layers and getattr(self.audio, "layers_enabled", False):
+                self.audio.setup_layers(self.settings.layers.layers)
+            self.audio.activate_analysis_plan(candidate, plan)
         self.revision += 1
+
+    def _validate_batch_actions(self, commands: List[RuntimeCommand]) -> None:
+        """Validate ordered actions whose result affects later commands."""
+        draw_order = list(getattr(self.visualizer, "draw_order", []))
+        active_layer = getattr(self.visualizer, "active_layer", 0)
+        layers_enabled = bool(getattr(self.visualizer, "layers_enabled", False))
+
+        for command in commands:
+            if command.op == "set" and command.path == "visualizer.layers_enabled":
+                layers_enabled = command.value
+            elif command.op == "set" and command.path == "visualizer.active_layer":
+                active_layer = command.value
+            elif command.op == "action" and command.path == "layer.move":
+                if not layers_enabled:
+                    raise RuntimeControlError(
+                        "unavailable",
+                        "layered mode is not enabled",
+                        path=command.path,
+                    )
+                direction = command.args["direction"]
+                try:
+                    position = draw_order.index(active_layer)
+                except ValueError:
+                    position = -1
+                target = position + direction
+                if position < 0 or not 0 <= target < len(draw_order):
+                    raise RuntimeControlError(
+                        "unavailable",
+                        "layer is already at the requested boundary",
+                        path=command.path,
+                    )
+                draw_order[position], draw_order[target] = (
+                    draw_order[target],
+                    draw_order[position],
+                )
+
+    def _prepare_analysis_update(
+        self,
+        commands: List[RuntimeCommand],
+    ) -> Optional[tuple[Any, Any, bool]]:
+        """Compile one final projection candidate before mutating live state."""
+        zoom_index = self.settings.frequency.zoom_preset_index
+        low_weight = self.settings.sensitivity.low_freq_weight
+        high_weight = self.settings.sensitivity.high_freq_weight
+        error_path = None
+        rebuild_layers = False
+
+        for command in commands:
+            if (
+                command.op == "action"
+                and command.path in {"zoom.next", "zoom.previous"}
+            ):
+                direction = 1 if command.path == "zoom.next" else -1
+                zoom_index = (
+                    zoom_index + direction
+                ) % len(self.settings.frequency.zoom_presets)
+                error_path = error_path or command.path
+            elif command.op == "set" and command.path == "settings.zoom_preset_index":
+                zoom_index = command.value
+                error_path = error_path or command.path
+            elif command.op == "set" and command.path == "settings.low_freq_weight":
+                low_weight = command.value
+                error_path = error_path or command.path
+                rebuild_layers = True
+            elif command.op == "set" and command.path == "settings.high_freq_weight":
+                high_weight = command.value
+                error_path = error_path or command.path
+                rebuild_layers = True
+
+        if error_path is None:
+            return None
+
+        if self.settings.frequency.zoom_mode:
+            min_freq, max_freq = self.settings.frequency.zoom_presets[zoom_index]
+        else:
+            min_freq = self.settings.frequency.min_freq
+            max_freq = self.settings.frequency.max_freq
+
+        try:
+            candidate = replace(
+                self.audio.analysis_candidate,
+                min_freq=min_freq,
+                max_freq=max_freq,
+                low_freq_weight=low_weight,
+                high_freq_weight=high_weight,
+            )
+            plan = self.audio.compile_analysis_candidate(candidate)
+        except ValueError as exc:
+            raise RuntimeControlError(
+                "invalid_value",
+                str(exc),
+                path=error_path,
+            ) from exc
+
+        return candidate, plan, rebuild_layers
 
     def handle_key(self, key: str | None) -> str | None:
         """Map the legacy key bindings to semantic commands and return a message."""
@@ -651,9 +756,18 @@ class FftRuntimeController:
             return
         raise RuntimeControlError("invalid_path", "unsupported runtime control", path=path)
 
-    def _apply_command(self, command: RuntimeCommand) -> None:
+    def _apply_command(
+        self,
+        command: RuntimeCommand,
+        *,
+        rebuild_analysis: bool = True,
+    ) -> None:
         if command.op == "set":
-            self._apply_set(command.path, command.value)
+            self._apply_set(
+                command.path,
+                command.value,
+                rebuild_analysis=rebuild_analysis,
+            )
             return
         args = command.args or {}
         if command.path == "theme.next":
@@ -661,9 +775,15 @@ class FftRuntimeController:
         elif command.path == "theme.previous":
             self._set_theme(self.theme_cycler.prev_theme(), self.theme_cycler.current_theme_name)
         elif command.path == "zoom.next":
-            self._set_zoom(self.settings.frequency.next_zoom_preset())
+            self._set_zoom(
+                self.settings.frequency.next_zoom_preset(),
+                rebuild_analysis=rebuild_analysis,
+            )
         elif command.path == "zoom.previous":
-            self._set_zoom(self.settings.frequency.prev_zoom_preset())
+            self._set_zoom(
+                self.settings.frequency.prev_zoom_preset(),
+                rebuild_analysis=rebuild_analysis,
+            )
         elif command.path == "layer.move":
             result = self.visualizer.swap_draw_order(args["direction"])
             if result is None:
@@ -684,7 +804,13 @@ class FftRuntimeController:
                 raise RuntimeControlError("unavailable", "active theme is not dynamic", path=command.path)
             theme.toggle_frozen()
 
-    def _apply_set(self, path: str, value: Any) -> None:
+    def _apply_set(
+        self,
+        path: str,
+        value: Any,
+        *,
+        rebuild_analysis: bool = True,
+    ) -> None:
         if path == "visualizer.gradient":
             self._set_active_or_single("gradient_enabled", "gradient_mode", value)
         elif path == "visualizer.overflow":
@@ -735,9 +861,14 @@ class FftRuntimeController:
             self.settings.peak.color_mode = value
         elif path == "settings.zoom_preset_index":
             self.settings.frequency.zoom_preset_index = value
-            self.audio.update_frequency_range()
+            if rebuild_analysis:
+                self.audio.update_frequency_range()
         elif path in NUMERIC_CONTROLS:
-            self._apply_numeric_setting(path, value)
+            self._apply_numeric_setting(
+                path,
+                value,
+                rebuild_analysis=rebuild_analysis,
+            )
         elif path == "dynamic.cycle_speed":
             self._active_theme().cycle_speed = float(value)
         elif path == "dynamic.frozen":
@@ -853,7 +984,13 @@ class FftRuntimeController:
             "settings.peak_hold_frames": self.settings.peak.hold_frames,
         }
 
-    def _apply_numeric_setting(self, path: str, value: Any) -> None:
+    def _apply_numeric_setting(
+        self,
+        path: str,
+        value: Any,
+        *,
+        rebuild_analysis: bool = True,
+    ) -> None:
         target_and_attr = {
             "settings.noise_floor": (self.settings.sensitivity, "noise_floor"),
             "settings.low_freq_weight": (self.settings.sensitivity, "low_freq_weight"),
@@ -868,7 +1005,10 @@ class FftRuntimeController:
         }
         target, attribute = target_and_attr[path]
         setattr(target, attribute, value)
-        if path in {"settings.low_freq_weight", "settings.high_freq_weight"}:
+        if (
+            rebuild_analysis
+            and path in {"settings.low_freq_weight", "settings.high_freq_weight"}
+        ):
             # Weight arrays are derived from these settings. Rebuild both the
             # single-range and layer bins at the same frame boundary.
             self.audio.update_frequency_range()
@@ -932,8 +1072,9 @@ class FftRuntimeController:
         if name in getattr(self.theme_cycler, "themes", ()):
             self.theme_cycler.current_index = self.theme_cycler.themes.index(name)
 
-    def _set_zoom(self, _preset: Any) -> None:
-        self.audio.update_frequency_range()
+    def _set_zoom(self, _preset: Any, *, rebuild_analysis: bool = True) -> None:
+        if rebuild_analysis:
+            self.audio.update_frequency_range()
 
     def _next_peak_mode(self) -> str:
         modes = ["white", "bar", "contrast", "peak"]

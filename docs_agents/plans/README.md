@@ -24,6 +24,9 @@ The archive directory intentionally retains the requested `plans_archvie` spelli
 7. [Network recovery hardening](network-recovery-hardening.md) — physically validate
    LAN-to-AP fallback and add a recovery input before treating failure recovery as
    field-proven.
+8. [Display stability](display-stability.md) — deferred until current FFT feature work
+   lands; diagnose intermittent horizontal tearing, apply the GPIO4–GPIO18 hardware
+   PWM mod, isolate a refresh core, and unify scan mode across programs.
 
 Current FFT latency is accepted as sufficient. Performance measurement is not a gate
 unless a new Pi or packaging method visibly regresses.
