@@ -1,9 +1,9 @@
 """Structural contracts for the existing FFT data plane.
 
-These protocols describe the legacy capture, analysis, and rendering seams without
+These protocols describe the capture, analysis, and rendering seams without
 adding runtime checks, adapters, or new per-frame data representations.
 """
-from typing import Any, List, Optional, Protocol
+from typing import Any, Optional, Protocol
 
 import numpy as np  # type: ignore
 
@@ -33,22 +33,16 @@ class AudioCapture(Protocol):
 class MagnitudeAnalyzer(Protocol):
     """Contract for the current NumPy FFT and magnitude projection path."""
 
-    layers_enabled: bool
-
     def update_frequency_range(self) -> None:
         """Rebuild frequency bins after a frequency-setting change."""
         ...
 
-    def setup_layers(self, layer_configs: List) -> None:
-        """Initialize the existing layered magnitude projections."""
-        ...
-
     def get_fft_magnitudes(self) -> Optional[np.ndarray]:
-        """Return the current single-layer magnitude array, if available."""
+        """Lease the latest complete single-layer magnitude array, if available."""
         ...
 
-    def get_layer_magnitudes(self) -> Optional[List[np.ndarray]]:
-        """Return the current list of layered magnitude arrays, if available."""
+    def release_fft_magnitudes(self) -> None:
+        """Release the leased standard magnitude array after scaling reads it."""
         ...
 
 
@@ -60,7 +54,5 @@ class FrameRenderer(Protocol):
         canvas: Any,
         smoothed_bars: np.ndarray,
         peak_heights: Optional[np.ndarray] = None,
-        layer_bars: Optional[List[Optional[np.ndarray]]] = None,
-        layer_peaks: Optional[List[Optional[np.ndarray]]] = None,
     ) -> None:
         ...

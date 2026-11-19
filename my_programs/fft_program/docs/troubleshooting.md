@@ -176,35 +176,12 @@ sudo -E ~/path/to/.venv/bin/python main.py ...
 
 ---
 
-## Multi-Layer Issues
+## Removed Layer Controls
 
-### Layers Not Appearing
-
-**Symptom:** Enabled layered mode but only see one layer.
-
-**Solutions:**
-
-1. **Check visibility:** Press `!`, `@`, `#` to ensure layers are visible
-2. **Check draw order:** Layer might be drawn behind another. Press `<`/`>` to reorder
-3. **Check frequency ranges:** If ranges don't overlap with your audio, bars will be zero
-
-### One Layer Dominating
-
-**Symptom:** Bass layer always covers other layers.
-
-**Solutions:**
-
-1. **Adjust boost values:** Higher frequencies need more boost (treble: 3-5x)
-2. **Reorder layers:** Put bass layer in background, treble in foreground (`<`/`>` keys)
-3. **Enable gradient/overflow differently:** Make layers visually distinct
-
-### Layer Controls Not Working
-
-**Symptom:** `g`, `o`, `p` don't seem to do anything.
-
-**Cause:** Layered mode might not be active.
-
-**Solution:** Press `l` to enable layered mode first, then `1`/`2`/`3` to select a layer.
+The legacy multi-layer feature and its `l`, `1`/`2`/`3`, `!`/`@`/`#`, and `<`/`>`
+controls were removed. Older settings files may retain a `layers` group, but the active
+loader ignores it. Future multiple views will use separate standard pipeline instances
+and do not have an accepted control schema yet.
 
 ---
 

@@ -31,7 +31,7 @@ the code that ran. The versions used in this work are:
 | Accepted step 3 | Local commit `4680c6aa7c1bb889e1cd51b9a452e3d7137f967f` (`Refactor FFT pipeline behind zero-overhead protocols`) | Source baseline for step 4 and the best-code side of the paired comparison. |
 | Pi repository metadata | Pi checkout pointer `7be139c`, with preserved dirty rejected-refactor and deployed iterative-rebuild files | Operational checkout only; **not** a complete source-version identifier. |
 | Step-3 comparison snapshot | `/home/stelliosbonadurer/rgb_Matrix.step4-predeploy-20261119T014040Z.tar.gz`, SHA-256 `6aa8802ec607274a47592604b9b1e1b65d7eb375ffcbf5ff3bf0755c091e93d4` | Exact step-3 files temporarily restored for the five-minute B run. Its overlapping files match local commit `4680c6aa…`. |
-| Accepted step 4 | Pre-commit working tree based on local commit `4680c6aa…`, with the file hashes below | Current deployed version and five-minute A-run code. Replace this working-tree label with the resulting commit hash after committing. |
+| Accepted step 4 | Local commit `21a13d938be7178799302d35976a1c5c7d4c1065` (`Compile FFT configuration into atomic runtime plans`) | Accepted source version and five-minute A-run code. The Pi checkout pointer is not this measured source identity. |
 
 Accepted step-4 file identities:
 

@@ -10,7 +10,6 @@ import tempfile
 import threading
 import time
 import unittest
-from types import SimpleNamespace
 
 
 FFT_ROOT = Path(__file__).resolve().parent.parent / "my_programs" / "fft_program"
@@ -42,14 +41,18 @@ class FakeAnalysisPlan:
 
 
 class FakeAudio:
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
         self.analysis_candidate = FakeAnalysisCandidate()
         self.active_plan = FakeAnalysisPlan(self.analysis_candidate)
         self.compiled_candidates = []
         self.activations = []
+        self.input_activations = []
+        self.analysis_input_state = (
+            self.active_plan,
+            self.settings.sensitivity.noise_floor,
+        )
         self.compile_failure = None
-        self.layers_enabled = False
-        self.layer_setup_calls = []
 
     def compile_analysis_candidate(self, candidate):
         self.compiled_candidates.append(candidate)
@@ -61,9 +64,17 @@ class FakeAudio:
         self.activations.append((candidate, plan))
         self.analysis_candidate = candidate
         self.active_plan = plan
+        self.analysis_input_state = (
+            self.active_plan,
+            self.settings.sensitivity.noise_floor,
+        )
 
-    def setup_layers(self, layer_configs) -> None:
-        self.layer_setup_calls.append(layer_configs)
+    def activate_analysis_inputs(self) -> None:
+        self.analysis_input_state = (
+            self.active_plan,
+            self.settings.sensitivity.noise_floor,
+        )
+        self.input_activations.append(self.analysis_input_state)
 
 
 class FakeCycler:
@@ -93,63 +104,19 @@ class FakeVisualizer:
         self.bars_enabled = True
         self.full_mode = False
         self.debug_mode = False
-        self.layers_enabled = False
-        self.active_layer = 0
-        self.layer_states = []
-        self.draw_order = []
         self.shadow_buffer = None
         self.shadow_colors = None
 
     def set_theme(self, theme) -> None:
         self.theme = theme
 
-    def set_layer_theme(self, name: str, brightness_boost: float = 1.0) -> None:
-        state = self.layer_states[self.active_layer]
-        state.theme_name = name
-        state.theme = get_theme(name, brightness_boost=brightness_boost)
-
-    def setup_layers(self) -> None:
-        self.layer_states = [
-            SimpleNamespace(
-                theme=get_theme("ocean"), theme_name="ocean", bars_enabled=True,
-                gradient_enabled=False, overflow_enabled=True, peak_enabled=False,
-                visible=True, boost=1.0,
-            ),
-            SimpleNamespace(
-                theme=get_theme("warm"), theme_name="warm", bars_enabled=True,
-                gradient_enabled=False, overflow_enabled=False, peak_enabled=False,
-                visible=True, boost=2.5,
-            ),
-        ]
-        self.draw_order = [0, 1]
-
-    def select_layer(self, index: int) -> bool:
-        if 0 <= index < len(self.layer_states):
-            self.active_layer = index
-            return True
-        return False
-
-    def swap_draw_order(self, direction: int):
-        position = self.draw_order.index(self.active_layer)
-        target = position + direction
-        if not 0 <= target < len(self.draw_order):
-            return None
-        self.draw_order[position], self.draw_order[target] = self.draw_order[target], self.draw_order[position]
-        return position, target
-
 
 class FftRuntimeControllerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.settings = Settings()
         self.visualizer = FakeVisualizer(self.settings)
-        self.audio = FakeAudio()
+        self.audio = FakeAudio(self.settings)
         self.cycler = FakeCycler()
-        self.ensure_calls = 0
-
-        def ensure_layers() -> None:
-            self.ensure_calls += 1
-            if not self.visualizer.layer_states:
-                self.visualizer.setup_layers()
 
         self.controller = FftRuntimeController(
             settings=self.settings,
@@ -158,7 +125,6 @@ class FftRuntimeControllerTests(unittest.TestCase):
             theme_cycler=self.cycler,
             width=8,
             height=8,
-            ensure_layer_pipeline=ensure_layers,
             run_id="run-test",
         )
 
@@ -170,6 +136,18 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertTrue(any(item["path"] == "visualizer.gradient" for item in snapshot["controls"]))
         self.assertTrue(any(item["path"] == "visualizer.theme" for item in snapshot["controls"]))
         self.assertTrue(any(item.get("action") == "theme.next" for item in snapshot["controls"]))
+        self.assertFalse(
+            any(
+                item.get("path", "").startswith("layers.")
+                or item.get("path") == "visualizer.layers_enabled"
+                or item.get("action", "").startswith("layer.")
+                for item in snapshot["controls"]
+            )
+        )
+        self.assertNotIn("layers_enabled", snapshot["state"])
+        self.assertNotIn("active_layer", snapshot["state"])
+        self.assertNotIn("draw_order", snapshot["state"])
+        self.assertNotIn("layer_states", snapshot["state"])
 
     def test_typed_set_increments_revision_and_rejects_stale_revision(self) -> None:
         result = self.controller.apply_request({
@@ -244,9 +222,32 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertEqual(self.settings.sensitivity.low_freq_weight, 1.25)
         self.assertEqual(self.settings.sensitivity.high_freq_weight, 9.5)
 
-    def test_weight_batch_rebuilds_legacy_layers_once_when_active(self) -> None:
-        self.audio.layers_enabled = True
+    def test_noise_floor_only_activates_worker_inputs_without_compilation(self) -> None:
+        original_candidate = self.audio.analysis_candidate
+        original_plan = self.audio.active_plan
 
+        result = self.controller.apply_request({
+            "commands": [{
+                "op": "set",
+                "path": "settings.noise_floor",
+                "value": 0.35,
+            }]
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["snapshot"]["revision"], 1)
+        self.assertEqual(self.audio.compiled_candidates, [])
+        self.assertEqual(self.audio.activations, [])
+        self.assertEqual(
+            self.audio.input_activations,
+            [(original_plan, 0.35)],
+        )
+        self.assertEqual(self.audio.analysis_input_state, (original_plan, 0.35))
+        self.assertIs(self.audio.analysis_candidate, original_candidate)
+        self.assertIs(self.audio.active_plan, original_plan)
+        self.assertEqual(self.settings.sensitivity.noise_floor, 0.35)
+
+    def test_rebuild_and_noise_activate_one_complete_worker_input_state(self) -> None:
         result = self.controller.apply_request({
             "commands": [
                 {
@@ -256,20 +257,29 @@ class FftRuntimeControllerTests(unittest.TestCase):
                 },
                 {
                     "op": "set",
-                    "path": "settings.high_freq_weight",
-                    "value": 9.5,
+                    "path": "settings.noise_floor",
+                    "value": 0.35,
                 },
             ]
         })
 
         self.assertTrue(result["ok"])
         self.assertEqual(len(self.audio.compiled_candidates), 1)
-        self.assertEqual(len(self.audio.layer_setup_calls), 1)
         self.assertEqual(len(self.audio.activations), 1)
+        self.assertEqual(self.audio.input_activations, [])
+        activated_plan = self.audio.activations[0][1]
+        self.assertEqual(
+            self.audio.analysis_input_state,
+            (activated_plan, 0.35),
+        )
+        self.assertIs(self.audio.active_plan, activated_plan)
+        self.assertEqual(self.settings.sensitivity.noise_floor, 0.35)
 
     def test_compile_failure_leaves_all_live_state_unchanged(self) -> None:
         original_candidate = self.audio.analysis_candidate
         original_plan = self.audio.active_plan
+        original_analysis_input_state = self.audio.analysis_input_state
+        original_noise_floor = self.settings.sensitivity.noise_floor
         original_low_weight = self.settings.sensitivity.low_freq_weight
         self.audio.compile_failure = ValueError("candidate cannot be compiled")
 
@@ -285,6 +295,11 @@ class FftRuntimeControllerTests(unittest.TestCase):
                     "path": "settings.low_freq_weight",
                     "value": 2.0,
                 },
+                {
+                    "op": "set",
+                    "path": "settings.noise_floor",
+                    "value": 0.35,
+                },
             ]
         })
 
@@ -292,8 +307,14 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertEqual(result["error"]["code"], "invalid_value")
         self.assertEqual(len(self.audio.compiled_candidates), 1)
         self.assertEqual(self.audio.activations, [])
+        self.assertEqual(self.audio.input_activations, [])
+        self.assertIs(self.audio.analysis_input_state, original_analysis_input_state)
         self.assertIs(self.audio.analysis_candidate, original_candidate)
         self.assertIs(self.audio.active_plan, original_plan)
+        self.assertEqual(
+            self.settings.sensitivity.noise_floor,
+            original_noise_floor,
+        )
         self.assertEqual(
             self.settings.sensitivity.low_freq_weight,
             original_low_weight,
@@ -301,41 +322,25 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertFalse(self.visualizer.gradient_mode)
         self.assertEqual(self.controller.revision, 0)
 
-    def test_batch_action_failure_precedes_compilation_and_mutation(self) -> None:
-        self.controller.handle_key("l")
-        original_order = list(self.visualizer.draw_order)
-        original_low_weight = self.settings.sensitivity.low_freq_weight
+    def test_legacy_layer_set_and_action_are_invalid_without_mutation(self) -> None:
+        self.assertIsNone(self.controller.handle_key("l"))
+        self.assertEqual(self.controller.revision, 0)
 
-        result = self.controller.apply_request({
-            "commands": [
-                {
-                    "op": "set",
-                    "path": "settings.low_freq_weight",
-                    "value": 2.0,
-                },
-                {
-                    "op": "action",
-                    "path": "layer.move",
-                    "args": {"direction": 1},
-                },
-                {
-                    "op": "action",
-                    "path": "layer.move",
-                    "args": {"direction": 1},
-                },
-            ]
-        })
+        for command in (
+            {"op": "set", "path": "layers.bass.visible", "value": False},
+            {
+                "op": "action",
+                "path": "layer.move",
+                "args": {"direction": 1},
+            },
+        ):
+            result = self.controller.apply_request({"commands": [command]})
 
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["error"]["code"], "unavailable")
-        self.assertEqual(self.audio.compiled_candidates, [])
-        self.assertEqual(self.audio.activations, [])
-        self.assertEqual(self.visualizer.draw_order, original_order)
-        self.assertEqual(
-            self.settings.sensitivity.low_freq_weight,
-            original_low_weight,
-        )
-        self.assertEqual(self.controller.revision, 1)
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["error"]["code"], "invalid_path")
+            self.assertEqual(self.controller.revision, 0)
+            self.assertEqual(self.audio.compiled_candidates, [])
+            self.assertEqual(self.audio.activations, [])
 
     def test_zoom_index_stages_the_selected_frequency_range(self) -> None:
         result = self.controller.apply_request({
@@ -421,27 +426,9 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertEqual(self.settings.smoothing.rise, 0.75)
         self.assertEqual(self.audio.compiled_candidates, [])
         self.assertEqual(self.audio.activations, [])
+        self.assertEqual(self.audio.input_activations, [])
         self.assertIs(self.audio.analysis_candidate, original_candidate)
         self.assertIs(self.audio.active_plan, original_plan)
-
-    def test_layer_controls_use_stable_config_names(self) -> None:
-        self.controller.handle_key("l")
-        self.assertTrue(self.visualizer.layers_enabled)
-        result = self.controller.apply_request({
-            "commands": [{"op": "set", "path": "layers.bass.visible", "value": False}]
-        })
-        self.assertTrue(result["ok"])
-        self.assertFalse(self.visualizer.layer_states[0].visible)
-        self.assertTrue(any(item["path"] == "layers.bass.visible" for item in result["snapshot"]["controls"]))
-
-        boost = self.controller.apply_request({
-            "commands": [
-                {"op": "set", "path": "layers.bass.boost", "value": 3.5}
-            ]
-        })
-        self.assertTrue(boost["ok"])
-        self.assertEqual(self.visualizer.layer_states[0].boost, 3.5)
-        self.assertEqual(self.settings.layers.layers[0].boost, 3.5)
 
     def test_numeric_and_dynamic_controls_are_typed(self) -> None:
         changed = self.controller.apply_request({
@@ -485,19 +472,14 @@ class FftRuntimeControllerTests(unittest.TestCase):
         paths = {item["path"] for item in dynamic["snapshot"]["controls"]}
         self.assertIn("dynamic.reseed", paths)
 
-    def test_settings_round_trip_restores_shadow_and_layers(self) -> None:
+    def test_settings_round_trip_restores_shadow_without_legacy_layers(self) -> None:
         self.settings.shadow.enabled = True
-        self.settings.layers.enabled = True
-        self.settings.layers.layers[0].boost = 4.25
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"
             save_settings(self.settings, str(path))
             restored = load_settings(str(path))
         self.assertTrue(restored.shadow.enabled)
-        self.assertTrue(restored.layers.enabled)
-        self.assertEqual(restored.layers.layers[0].name, "bass")
-        self.assertEqual(restored.layers.layers[0].freq_range, (80, 1950))
-        self.assertEqual(restored.layers.layers[0].boost, 4.25)
+        self.assertFalse(hasattr(restored, "layers"))
 
     def test_private_transport_round_trip_reaches_frame_boundary_controller(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

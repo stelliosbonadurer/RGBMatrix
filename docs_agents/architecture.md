@@ -82,10 +82,9 @@ the native RGB matrix.
 After the matrix exists, the program constructs:
 
 - one `AudioProcessor`, with one output bin per matrix column;
-- one single-mode `ScalingProcessor`;
+- one `ScalingProcessor`;
 - the hardcoded `bars` (`BarsUnifiedVisualizer`) renderer;
 - a theme and `ThemeCycler`;
-- layer audio bins, visual state, and one scaler per configured layer on demand; and
 - one `FftRuntimeController`, shared by keyboard mappings and private IPC.
 
 Both the audio stream and optional terminal keyboard mode are context-managed. The
@@ -98,15 +97,32 @@ runtime state is saved during normal teardown.
 
 ```text
 sounddevice callback
-    -> copies the newest mono sample block
+    -> copies and publishes the newest mono sample block + generation
+analysis worker
+    -> snapshots one immutable compiled plan
+    -> Hann window -> zero-padded rFFT -> weighted 64-bin projection
+    -> publishes the newest complete result through two fixed NumPy slots
 main loop
-    -> AudioProcessor: Hann window -> zero-padded rFFT -> logarithmic bins
-    -> ScalingProcessor: noise-adjusted bars -> adaptive scale -> rise/fall smoothing -> peaks
+    -> leases the latest complete 64-bin result without waiting for analysis
+    -> ScalingProcessor: adaptive scale -> rise/fall smoothing -> peaks
     -> BarsUnifiedVisualizer: pixels + optional separate peak overlay
     -> RGBMatrix.SwapOnVSync()
 ```
 
-The callback and render loop communicate through `AudioProcessor.latest_samples`. There is no explicit lock; the callback replaces the array with a copy, and the main thread consumes the latest available block.
+The callback never performs FFT work. It replaces the latest sample array, advances a
+generation, and wakes one owned analysis worker. The worker coalesces wakeups and
+analyzes only the newest generation, so no queue or backlog can develop. It publishes
+only complete 64-bin `float32` results. The render loop keeps its own cadence and may
+reuse the latest result while stateful scaling, attack/decay smoothing, peaks, direct
+canvas drawing, VSync, and pacing continue.
+
+The two result slots are preallocated. The worker fills an inactive, unleased slot
+before publishing its index and sequence under a short metadata lock. The renderer
+leases the published slot through scaling and releases it immediately afterward, so a
+slot cannot be rewritten while it is being consumed. Plan/noise-floor replacement is
+published as one versioned worker state, and newly finishing results from an old state
+are rejected. The last result completed before Apply remains renderable until its
+current-state replacement arrives, so temporal scaling and drawing do not pause.
 
 The configured audio block is 512 samples, while the FFT is zero-padded to 8192. Zero-padding improves the sampled frequency grid but does not add source information. Frequency bins are logarithmic and weighted from `low_freq_weight` to `high_freq_weight` with a power curve. Empty low-frequency bins are reported at setup.
 
@@ -123,12 +139,11 @@ The configured audio block is 512 samples, while the FFT is zero-padded to 8192.
 - standard versus overflow bars;
 - uniform bar color versus per-pixel gradient;
 - bars, shadows, and peaks;
-- full-screen FFT crossfade and static debug gradient;
-- single mode versus independently configured frequency layers.
+- full-screen FFT crossfade and static debug gradient.
 
-In layered mode, `LayerConfig` supplies each layer's frequency range, bin count, theme, boost, and initial flags. The default settings define two 64-bin layers: bass at 80–1950 Hz and mid at 2000–4000 Hz. Each visible layer has an independent scaler. The renderer follows `draw_order`, so later layers overwrite pixels from earlier layers.
-
-Important implementation detail: layered mode currently calls both `get_fft_magnitudes()` and `get_layer_magnitudes()` every frame. Each method computes its own rFFT, so the FFT is performed twice, even though older architecture notes say it is shared once.
+The previous legacy layered mode was removed during the step-5 analysis decoupling.
+Future multi-view work is intended to compose multiple instances of the same standard
+analyzer/scaler/drawing path, not restore the old special-case layered pipeline.
 
 ## Themes and registries
 
@@ -144,7 +159,9 @@ There are three kinds of state:
 2. Optional startup JSON supplied with `--settings`.
 3. `runtime_state.json`, written atomically about every two seconds and on exit, then offered for interactive restore next launch. `RGBMATRIX_STATE_DIR` relocates this file for service deployments.
 
-Runtime state captures selected display flags, zoom index, themes, layer visibility/order, and dynamic-theme parameters. It does not serialize the full `Settings` object. In non-interactive stdin, prior state is never restored because the confirmation prompt is skipped.
+Runtime state captures selected display flags, zoom index, themes, and dynamic-theme
+parameters. It does not serialize the full `Settings` object. In non-interactive
+stdin, prior state is never restored because the confirmation prompt is skipped.
 
 `runtime_control.py` is the source of truth for typed values, semantic actions,
 snapshots, and keyboard mappings. The browser generates fields from its control

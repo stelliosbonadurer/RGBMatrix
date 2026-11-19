@@ -265,10 +265,6 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"\nMain Controls:")
     print(f"[g] Toggle gradient mode (per-pixel vs uniform color)")
     print(f"[o] Toggle overflow mode (bars can exceed height)")
-    print(f"[l] Toggle layered mode (multi-layer visualization)")
-    print(f"\n[1/2/3] Select layer to edit (when layered mode on)")
-    print(f"[!/@/#] Toggle layer 1/2/3 visibility (Shift+1/2/3)")
-    print(f"[</>] Move layer back/forward in draw order")
     print(f"\n[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
@@ -377,9 +373,6 @@ def main():
         if isinstance(zoom_idx, int) and settings.frequency.zoom_presets:
             settings.frequency.zoom_preset_index = zoom_idx % len(settings.frequency.zoom_presets)
 
-        if 'layers_enabled' in persisted_visualizer:
-            settings.layers.enabled = bool(persisted_visualizer['layers_enabled'])
-
         persisted_theme = persisted_visualizer.get('single_theme_name')
         if isinstance(persisted_theme, str) and persisted_theme:
             settings.color.theme = persisted_theme
@@ -446,36 +439,6 @@ def main():
             brightness_boost=settings.color.brightness_boost
         )
         
-        layer_scalers = []
-
-        def ensure_layer_pipeline() -> None:
-            """Ensure audio/layer visualizer/scalers are initialized for layered mode."""
-            nonlocal layer_scalers
-
-            if not analyzer.layers_enabled:
-                analyzer.setup_layers(settings.layers.layers)
-
-            if not visualizer.layer_states:
-                visualizer.setup_layers(
-                    settings.layers.layers,
-                    brightness_boost=settings.color.brightness_boost
-                )
-
-            if len(layer_scalers) != len(settings.layers.layers):
-                layer_scalers = []
-                for layer_config in settings.layers.layers:
-                    layer_scaler = ScalingProcessor(
-                        scaling_settings=settings.scaling,
-                        sensitivity_settings=settings.sensitivity,
-                        smoothing_settings=settings.smoothing,
-                        num_bins=layer_config.bins,
-                        frame_rate=1.0 / settings.audio.sleep_delay
-                    )
-                    layer_scalers.append(layer_scaler)
-
-        if settings.layers.enabled:
-            ensure_layer_pipeline()
-
         def apply_persisted_runtime_state(state: dict) -> None:
             """Apply persisted visualizer/runtime state to initialized components."""
             persisted_settings = state.get('settings', {})
@@ -488,51 +451,6 @@ def main():
             for attr in ('gradient_mode', 'overflow_mode', 'bars_enabled', 'full_mode', 'debug_mode'):
                 if attr in persisted_visualizer and hasattr(visualizer, attr):
                     setattr(visualizer, attr, bool(persisted_visualizer[attr]))
-
-            target_layers_enabled = bool(persisted_visualizer.get('layers_enabled', visualizer.layers_enabled))
-            settings.layers.enabled = target_layers_enabled
-
-            if target_layers_enabled:
-                ensure_layer_pipeline()
-                visualizer.layers_enabled = True
-
-                layer_states_data = persisted_visualizer.get('layer_states', [])
-                for idx, state_data in enumerate(layer_states_data):
-                    if idx >= len(visualizer.layer_states):
-                        break
-
-                    theme_name = state_data.get('theme_name')
-                    if isinstance(theme_name, str):
-                        visualizer.select_layer(idx)
-                        visualizer.set_layer_theme(
-                            theme_name,
-                            brightness_boost=settings.color.brightness_boost
-                        )
-
-                    layer_state = visualizer.layer_states[idx]
-                    for attr in ('bars_enabled', 'gradient_enabled', 'overflow_enabled', 'peak_enabled', 'visible'):
-                        if attr in state_data:
-                            setattr(layer_state, attr, bool(state_data[attr]))
-
-                    if 'boost' in state_data:
-                        layer_state.boost = float(state_data['boost'])
-                        settings.layers.layers[idx].boost = layer_state.boost
-
-                    _apply_dynamic_theme_state(layer_state.theme, state_data.get('dynamic', {}))
-
-                draw_order = persisted_visualizer.get('draw_order')
-                if isinstance(draw_order, list) and len(draw_order) == len(visualizer.layer_states):
-                    visualizer.draw_order = [int(i) for i in draw_order]
-
-                active_layer = persisted_visualizer.get('active_layer')
-                if isinstance(active_layer, int):
-                    if visualizer.select_layer(active_layer):
-                        settings.layers.active_layer = active_layer
-                        active_name = visualizer.layer_states[active_layer].theme_name
-                        if active_name in theme_cycler.themes:
-                            theme_cycler.current_index = theme_cycler.themes.index(active_name)
-            else:
-                visualizer.layers_enabled = False
 
             single_theme_name = persisted_visualizer.get('single_theme_name')
             if isinstance(single_theme_name, str):
@@ -568,7 +486,6 @@ def main():
             theme_cycler=theme_cycler,
             width=app.width,
             height=app.height,
-            ensure_layer_pipeline=ensure_layer_pipeline,
             run_id=os.environ.get("RGB_MATRIX_RUN_ID", "local"),
         )
         runtime_client = RuntimeControlClient.from_environment()
@@ -633,13 +550,8 @@ def main():
                         print(message)
                 # Get FFT data
                 bars = analyzer.get_fft_magnitudes()
-                layer_bars_raw = None
-                
-                # Get layer data if enabled
-                if analyzer.layers_enabled and visualizer.layers_enabled:
-                    layer_bars_raw = analyzer.get_layer_magnitudes()
-                
-                if bars is None and layer_bars_raw is None:
+
+                if bars is None:
                     now = time.time()
                     if state_dirty or (now - last_state_save_time) >= state_save_interval:
                         save_runtime_state(build_runtime_state())
@@ -647,58 +559,27 @@ def main():
                     time.sleep(0.001)
                     continue
                 
-                # Process through scaler (for single-layer mode or fallback)
-                normalized, smoothed, peaks = scaler.process(
-                    bars if bars is not None else np.zeros(app.width),
-                    peak_hold_frames=settings.peak.hold_frames,
-                    peak_fall_speed=settings.peak.fall_speed
+                # Process through the scaler. The standard result is a direct
+                # transport-slot lease, released as soon
+                # as scaling finishes reading it so analysis can reuse that slot.
+                try:
+                    normalized, smoothed, peaks = scaler.process(
+                        bars,
+                        peak_hold_frames=settings.peak.hold_frames,
+                        peak_fall_speed=settings.peak.fall_speed
+                    )
+                finally:
+                    analyzer.release_fft_magnitudes()
+
+                # Draw visualization
+                renderer.draw(
+                    app.canvas,
+                    smoothed,
+                    None
                 )
                 
-                # Process each layer through its own scaler (skip invisible layers)
-                smoothed_layers = None
-                layer_peaks = None
-                if layer_bars_raw is not None and layer_scalers and visualizer.layers_enabled:
-                    smoothed_layers = []
-                    layer_peaks = []
-                    for i, (raw_bars, layer_scaler) in enumerate(zip(layer_bars_raw, layer_scalers)):
-                        # Skip processing if layer is not visible
-                        if i < len(visualizer.layer_states) and not visualizer.layer_states[i].visible:
-                            # Append None placeholders to maintain index alignment
-                            smoothed_layers.append(None)
-                            layer_peaks.append(None)
-                            continue
-                        
-                        # Apply boost from layer config
-                        boost = settings.layers.layers[i].boost
-                        boosted = raw_bars * boost
-                        
-                        # Process through layer's scaler (also tracks peaks)
-                        _, layer_smoothed, layer_peak = layer_scaler.process(
-                            boosted,
-                            peak_hold_frames=settings.peak.hold_frames,
-                            peak_fall_speed=settings.peak.fall_speed
-                        )
-                        smoothed_layers.append(np.clip(layer_smoothed, 0, 1))
-                        layer_peaks.append(layer_peak)
-                
-                # Draw visualization
-                if smoothed_layers is not None and visualizer.layers_enabled:
-                    renderer.draw(
-                        app.canvas,
-                        smoothed,
-                        None,
-                        layer_bars=smoothed_layers,
-                        layer_peaks=layer_peaks
-                    )
-                else:
-                    renderer.draw(
-                        app.canvas,
-                        smoothed,
-                        None
-                    )
-                
-                # Draw peaks as independent overlay (only for non-layered mode)
-                if settings.peak.enabled and not visualizer.layers_enabled:
+                # Draw peaks as an independent overlay.
+                if settings.peak.enabled:
                     draw_peaks(
                         app.canvas,
                         peaks,

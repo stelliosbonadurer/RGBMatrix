@@ -99,11 +99,13 @@ When adding a theme:
 3. Check standard, gradient, overflow, and peak colors.
 4. If dynamic, consider runtime-state extraction/restoration in `main.py`.
 
-When changing layers:
+When adding future multi-view rendering:
 
-1. Keep audio layer configs, visualizer layer states, scaler lists, and `draw_order` index-aligned.
-2. Remember the keyboard UI only selects/toggles layers 1–3.
-3. Test invisible-layer `None` placeholders and changes between single and layered modes.
+1. Compose multiple instances of the standard analyzer/scaler/drawing path rather
+   than reviving the removed legacy layered-mode branch.
+2. Preserve bounded latest-value transports and continuous render cadence for every
+   instance.
+3. Add one instance at a time with focused performance evidence.
 
 ## Repository hygiene
 

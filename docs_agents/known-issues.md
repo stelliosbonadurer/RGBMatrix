@@ -4,8 +4,9 @@ These observations were verified against the code when this guide was written. R
 
 ## Current behavior mismatches
 
-- Layered mode computes the FFT twice per frame. `main.py` always calls `get_fft_magnitudes()`, then calls `get_layer_magnitudes()` when layers are active; both perform `np.fft.rfft`. Nested architecture docs currently claim it is computed once.
-- `load_settings()` only reconstructs `audio`, `frequency`, `overflow`, `peak`, `color`, `sensitivity`, `scaling`, and `smoothing`. JSON `shadow` and `layers` sections are silently left at defaults. `save_settings()` does serialize them, so save/load is not a full round trip.
+- `load_settings()` reconstructs the active settings groups, including `shadow`.
+  Unknown groups left in an older JSON file, including the removed legacy `layers`
+  group, are ignored.
 - Named presets are not exposed by `main.py`. Four non-default preset functions also assign `zoom_min_freq` and `zoom_max_freq`, which are read-only properties; calling those presets raises `AttributeError`. They reference old theme names such as `fire` and `mono_green` that are not registered now.
 - `bars_dual` is imported and registered, but its constructor reads `settings.dual`; no `DualSettings` or `Settings.dual` exists. The active app avoids this by hardcoding `bars`.
 - User docs under `my_programs/fft_program/docs/` mention removed/nonexistent `--visualizer` and `--list-visualizers` flags and contain several older defaults/theme names. Use `main.py`, `matrix_app.py`, and `settings.py` for truth.
@@ -17,8 +18,6 @@ These observations were verified against the code when this guide was written. R
   assume a TTY or upstream `SampleBase` lifecycle. Only `system_info`, `fft`, and
   `sorts` are in the managed allowlist.
 - The audio callback stores only one input channel because `InputStream` is opened with `channels=1`; setting `AudioSettings.channel` above zero will index past that array.
-- Layer `bins` defaults to 64 independently of actual matrix width. A non-64-column panel can produce layer arrays whose width does not match the canvas.
-- Pressing `r`/`R` rebuilds only the single-mode bin set. Layer frequency ranges are independent and remain unchanged.
 - Runtime state is written into the source directory by default for compatibility.
   Services must set `RGBMATRIX_STATE_DIR`; the supplied systemd template does so.
 - `main.py` catches initialization errors and exits, but runtime errors are printed and re-raised. The `finally` block still attempts state save and matrix clear.

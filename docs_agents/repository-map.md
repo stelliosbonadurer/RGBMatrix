@@ -9,7 +9,7 @@
 | `python3 -m matrix_controller.boot_code` | Pairing code reader | Prints the same six-digit code displayed on the matrix for the current Pi boot. |
 | `python3 -m matrix_network.service` | Privileged network helper | Applies known-network/fallback-AP policy through NetworkManager and exposes only a local Unix socket. Normally run by systemd as root. |
 | `python3 -m matrix_network.recovery_input` | Physical recovery watcher | Uses `gpiomon` and a five-second GPIO 19 hold to request setup AP through a root-peer-only Unix operation. Normally run by systemd as root. |
-| `my_programs/fft_program/main.py` | Current FFT visualizer | The active application and only code path that assembles the modular audio, scaling, themes, layers, rendering, keyboard controls, and state persistence. |
+| `my_programs/fft_program/main.py` | Current FFT visualizer | The active application and only code path that assembles the modular audio, analysis worker, scaling, themes, rendering, keyboard controls, and state persistence. |
 | `my_programs/visualize_sorts.py` | Sorting visualizer | Preserves its terminal menu and also supports non-interactive `single`, `all`, and `random` service modes. |
 | `my_programs/dsa_visualizations/master_theorem.py` | Master Theorem visualizer | Builds a 64x64 recurrence tree from typed `a`, `b`, `n`, and `k` values and highlights root-, balanced-, or leaf-dominant work. |
 | `my_programs/system_info.py` | Boot connection display | Cycles the active SSID, controller URL, and boot pairing code; automatically yields through the shared supervisor. |
@@ -39,7 +39,8 @@ my_programs/fft_program/
 │   ├── settings.py         settings dataclasses and partial JSON loader
 │   └── presets.py          named presets (currently not wired to the CLI)
 ├── core/
-│   ├── audio.py            capture, FFT, log bins, frequency weighting
+│   ├── audio.py            capture plus bounded latest-value analysis worker
+│   ├── analysis_plan.py    immutable FFT/projection compilation
 │   ├── scaling.py          normalization, smoothing, peak tracking
 │   └── matrix_app.py       matrix CLI options and native binding setup
 ├── themes/
@@ -48,7 +49,7 @@ my_programs/fft_program/
 │   └── registry.py         name-to-theme registry
 ├── visualizers/
 │   ├── base.py             shared theme/shadow state
-│   ├── bars_unified.py     active renderer: single and layered modes
+│   ├── bars_unified.py     active standard renderer
 │   ├── peaks.py            single-mode peak overlay
 │   ├── bars_dual.py        registered but currently unusable; see known issues
 │   └── registry.py         visualizer registry
