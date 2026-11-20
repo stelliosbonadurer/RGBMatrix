@@ -1,6 +1,5 @@
 [Unit]
 Description=RGB Matrix web control service for %i
-Documentation=file:/home/%i/rgb_Matrix/docs_agents/web-service-operations.md
 After=network.target rgb-matrix-network@%i.service
 Wants=network.target rgb-matrix-network@%i.service
 ConditionPathExists=/home/%i/rgb_Matrix/matrix_controller/web_service.py

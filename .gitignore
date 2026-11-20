@@ -11,3 +11,9 @@ __pycache__/
 *.DS_Store
 .env
 .venv
+
+# Private development context lives in the RGBMatrix_Agents repository. These
+# ignores also allow a local checkout or AGENTS.md symlink without recommitting it.
+/AGENTS.md
+/docs_agents/
+/docs_overview/
