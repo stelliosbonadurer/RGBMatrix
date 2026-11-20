@@ -1,9 +1,9 @@
 # Iterative FFT rebuild — step 5: decouple analysis with the smallest transport
 
-> **Status: threaded checkpoint A is implemented and passes local hardware-free
-> verification. Hardware qualification is not yet approved or run.**
-> No Pi deployment, LAN test, service restart, or hardware measurement is recorded
-> here. The local results do not establish the performance gates.
+> **Status: threaded checkpoint A is implemented, passes local and Pi tests, and
+> passes its paired five-minute Raspberry Pi qualification.**
+> The thread preserved callback/analyzer service and materially improved content
+> throughput and render latency. There is no evidence justifying a process boundary.
 
 ## Purpose and scope
 
@@ -40,7 +40,9 @@ the measured source. The versions relevant to step 5 are:
 | Accepted step 4 / step-5 baseline | Local commit `21a13d938be7178799302d35976a1c5c7d4c1065` (`Compile FFT configuration into atomic runtime plans`) | Actual accepted step-4 source and the baseline from which the threaded step-5 candidate is being developed. |
 | Pi repository metadata | Pi checkout pointer `7be139c`, with intentional modified and untracked rejected-refactor/deployment artifacts | Operational checkout only; **not** the accepted step-4 source identity or a measured-version label. |
 | Exact accepted step-3 comparison files | `/home/stelliosbonadurer/rgb_Matrix.step4-predeploy-20261119T014040Z.tar.gz`, SHA-256 `6aa8802ec607274a47592604b9b1e1b65d7eb375ffcbf5ff3bf0755c091e93d4` | Exact files used for the accepted step-3 side of the paired step-4 comparison. This is not a step-5 rollback point. |
-| Step-5 threaded candidate | Local commit `5e018a4a3ec36ea81fb985153b2897fd9a3d184a` (`Decouple FFT analysis with latest-value transport`) | Exact locally verified threaded implementation. It is not deployed or hardware-qualified. |
+| Step-5 threaded candidate | Local commit `5e018a4a3ec36ea81fb985153b2897fd9a3d184a` (`Decouple FFT analysis with latest-value transport`) | Exact locally verified threaded implementation and the source of the production changes used by the qualification variant below. |
+| Exact pre-step-5 Pi baseline | `/home/stelliosbonadurer/rgb_Matrix.step5-predeploy-20261120T002147Z.tar.gz`, SHA-256 `1f419182b714294d28630e0fc8570c020c85705cc84c656d10bbec996852946e` | Exact accepted step-4 production/test files used for the paired baseline and final restoration. It preserves the Pi-only rollout/metrics integration layered over accepted step 4. |
+| Measured step-5 qualification variant | Step-5 commit changes narrowly merged into the exact deployed baseline; qualification archive SHA-256 `fcfb853ab94a2a6cc9bad22709f2074959639b36c671331b9fd9e64f79460084` | Four runtime files exactly match `5e018a4`; `settings.py` differs only by the Pi's corrected 512-sample timing comment; `main.py` retains the Pi-only service route and adds opt-in qualification metrics. Exact hashes are recorded below. |
 
 The accepted step-4 baseline file identities remain recorded in
 [`02-compile-configuration-off-hot-path.md`](02-compile-configuration-off-hot-path.md).
@@ -62,6 +64,24 @@ Reviewed step-5 implementation file identities:
 | `tests/test_fft_analysis_plan.py` | `33a26764926a96a69dd292c2d0d585454e7a24be9c561014ccbed7fbde9fd5fa` |
 | `tests/test_fft_pipeline_interfaces.py` | `bf5be162cbe5d02d7e6b64ee3d3561bb661022e68a00d8e9bdee8764238d4b18` |
 | `tests/test_fft_runtime_control.py` | `5ab94045006ed711586311a9ee3379e1b91e3d18c019d0835c02b27ca514930e` |
+
+Measured qualification deployment identities:
+
+| File | SHA-256 |
+| --- | --- |
+| `my_programs/fft_program/config/settings.py` | `f077ff87c72c391086528839350e81c19a428ca1058e9b0c90ad852ae444dbe1` |
+| `my_programs/fft_program/core/audio.py` | `250edf5d8dbcf1a8313bceb7c231011b71336de788cc14f8c8d23fbcfa37bec9` |
+| `my_programs/fft_program/core/interfaces.py` | `953206f3c89d178456953fb39d7e738d93a48ce6d04b5e4dc9471e171e082823` |
+| `my_programs/fft_program/main.py` | `4ed6c0d9b6160b9e02dc89c1be807a0bc43562521dcd65aef7f4f52d093d11c0` |
+| `my_programs/fft_program/runtime_control.py` | `6f410139d3c0e58b0a0158aa985e1c7e03fd9e9be908925ecd20f05a05bf6fdd` |
+| `my_programs/fft_program/visualizers/bars_unified.py` | `a85ad22546dd46c17d1db29c79fa47a13f4abbeb83e6efc45f81116149b0cdc7` |
+| `tests/test_fft_pipeline_interfaces.py` | `bf5be162cbe5d02d7e6b64ee3d3561bb661022e68a00d8e9bdee8764238d4b18` |
+| `tests/test_fft_runtime_control.py` | `5ab94045006ed711586311a9ee3379e1b91e3d18c019d0835c02b27ca514930e` |
+
+Independent review confirmed that the measured merge retained the direct-canvas call
+order, removed layered execution, used the exact acquired-slot timestamp for result
+age, and introduced no `SetImage` or output-path change. The merged candidate passed
+47 focused tests on the Pi; the restored step-4 baseline passed its 29 focused tests.
 
 The progress record itself is intentionally identified by the eventual commit rather
 than a self-referential hash. `analysis_plan.py`, `scaling.py`, and
@@ -358,6 +378,48 @@ worker-start/PortAudio-start/failure/shutdown bounds, standard and overflow-band
 direct drawing, draw order/arguments, 5 ms pacing, and removal of the legacy layer
 surface. They are hardware-free functional evidence only.
 
+### Staged Raspberry Pi compatibility verification — 2026-11-19
+
+The user approved a staging-only Pi test of exact step-5 commit
+`5e018a4a3ec36ea81fb985153b2897fd9a3d184a`. This was not a production deployment,
+visualization run, audio-input run, benchmark, service restart, or performance
+qualification.
+
+Read-only preflight reconfirmed:
+
+- hostname `raspberrypi` through the strict `raspberrypi.local` host-key alias;
+- ED25519 fingerprint
+  `SHA256:vcXQ5NGdLjeu/JBS3Dmb+VUTAYhvJpDc8IlFjPt9mwo`;
+- remote Git pointer `7be139c` and the intentional modified/untracked artifacts;
+- active web service with no systemd drop-in override; and
+- production `system_info` visualization still running.
+
+The deployed `config/settings.py` and `main.py` hashes differed from the clean
+step-4 commit while the other six inspected source/test hashes matched it. Those
+differences were treated as remote-only state and were not overwritten. Instead,
+the exact candidate FFT tree, focused tests, and their exact-commit
+`matrix_controller` dependency were extracted under one temporary `/tmp` directory.
+The primary candidate archive SHA-256 was
+`3d600e7f5fac866ae23a039e03d5f59ceb3b26ebbb45f14ffe31f694bb27a56a`.
+
+The first two discovery attempts intentionally exposed incomplete staging bundles:
+`test_fft_runtime_control` could not import `matrix_controller`, then the narrow
+package subset lacked `matrix_controller.registry`. These were staging-dependency
+errors, not candidate failures. After staging the complete exact-commit controller
+package, the Pi FFT virtual environment reported:
+
+- `python -B -m unittest discover -s tests -p 'test_fft*.py'`: **46 tests passed in
+  0.185 seconds**;
+- in-memory `compile()` of all **38 staged Python files**: **passed**; and
+- bytecode-file check: **no `__pycache__` directory created**.
+
+Post-test verification found the service healthy, `system_info` still active,
+throttle status `0x0`, no recent runtime/audio errors, Git still at `7be139c`, and
+all eight production hashes unchanged from preflight. The temporary Pi directory and
+local transfer archives were then removed. This establishes Pi interpreter/platform
+compatibility only; the separately approved performance qualification is recorded
+below.
+
 ## Performance baseline and comparison discipline
 
 The strongest accepted step-4 evidence is the paired five-minute run:
@@ -382,13 +444,108 @@ order bias material. Before every hardware measurement, obtain approval stating 
 exact versions/configurations, input and run conditions, duration, and decision the
 measurement will inform.
 
-No step-5 hardware measurement has been approved or run at this point.
+## Paired five-minute step-5 qualification — 2026-11-19 local session
+
+The user approved a candidate-first paired comparison against the exact deployed
+step-4 baseline. Continuous representative music played at fixed volume through the
+iMM-6C for both windows. Both used the accepted 64x64, 44,100 Hz, 512-sample,
+8192-point FFT, 64-bin, `ocean`, overflow-enabled, gradient/peaks/shadows-disabled,
+direct-canvas, 5 ms configuration. Each run produced 60 external samples at five-
+second intervals; the startup sample is excluded from the 59-sample steady-state
+CPU/RSS/temperature statistics.
+
+The first paired attempt produced valid internal timing/analyzer artifacts, but its
+external observer followed the supervisor's idle `sudo` wrapper rather than the FFT
+Python child. Those external CPU/RSS samples are invalid and were not used. The
+mistake was preserved rather than hidden. The observer was changed to resolve and
+verify the descendant command containing `my_programs/fft_program/main.py`, passed a
+two-second smoke check, and the complete pair was repeated. The corrected pair below
+is the acceptance evidence. The first attempt's internal results independently showed
+104.05 FPS for step 5 and 78.85 FPS for step 4, consistent with the corrected result
+and the known sensitivity of absolute baseline throughput to physical input/session
+conditions.
+
+### Corrected paired result
+
+| Metric | Step 5 threaded | Exact step-4 baseline | Assessment |
+| --- | ---: | ---: | --- |
+| Frames published | 32,087 | 21,843 | step 5 published 46.9% more frames |
+| Metrics elapsed | 307.657 s | 307.372 s | equivalent |
+| Content FPS | **104.29** | **71.06** | step 5 46.8% higher |
+| Render-to-swap p50 | **4.39 ms** | **4.77 ms** | step 5 8.0% faster |
+| Render-to-swap p95 | **4.69 ms** | **14.28 ms** | step 5 67.1% faster |
+| Render-to-swap p99 | **4.77 ms** | **14.53 ms** | step 5 67.1% faster |
+| Publish interval p50 | **9.54 ms** | **9.84 ms** | step 5 faster |
+| Publish interval p95 | **9.78 ms** | **19.35 ms** | step 5 removed the baseline's frequent missed cadence |
+| Publish interval p99 | **9.88 ms** | **19.62 ms** | step 5 removed the baseline's frequent missed cadence |
+| Steady CPU mean | **86.66%** | **78.12%** | step 5 uses 8.54 more points, or 10.9% more CPU |
+| Steady CPU range | 86.5-88.5% | 75.2-80.1% | both below one full core on average |
+| Steady RSS range | 56,916-61,140 KiB | 60,164-60,804 KiB | overlapping; do not claim a material memory win |
+| Python thread count | 7 | 6 | expected one analysis worker |
+| Temperature range | 48.2-51.6 C | 49.1-52.1 C | both healthy; order dependent |
+| Throttle status | `0x0` throughout | `0x0` throughout | equal |
+| Recent runtime/audio errors | none | none | equal |
+
+The opt-in qualification hook accumulates frame-duration samples and therefore grows
+with frame count; step 5 accumulated roughly 47% more entries. The RSS ranges are
+reported transparently but are not clean evidence of steady production allocation.
+
+### Thread-service gates
+
+| Gate/evidence | Step-5 result | Decision |
+| --- | ---: | --- |
+| Callback sample generations | 26,534 | context |
+| Complete published analyses | 26,014 | context |
+| Analyzed/published fraction | **98.04%** | passes >=95% gate |
+| Skipped generations | 520 | bounded latest-value loss, 1.96% |
+| Callback-status errors | **0** | passes |
+| Worker failures | **0** | passes |
+| Transport drops | 7 | bounded; no backlog |
+| Result age p50 | 2.56 ms | healthy |
+| Result age p95 | **18.49 ms** | passes |
+| Result age p99 | 20.60 ms | below two capture blocks |
+| Result age maximum | 21.79 ms | below two capture blocks |
+
+The earlier planning text called two 512-sample blocks "approximately 46.4 ms." At
+44,100 Hz, one block is 11.61 ms and two are **23.22 ms**; 46.4 ms is four blocks.
+The acquired-slot p95, p99, and maximum all pass the stricter correct two-block
+threshold, so this correction does not change the decision.
+
+### Acceptance decision and retained artifacts
+
+The threaded transport passes every service gate on its first valid long run and
+reproduced essentially identical candidate results in the corrected repeat. It also
+materially improves content throughput and tail latency for an 8.54-point CPU cost.
+The evidence supports accepting checkpoint A as the step-5 direction; final user
+acceptance remains a separate decision. A process/shared-memory design is **not
+justified** by this evidence.
+
+Corrected raw artifacts retained on the Pi:
+
+```text
+/var/lib/rgb-matrix-controller/fft-step5-threaded-paired-rerun-5min-20261119.json
+SHA-256 43819dd18a8fd76385261fb6046a26299690332de76d262e45b72a874c2a63ba
+
+/var/lib/rgb-matrix-controller/step5-threaded-paired-rerun-5min-external-samples-20261119.txt
+SHA-256 1e22b16f15fbfd736dc12fb03e310147d4c0061d22e84b389f709d322da077e0
+
+/var/lib/rgb-matrix-controller/fft-step4-baseline-paired-rerun-5min-20261119.json
+SHA-256 2d4e773c69556d0c9192198634f02e567de01ebaae45d7ffed27da444cf1d932
+
+/var/lib/rgb-matrix-controller/step4-baseline-paired-rerun-5min-external-samples-20261119.txt
+SHA-256 e78b49a2d4b21a43264de1bafe636ddc5efa53ad0fe5dc11aced73184a0fe7c0
+```
+
+The original attempt's artifacts are also retained with their non-`rerun` names;
+their internal JSON is valid, but their external sample files must not be used for
+CPU/RSS conclusions.
 
 ## Deployment safety boundary
 
-The accepted step-4 production files are currently deployed on the Pi, but its Git
-pointer remains `7be139c` with intentional modified and untracked artifacts. Before
-any separately approved step-5 deployment:
+The accepted step-4 production files are currently restored on the Pi, but its Git
+pointer remains `7be139c` with intentional modified and untracked artifacts. The
+qualification followed this safety sequence, which remains required for any future
+deployment:
 
 1. inspect remote status and hashes again;
 2. verify the locally committed step-4 source identity;
@@ -399,8 +556,12 @@ any separately approved step-5 deployment:
 7. use only temporary `/run` service overrides for qualification; and
 8. remove overrides and restore `system_info` afterward.
 
-The pre-step-4 archive is evidence for the prior comparison, not a step-5 rollback
-point. No deployment action has been taken while preparing this record.
+The new targeted step-5 recovery archive, not the older pre-step-4 archive, was used
+to restore the exact accepted baseline between runs and at completion. After the
+comparison, all eight overlapping production/test hashes matched preflight, the
+temporary `/run` override was absent, the web service was active, `system_info` was
+running, throttle status was `0x0`, and recent runtime/audio errors were absent. All
+remote-only rejected-refactor/deployment artifacts remained preserved.
 
 ## Rejected alternatives at this checkpoint
 
@@ -423,10 +584,15 @@ point. No deployment action has been taken while preparing this record.
 
 ## Current checkpoint
 
-The threaded implementation and local functional verification are complete. An
-independent final diff/hot-path review found no concurrency or hot-path blocker; its
-two actionable low-risk gaps (worker `Thread.start()` rollback and direct overflow-band
-coverage) were fixed and the suite was rerun. The exact implementation identity is
-`5e018a4a3ec36ea81fb985153b2897fd9a3d184a`. Before hardware work, the candidate still
-needs explicit approval for the Pi deployment and paired measurement. Local
-verification remains separate from Pi qualification.
+The threaded implementation, local verification, Pi compatibility tests, independent
+diff/hot-path review, targeted recovery procedure, deployed tests, and paired hardware
+qualification are complete. The exact implementation identity is
+`5e018a4a3ec36ea81fb985153b2897fd9a3d184a`; the exact measured Pi integration variant
+and hashes are recorded above. The thread passes its callback/analyzer service gates
+and materially improves throughput and tail latency, so the same contract should not
+be moved to a process at this checkpoint.
+
+The Pi was deliberately returned to accepted step 4 rather than silently promoting
+the candidate. A separate acceptance/deployment decision can choose when to make step
+5 the production state. Future work must not treat the qualification-only metrics
+hook as product telemetry.
