@@ -45,21 +45,18 @@ if PROJECT_ROOT not in sys.path:
 
 from config import Settings, load_settings
 from core import (
+    ActiveLayerPlan,
     AnalyzerRegistry,
     AudioCapture,
     AudioProcessor,
     DIRECT_OUTPUT_PATH,
-    FrameRenderer,
-    MagnitudeAnalyzer,
     MatrixApp,
     OUTPUT_PATH_ENVIRONMENT,
-    PILLOW_BULK_OUTPUT_PATH,
-    ScalingProcessor,
-    compile_standard_analyzer_plan,
-    compile_pillow_bulk_bars_output,
+    compile_current_bars_graph,
+    compile_current_bars_layer_plan,
 )
 from themes import get_theme, list_themes
-from visualizers import get_visualizer, draw_peaks
+from visualizers import get_visualizer
 from matrix_controller.definitions import application_parameters
 from matrix_controller.runtime_transport import (
     FrameBoundaryRuntimeBridge,
@@ -403,7 +400,7 @@ def main():
     try:
         output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
 
-        analyzer_plan = compile_standard_analyzer_plan(
+        compiled_graph = compile_current_bars_graph(
             audio_settings=settings.audio,
             frequency_settings=settings.frequency,
             sensitivity_settings=settings.sensitivity,
@@ -411,9 +408,9 @@ def main():
             output_backend=output_path,
         )
         analyzer_registry = AnalyzerRegistry(
-            analyzer_plan,
+            compiled_graph,
             {
-                analyzer_plan.analyzers[0].analyzer_type: lambda _definition: AudioProcessor(
+                compiled_graph.analyzers[0].analyzer_type: lambda _definition: AudioProcessor(
                     audio_settings=settings.audio,
                     freq_settings=settings.frequency,
                     sensitivity_settings=settings.sensitivity,
@@ -422,19 +419,6 @@ def main():
             },
         )
         capture: AudioCapture = analyzer_registry
-        analyzer: MagnitudeAnalyzer = analyzer_registry.resolve(
-            analyzer_plan.analyzers[0]
-        )
-        audio = cast(AudioProcessor, analyzer)
-        
-        # Scaling processor
-        scaler = ScalingProcessor(
-            scaling_settings=settings.scaling,
-            sensitivity_settings=settings.sensitivity,
-            smoothing_settings=settings.smoothing,
-            num_bins=app.width,
-            frame_rate=1.0 / settings.audio.sleep_delay
-        )
         
         # Visualizer
         visualizer = get_visualizer(
@@ -443,7 +427,6 @@ def main():
             app.height,
             settings
         )
-        renderer = cast(FrameRenderer, visualizer)
         
         # Apply command line mode overrides
         if gradient_enabled:
@@ -502,27 +485,22 @@ def main():
             apply_persisted_runtime_state(prior_state)
             print(f"Reloaded prior runtime state from: {RUNTIME_STATE_PATH}")
 
-        # Select the complete output implementation once at startup.  The direct
-        # renderer remains the default and is not routed through the bulk candidate
-        # or a generic compositor.
-        unavailable_command_paths = frozenset()
-        if output_path == DIRECT_OUTPUT_PATH:
-            pass
-        elif output_path == PILLOW_BULK_OUTPUT_PATH:
-            bulk_output_plan = compile_pillow_bulk_bars_output(
-                visualizer,
-                app.width,
-                app.height,
-            )
-            renderer = cast(FrameRenderer, bulk_output_plan)
-            unavailable_command_paths = (
-                bulk_output_plan.incompatible_runtime_paths
-            )
-        else:
-            raise ValueError(
-                f"Unsupported FFT output path {output_path!r}; expected "
-                f"{DIRECT_OUTPUT_PATH!r} or {PILLOW_BULK_OUTPUT_PATH!r}"
-            )
+        # Compile the complete current bars layer and selected output executor once.
+        # The layer owns scaling, peaks, visual state, and backend execution; the
+        # frame loop retains only direct plan calls and the existing NumPy lease.
+        initial_layer_plan = compile_current_bars_layer_plan(
+            compiled_graph,
+            analyzer_registry,
+            visualizer=visualizer,
+            settings=settings,
+            width=app.width,
+            height=app.height,
+        )
+        active_layer_plan = ActiveLayerPlan(initial_layer_plan)
+        audio = cast(AudioProcessor, initial_layer_plan.primary_analyzer)
+        unavailable_command_paths = (
+            initial_layer_plan.incompatible_runtime_paths
+        )
 
         qualification_metrics = Step6QualificationMetrics.from_environment(
             output_mode=output_path,
@@ -605,10 +583,14 @@ def main():
                     message = controller.handle_key(key)
                     if message:
                         print(message)
-                # Get FFT data
-                bars = analyzer.get_fft_magnitudes()
+                # Activate only a complete staged plan at this frame boundary, then
+                # acquire each physical analyzer result once. Every visible layer
+                # updates its own presentation state before the direct lease is
+                # released; drawing uses the precompiled backend executor tuple.
+                frame_plan = active_layer_plan.begin_frame()
+                smoothed = frame_plan.prepare_frame()
 
-                if bars is None:
+                if smoothed is None:
                     now = time.time()
                     if (
                         qualification_metrics is None
@@ -621,18 +603,6 @@ def main():
                         last_state_save_time = now
                     time.sleep(0.001)
                     continue
-                
-                # Process through the scaler. The standard result is a direct
-                # transport-slot lease, released as soon
-                # as scaling finishes reading it so analysis can reuse that slot.
-                try:
-                    normalized, smoothed, peaks = scaler.process(
-                        bars,
-                        peak_hold_frames=settings.peak.hold_frames,
-                        peak_fall_speed=settings.peak.fall_speed
-                    )
-                finally:
-                    analyzer.release_fft_magnitudes()
 
                 measure_frame = (
                     qualification_metrics is not None
@@ -647,24 +617,11 @@ def main():
                     )
                     draw_started_ns = time.perf_counter_ns()
 
-                # Draw visualization
-                renderer.draw(
-                    app.canvas,
-                    smoothed,
-                    None
-                )
+                # Draw the exact precompiled visible order. Direct clears the native
+                # canvas once; pillow-bulk clears its reusable image and uploads once.
+                frame_plan.draw_frame(app.canvas)
                 if measure_frame:
                     draw_completed_ns = time.perf_counter_ns()
-                
-                # Draw peaks as an independent overlay.
-                if settings.peak.enabled:
-                    draw_peaks(
-                        app.canvas,
-                        peaks,
-                        visualizer.theme,
-                        settings,
-                        app.height
-                    )
                 
                 # Swap buffers
                 if measure_frame:

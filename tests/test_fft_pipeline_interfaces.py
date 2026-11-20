@@ -733,22 +733,27 @@ class StandardRenderSourceTests(unittest.TestCase):
         def SetPixel(self, x, y, r, g, b) -> None:
             self.calls.append(("pixel", x, y, r, g, b))
 
-    def test_direct_canvas_order_and_standard_draw_arguments_remain_unchanged(self) -> None:
+    def test_ordered_plan_preserves_prepare_draw_swap_and_sleep_order(self) -> None:
         source = MAIN_PATH.read_text(encoding="utf-8")
         loop = source[source.index("            while True:"):]
+        layer_plan_source = (
+            FFT_ROOT / "core" / "layer_plan.py"
+        ).read_text(encoding="utf-8")
 
         ordered_markers = (
-            "bars = analyzer.get_fft_magnitudes()",
-            "normalized, smoothed, peaks = scaler.process(",
-            "analyzer.release_fft_magnitudes()",
-            "renderer.draw(\n                    app.canvas,\n                    smoothed,\n                    None",
-            "draw_peaks(",
+            "frame_plan = active_layer_plan.begin_frame()",
+            "smoothed = frame_plan.prepare_frame()",
+            "frame_plan.draw_frame(app.canvas)",
             "app.swap_canvas()",
             "time.sleep(settings.audio.sleep_delay)",
         )
         positions = [loop.index(marker) for marker in ordered_markers]
         self.assertEqual(positions, sorted(positions))
         self.assertNotIn("SetImage", loop)
+        self.assertIn("result = group.analyzer.get_fft_magnitudes()", layer_plan_source)
+        self.assertIn("group.analyzer.release_fft_magnitudes()", layer_plan_source)
+        self.assertIn("self.scaler.process(", layer_plan_source)
+        self.assertIn("draw_peaks(", layer_plan_source)
 
     def test_standard_overflow_bands_still_draw_directly_to_canvas(self) -> None:
         settings = Settings()

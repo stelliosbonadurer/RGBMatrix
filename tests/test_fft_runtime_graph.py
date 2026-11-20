@@ -429,17 +429,23 @@ class RuntimeGraphValidationTests(unittest.TestCase):
 
 
 class RuntimeGraphBoundaryTests(unittest.TestCase):
-    def test_step2_connects_only_the_analyzer_registry_seam(self) -> None:
+    def test_step3_connects_graph_through_the_ordered_layer_plan(self) -> None:
         main_source = MAIN_PATH.read_text(encoding="utf-8")
         core_init_source = CORE_INIT_PATH.read_text(encoding="utf-8")
         registry_source = ANALYZER_REGISTRY_PATH.read_text(encoding="utf-8")
+        layer_plan_source = (
+            FFT_ROOT / "core" / "layer_plan.py"
+        ).read_text(encoding="utf-8")
         compiler_source = inspect.getsource(compile_runtime_graph)
 
         self.assertNotIn("runtime_graph", main_source)
         self.assertNotIn("compile_runtime_graph", main_source)
         self.assertNotIn("runtime_graph", core_init_source)
         self.assertIn("AnalyzerRegistry", main_source)
-        self.assertIn("compile_standard_analyzer_plan", main_source)
+        self.assertIn("compile_current_bars_graph", main_source)
+        self.assertIn("compile_current_bars_layer_plan", main_source)
+        self.assertIn("LayerDefinition(", layer_plan_source)
+        self.assertIn("draw_peaks", layer_plan_source)
         self.assertIn("layers=()", registry_source)
         self.assertNotIn("visualizers", registry_source)
         self.assertNotIn("draw_peaks", registry_source)

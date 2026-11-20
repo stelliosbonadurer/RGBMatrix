@@ -83,6 +83,19 @@ class BarsUnifiedVisualizer(BaseVisualizer):
             raise RuntimeError("Theme not set. Call set_theme() before draw().")
         
         canvas.Clear()
+        self.draw_layer(canvas, smoothed_bars, peak_heights)
+
+    def draw_layer(
+        self,
+        canvas,
+        smoothed_bars: np.ndarray,
+        peak_heights: Optional[np.ndarray] = None,
+    ) -> None:
+        """Draw bars without clearing an ordered plan's shared target."""
+
+        del peak_heights
+        if self.theme is None:
+            raise RuntimeError("Theme not set. Call set_theme() before draw().")
         
         height = self.height
         shadow_enabled = self.settings.shadow.enabled and self.shadow_buffer is not None

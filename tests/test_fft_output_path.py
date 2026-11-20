@@ -312,13 +312,17 @@ class PillowBulkBarsCompilationTests(unittest.TestCase):
     def test_output_selection_and_compilation_stay_outside_the_frame_loop(self) -> None:
         source = MAIN_PATH.read_text(encoding="utf-8")
         setup, loop = source.split("            while True:", maxsplit=1)
+        layer_plan_source = (
+            FFT_ROOT / "core" / "layer_plan.py"
+        ).read_text(encoding="utf-8")
 
         self.assertIn(
             "os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)",
             setup,
         )
-        self.assertIn("compile_pillow_bulk_bars_output(", setup)
-        self.assertIn("renderer.draw(", loop)
+        self.assertIn("compile_current_bars_layer_plan(", setup)
+        self.assertIn("compile_pillow_bulk_bars_output(", layer_plan_source)
+        self.assertIn("frame_plan.draw_frame(app.canvas)", loop)
         self.assertNotIn("OUTPUT_PATH_ENVIRONMENT", loop)
         self.assertNotIn("compile_pillow_bulk_bars_output(", loop)
 

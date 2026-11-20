@@ -364,14 +364,19 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "analysis worker failed"):
             analyzer.get_fft_magnitudes()
 
-    def test_main_resolves_registry_once_outside_the_frame_loop(self) -> None:
+    def test_layer_plan_resolves_registry_once_outside_the_frame_loop(self) -> None:
         source = MAIN_PATH.read_text(encoding="utf-8")
         loop = source[source.index("            while True:"):]
+        layer_plan_source = (
+            FFT_ROOT / "core" / "layer_plan.py"
+        ).read_text(encoding="utf-8")
 
-        self.assertIn("analyzer_registry.resolve(", source[: source.index("            while True:")])
+        self.assertIn("analyzer_registry.resolve(", layer_plan_source)
+        self.assertIn("compile_current_bars_layer_plan(", source[: source.index("            while True:")])
         self.assertNotIn("analyzer_registry", loop)
-        self.assertIn("bars = analyzer.get_fft_magnitudes()", loop)
-        self.assertIn("analyzer.release_fft_magnitudes()", loop)
+        self.assertIn("frame_plan.prepare_frame()", loop)
+        self.assertNotIn("get_fft_magnitudes()", loop)
+        self.assertNotIn("release_fft_magnitudes()", loop)
 
 
 if __name__ == "__main__":
