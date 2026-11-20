@@ -34,7 +34,8 @@
 - **Recommendation:** use a temporary Pi-only patch because this is one narrow
   architecture comparison and measurement code should not become product telemetry.
 - **User decision:** approved the recommendation. The patch and deployed file hashes
-  must be recorded with the results, and the Pi must be restored afterward.
+  must be recorded with the results. The original restoration instruction was later
+  superseded by D-012 after valid results.
 
 ## D-005 — authoritative comparison workload
 
@@ -97,5 +98,34 @@
 - **User decision:** approved the two local commits. This is not approval to deploy,
   restart the service, run hardware tests, or promote the candidate.
 
-The next undecided item is D-011: approval of the completed temporary qualification
-patch and remote execution/rollback plan.
+## D-011 — hardware qualification execution
+
+- **Options:** stop at the local plan; execute the bounded Pi comparison with targeted
+  backup and failure rollback.
+- **Recommendation:** execute the approved four-run protocol now that source identity,
+  instrumentation, gates, and failure handling are fixed and independently reviewed.
+- **User decision:** approved remote preflight, staged deployment, compatibility test,
+  and four hardware runs. This is not production-promotion approval.
+
+## D-012 — post-test interim Pi state
+
+- **Options:** restore accepted step 4 immediately; retain deployed step 6 pending the
+  results decision.
+- **User decision:** do not restore step 4 after valid results. Remove the temporary
+  qualification override so it cannot rerun, but leave the step-6 runtime files
+  deployed in normal direct-default operation while the results are reviewed. A
+  failure before or during valid measurement still permits targeted rollback for
+  safety.
+
+## D-013 — qualification outcome
+
+- **Evidence:** all four windows were valid. Pooled Pillow swap FPS regressed 2.31%;
+  complete draw-through-swap p50/p95 improved only 1.70%/0.27%; and both directional
+  pairs showed lower Pillow FPS. Unique-content regression was 1.53%, all analysis
+  and result-age safeguards passed, every service sample was active, and throttling
+  remained `0x0`.
+- **Protocol result:** Pillow does not satisfy the already approved material-win
+  gate. Direct rendering remains the accepted output architecture. This rejects the
+  candidate as a speed optimization, not as an ABI-compatible implementation.
+- **Promotion boundary:** no Pillow promotion is authorized. The user's requested
+  interim Pi state in D-012 remains in force pending the next explicit decision.

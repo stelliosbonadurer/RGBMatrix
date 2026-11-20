@@ -2,10 +2,10 @@
 
 > **Session date:** 2026-11-19 local time (America/Denver)
 >
-> **Status:** The first qualification-only Pillow candidate is committed as
-> `2616c56bddce72b0c08326ae9d3058ce68210954` and passes focused hardware-free
-> verification. Qualified step 5 is the accepted source baseline. No deployment,
-> service restart, LAN test, or hardware measurement has been approved or performed.
+> **Status:** Hardware qualification is complete. Four valid counterbalanced
+> five-minute windows reject Pillow under the approved speed gate. Direct remains the
+> accepted output path. The temporary override is removed; step 6 remains deployed
+> in direct-default interim operation by explicit user direction.
 
 ## Scope
 
@@ -74,8 +74,8 @@ the installed Pi binding.
 
 The current candidate is commit
 `2616c56bddce72b0c08326ae9d3058ce68210954`, based on documentation HEAD
-`44a49d37fe861df67edf05dff27c38e4a8100072`. It has not been used for a hardware
-comparison. Candidate file identities are:
+`44a49d37fe861df67edf05dff27c38e4a8100072`. It was used for the bounded hardware
+comparison recorded below. Candidate file identities are:
 
 | File | SHA-256 |
 | --- | --- |
@@ -229,8 +229,13 @@ hide rather than solve compatibility. Before hardware use, record the exact inst
 Pi Pillow version and binding identity, verify that a minimal `SetImage` call works,
 and preserve the direct default as the recovery path.
 
-No files have been deployed to the Pi, no service has been restarted, and no hardware
-or LAN measurement has been run for this candidate.
+The target preflight recorded Python 3.11.2, Pillow 9.4.0, binding binary SHA-256
+`a838e482f0dcdccbd5c54300b34eae1a17074eb6ec328968bc01946cfa23c481`, and
+binding source SHA-256
+`e8294ee5c24a9b69ab18bc91fc705d5089b0cec2b90e0d306301d0dbdea64bee`.
+Pillow exposes `unsafe_ptrs` as key/value tuples and the installed binding correctly
+converts them with `dict(...)`. A real two-second Pillow smoke completed 202 frames
+and exited cleanly before the comparison.
 
 ## Verification performed so far
 
@@ -245,3 +250,50 @@ or LAN measurement has been run for this candidate.
   complete guard-set assertion was added.
 - The final run of all `test_fft*.py` modules passed 57 tests with one expected skip.
 - In-memory syntax compilation and `git diff --check` passed.
+
+## Pi qualification and result
+
+The approved execution used continuous representative live music, ocean theme,
+overflow enabled, gradient/peaks/shadows disabled, the same 64x64 matrix settings,
+and unchanged five-millisecond pacing. Four fresh child processes ran in the fixed
+order `direct-1 -> pillow-1 -> pillow-2 -> direct-2`; every process settled for 60
+seconds and measured exactly 300 seconds.
+
+| Run | Frames | Swap FPS | Total p50 ms | Total p95 ms | Unique FPS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `direct-1` | 31,313 | 104.377 | 4.053 | 4.388 | 60.677 |
+| `pillow-1` | 30,429 | 101.428 | 3.968 | 4.372 | 59.566 |
+| `pillow-2` | 30,716 | 102.385 | 4.007 | 4.366 | 59.543 |
+| `direct-2` | 31,277 | 104.256 | 4.076 | 4.369 | 60.286 |
+
+Pooled Pillow changes relative to direct were:
+
+- swap FPS: **-2.31%**;
+- complete draw-through-swap p50: **+1.70%**;
+- complete draw-through-swap p95: **+0.27%**;
+- renderer p50/p95: **-30.66% / -30.69%**;
+- swap-only p50/p95: **+21.28% / +16.91%**;
+- unique-content FPS: **-1.53%**; and
+- published-content FPS: **-0.55%**.
+
+The first directional pair had 2.82% lower Pillow FPS; the reversed second pair had
+1.79% lower Pillow FPS. Thus neither pair favored Pillow on all three primary
+metrics, and no pooled primary metric reached the required 10% improvement.
+
+All corroborating safety evidence passed: four valid artifacts, 97.3–98.3% analysis
+publication fractions, result-age p95 under 23.22 ms, zero callback-status and worker
+failure deltas, no capacity exhaustion, active service in every external sample,
+temperatures 45.7–53.0°C, and throttling `0x0`. Mean process CPU increased from about
+87% direct to about 92% Pillow, which was informational under the approved gate.
+
+The candidate is therefore ABI-compatible and operationally stable but rejected as a
+speed optimization. Its one-call surface moved native canvas writes into the renderer
+interval without eliminating the binding's full-frame traversal. Direct remains the
+accepted output architecture. A true native contiguous-buffer binding remains a
+separate future experiment.
+
+Exact runtime hashes, recovery identity, artifact location, manifest, and final Pi
+state are in
+[`../2026-11-19-fft-step6-output-path/qualification-plan.md`](../2026-11-19-fft-step6-output-path/qualification-plan.md).
+The explanatory engineering record is
+[`../2026-11-19-fft-step6-output-path/concepts-and-findings.md`](../2026-11-19-fft-step6-output-path/concepts-and-findings.md).

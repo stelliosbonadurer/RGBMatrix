@@ -20,3 +20,22 @@ a native deployment artifact, and separate recovery and hardware qualification.
 Preserved invariants: direct is default, no analysis lock during output/VSync, no
 unbounded queue, no per-frame output-plan compilation, no silent fallback, and no
 production promotion from an experiment.
+
+## Measured architectural conclusion
+
+The candidate moved cost rather than removing it. Pooled Pillow swap latency improved
+21.28% at p50 and 16.91% at p95, but renderer latency regressed 30.66%/30.69%. The
+combined interval improved only 1.70%/0.27%, and the fixed five-millisecond sleep plus
+the slower complete frame reduced swap FPS by 2.31%.
+
+This also clarifies the thread question. The analyzer and renderer did make useful
+parallel progress: all runs published about 84 analysis results per second and kept
+result-age p95 below two audio blocks. Separate threads did not make output work free,
+however. Pillow raised observed process CPU by about five percentage points and the
+binding's GIL-holding/full-frame work still competed inside one process. Parallel
+structure permits overlap where native code releases the GIL; it does not guarantee
+simultaneous Python execution or a faster critical path.
+
+Direct rendering remains the accepted output architecture. A future bulk experiment
+must eliminate or materially reduce the full-frame Pillow/binding traversal rather
+than merely hiding 4,096 native writes behind one Python call.
