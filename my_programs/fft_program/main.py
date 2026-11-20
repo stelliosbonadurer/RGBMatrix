@@ -47,10 +47,14 @@ from config import Settings, load_settings
 from core import (
     AudioCapture,
     AudioProcessor,
+    DIRECT_OUTPUT_PATH,
     FrameRenderer,
     MagnitudeAnalyzer,
     MatrixApp,
+    OUTPUT_PATH_ENVIRONMENT,
+    PILLOW_BULK_OUTPUT_PATH,
     ScalingProcessor,
+    compile_pillow_bulk_bars_output,
 )
 from themes import get_theme, list_themes
 from visualizers import get_visualizer, draw_peaks
@@ -479,6 +483,29 @@ def main():
             apply_persisted_runtime_state(prior_state)
             print(f"Reloaded prior runtime state from: {RUNTIME_STATE_PATH}")
 
+        # Select the complete output implementation once at startup.  The direct
+        # renderer remains the default and is not routed through the bulk candidate
+        # or a generic compositor.
+        output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
+        unavailable_command_paths = frozenset()
+        if output_path == DIRECT_OUTPUT_PATH:
+            pass
+        elif output_path == PILLOW_BULK_OUTPUT_PATH:
+            bulk_output_plan = compile_pillow_bulk_bars_output(
+                visualizer,
+                app.width,
+                app.height,
+            )
+            renderer = cast(FrameRenderer, bulk_output_plan)
+            unavailable_command_paths = (
+                bulk_output_plan.incompatible_runtime_paths
+            )
+        else:
+            raise ValueError(
+                f"Unsupported FFT output path {output_path!r}; expected "
+                f"{DIRECT_OUTPUT_PATH!r} or {PILLOW_BULK_OUTPUT_PATH!r}"
+            )
+
         controller = FftRuntimeController(
             settings=settings,
             visualizer=visualizer,
@@ -487,6 +514,7 @@ def main():
             width=app.width,
             height=app.height,
             run_id=os.environ.get("RGB_MATRIX_RUN_ID", "local"),
+            unavailable_command_paths=unavailable_command_paths,
         )
         runtime_client = RuntimeControlClient.from_environment()
         runtime_bridge = FrameBoundaryRuntimeBridge(

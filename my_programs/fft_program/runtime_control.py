@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 import time
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional
 
 from themes import get_theme, list_themes
 from matrix_controller.runtime_transport import RuntimeControlError as TransportRuntimeControlError
@@ -127,6 +127,7 @@ class FftRuntimeController:
         height: int,
         run_id: str = "local",
         visualization_id: str = "fft",
+        unavailable_command_paths: FrozenSet[str] = frozenset(),
     ):
         self.settings = settings
         self.visualizer = visualizer
@@ -136,6 +137,7 @@ class FftRuntimeController:
         self.height = int(height)
         self.run_id = str(run_id)
         self.visualization_id = str(visualization_id)
+        self.unavailable_command_paths = unavailable_command_paths
         self.revision = 0
 
     # ------------------------------------------------------------------
@@ -269,6 +271,12 @@ class FftRuntimeController:
         # therefore never leave the first command partially applied.
         for command in commands:
             self._validate_command(command)
+            if command.path in self.unavailable_command_paths:
+                raise RuntimeControlError(
+                    "unavailable",
+                    "control is unavailable for the active output path",
+                    path=command.path,
+                )
         prepared_analysis = self._prepare_analysis_update(commands)
         noise_floor_changed = any(
             command.op == "set" and command.path == "settings.noise_floor"

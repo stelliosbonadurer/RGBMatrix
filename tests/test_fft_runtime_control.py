@@ -180,6 +180,59 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertFalse(self.visualizer.gradient_mode)
         self.assertEqual(self.controller.revision, 0)
 
+    def test_output_path_guard_rejects_only_invalidating_commands_atomically(self) -> None:
+        guarded = FftRuntimeController(
+            settings=self.settings,
+            visualizer=self.visualizer,
+            audio=self.audio,
+            theme_cycler=self.cycler,
+            width=8,
+            height=8,
+            run_id="run-test",
+            unavailable_command_paths=frozenset({
+                "visualizer.gradient",
+                "visualizer.theme",
+            }),
+        )
+
+        rejected = guarded.apply_request({
+            "commands": [
+                {
+                    "op": "set",
+                    "path": "settings.sensitivity_scalar",
+                    "value": 1.5,
+                },
+                {
+                    "op": "set",
+                    "path": "visualizer.gradient",
+                    "value": True,
+                },
+            ]
+        })
+
+        self.assertFalse(rejected["ok"])
+        self.assertEqual(rejected["error"]["code"], "unavailable")
+        self.assertEqual(rejected["error"]["path"], "visualizer.gradient")
+        self.assertEqual(self.settings.scaling.sensitivity_scalar, 1.0)
+        self.assertFalse(self.visualizer.gradient_mode)
+        self.assertEqual(guarded.revision, 0)
+
+        allowed = guarded.apply_request({
+            "commands": [{
+                "op": "set",
+                "path": "settings.sensitivity_scalar",
+                "value": 1.5,
+            }]
+        })
+        self.assertTrue(allowed["ok"])
+        self.assertEqual(self.settings.scaling.sensitivity_scalar, 1.5)
+        self.assertEqual(guarded.revision, 1)
+
+        message = guarded.handle_key("g")
+        self.assertIn("unavailable", message)
+        self.assertFalse(self.visualizer.gradient_mode)
+        self.assertEqual(guarded.revision, 1)
+
     def test_keyboard_and_semantic_command_share_state_path(self) -> None:
         self.controller.handle_key("g")
         self.assertTrue(self.visualizer.gradient_mode)
