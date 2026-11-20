@@ -4,6 +4,11 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.audio import AudioProcessor, FFTData
+from core.analyzer_registry import (
+    AnalyzerRegistry,
+    AnalyzerRegistryError,
+    compile_standard_analyzer_plan,
+)
 from core.analysis_plan import (
     AnalysisPlanValidationError,
     StandardAnalysisCandidate,
@@ -24,6 +29,8 @@ from core.matrix_app import MatrixApp
 __all__ = [
     'AudioProcessor',
     'AudioCapture',
+    'AnalyzerRegistry',
+    'AnalyzerRegistryError',
     'AnalysisPlanValidationError',
     'FFTData',
     'FrameRenderer',
@@ -36,6 +43,7 @@ __all__ = [
     'StandardAnalysisCandidate',
     'StandardAnalysisPlan',
     'compile_standard_analysis_plan',
+    'compile_standard_analyzer_plan',
     'compile_pillow_bulk_bars_output',
     'MatrixApp',
 ]

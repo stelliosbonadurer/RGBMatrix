@@ -45,6 +45,7 @@ if PROJECT_ROOT not in sys.path:
 
 from config import Settings, load_settings
 from core import (
+    AnalyzerRegistry,
     AudioCapture,
     AudioProcessor,
     DIRECT_OUTPUT_PATH,
@@ -54,6 +55,7 @@ from core import (
     OUTPUT_PATH_ENVIRONMENT,
     PILLOW_BULK_OUTPUT_PATH,
     ScalingProcessor,
+    compile_standard_analyzer_plan,
     compile_pillow_bulk_bars_output,
 )
 from themes import get_theme, list_themes
@@ -399,15 +401,31 @@ def main():
     
     # Initialize components
     try:
-        # Audio processor
-        audio = AudioProcessor(
+        output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
+
+        analyzer_plan = compile_standard_analyzer_plan(
             audio_settings=settings.audio,
-            freq_settings=settings.frequency,
+            frequency_settings=settings.frequency,
             sensitivity_settings=settings.sensitivity,
-            num_bins=app.width
+            num_bins=app.width,
+            output_backend=output_path,
         )
-        capture: AudioCapture = audio
-        analyzer: MagnitudeAnalyzer = audio
+        analyzer_registry = AnalyzerRegistry(
+            analyzer_plan,
+            {
+                analyzer_plan.analyzers[0].analyzer_type: lambda _definition: AudioProcessor(
+                    audio_settings=settings.audio,
+                    freq_settings=settings.frequency,
+                    sensitivity_settings=settings.sensitivity,
+                    num_bins=app.width,
+                )
+            },
+        )
+        capture: AudioCapture = analyzer_registry
+        analyzer: MagnitudeAnalyzer = analyzer_registry.resolve(
+            analyzer_plan.analyzers[0]
+        )
+        audio = cast(AudioProcessor, analyzer)
         
         # Scaling processor
         scaler = ScalingProcessor(
@@ -487,7 +505,6 @@ def main():
         # Select the complete output implementation once at startup.  The direct
         # renderer remains the default and is not routed through the bulk candidate
         # or a generic compositor.
-        output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
         unavailable_command_paths = frozenset()
         if output_path == DIRECT_OUTPUT_PATH:
             pass

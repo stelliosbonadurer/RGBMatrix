@@ -13,6 +13,7 @@ FFT_ROOT = Path(__file__).resolve().parent.parent / "my_programs" / "fft_program
 CORE_ROOT = FFT_ROOT / "core"
 MAIN_PATH = FFT_ROOT / "main.py"
 CORE_INIT_PATH = CORE_ROOT / "__init__.py"
+ANALYZER_REGISTRY_PATH = CORE_ROOT / "analyzer_registry.py"
 if str(CORE_ROOT) not in sys.path:
     sys.path.insert(0, str(CORE_ROOT))
 
@@ -427,15 +428,21 @@ class RuntimeGraphValidationTests(unittest.TestCase):
                 compile_runtime_graph(_definition(layers=()), capabilities)
 
 
-class RuntimeGraphIsolationTests(unittest.TestCase):
-    def test_new_model_is_not_connected_to_runtime_execution(self) -> None:
+class RuntimeGraphBoundaryTests(unittest.TestCase):
+    def test_step2_connects_only_the_analyzer_registry_seam(self) -> None:
         main_source = MAIN_PATH.read_text(encoding="utf-8")
         core_init_source = CORE_INIT_PATH.read_text(encoding="utf-8")
+        registry_source = ANALYZER_REGISTRY_PATH.read_text(encoding="utf-8")
         compiler_source = inspect.getsource(compile_runtime_graph)
 
         self.assertNotIn("runtime_graph", main_source)
         self.assertNotIn("compile_runtime_graph", main_source)
         self.assertNotIn("runtime_graph", core_init_source)
+        self.assertIn("AnalyzerRegistry", main_source)
+        self.assertIn("compile_standard_analyzer_plan", main_source)
+        self.assertIn("layers=()", registry_source)
+        self.assertNotIn("visualizers", registry_source)
+        self.assertNotIn("draw_peaks", registry_source)
         self.assertNotIn("main", compiler_source)
         self.assertNotIn("draw", compiler_source)
         self.assertNotIn("execute", compiler_source)
