@@ -16,6 +16,17 @@ are retained in numbered order under
 [`plans_archvie/`](plans_archvie/README.md). Read both indexes before continuing a
 milestone because they separate deployed boundaries from remaining work.
 
+For the current FFT rebuild, use the numbered session records deliberately:
+
+- qualified Step 6 evidence: `session summaries/2026-11-19-2-fft-step6-output-path`;
+- active analyzer/layer roadmap:
+  `session summaries/2026-11-19-5-modular-analyzers-layers-roadmap`;
+- deferred, unimplemented ideas:
+  `session summaries/2026-11-19-6-considerations`.
+
+The considerations folder is not an implementation queue. The failed-refactor
+archive records measured negative evidence and is likewise not an active roadmap.
+
 ## Project in one paragraph
 
 This is a Raspberry Pi/HUB75 RGB-matrix playground whose primary application is the modular real-time audio visualizer in `my_programs/fft_program/`. Audio arrives through `sounddevice`, NumPy converts it to logarithmic FFT bars, scaling smooths and normalizes the values, themes choose colors, and the `rgbmatrix` native binding writes a double-buffered frame to the panel. `matrix_controller/` now provides a hardware-independent allowlist, typed launch parameters, exclusive subprocess supervisor, and HTTP API for the FFT and sorting visualizations. `launch_rgbmatrix.py` remains the broader interactive developer launcher.

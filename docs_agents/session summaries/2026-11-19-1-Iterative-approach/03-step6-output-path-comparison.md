@@ -303,5 +303,4 @@ The explanatory engineering record is
 The rejection holds only for the single sparse qualification layer. The loop was
 bound by the ≈104 Hz panel refresh. Bulk upload may scale better with multiple
 layers. See
-[`../2026-11-19-3-output-pacing-plan/decisions.md`](../2026-11-19-3-output-pacing-plan/decisions.md)
-D-008.
+[the consolidated output considerations](../2026-11-19-6-considerations/README.md#output-and-composition).

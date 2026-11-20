@@ -172,6 +172,6 @@ findings limit how far it extends:
    A full-frame upload costs a fixed 4,096 pixels. With several layers, `SetImage` or
    a native buffer upload may scale better.
 
-Re-run the output-path comparison when the composite multi-layer path exists. See
-[`../2026-11-19-3-output-pacing-plan/`](../2026-11-19-3-output-pacing-plan/README.md)
-(D-008).
+Re-run the output-path comparison only when a representative multi-layer path
+exists. The unimplemented rationale is retained under
+[deferred considerations](../2026-11-19-6-considerations/README.md#output-and-composition).
