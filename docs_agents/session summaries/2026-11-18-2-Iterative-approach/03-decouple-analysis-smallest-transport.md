@@ -8,7 +8,7 @@
 ## Purpose and scope
 
 This implements step 5 of
-[`pipeline-comparison-and-next-architecture.md`](../2026-11-18-performance-comparison/pipeline-comparison-and-next-architecture.md):
+[`pipeline-comparison-and-next-architecture.md`](../2026-11-18-1-performance-comparison/pipeline-comparison-and-next-architecture.md):
 
 > Decouple analysis with the smallest transport. First try a latest 64-bin double
 > buffer. If a thread cannot preserve analyzer/callback service under render load,

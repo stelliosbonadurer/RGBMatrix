@@ -35,6 +35,6 @@ promotion of Pillow or of the temporary metrics hook. See [decisions.md](decisio
 [handoff.md](handoff.md). The explanatory case-study record is
 [concepts-and-findings.md](concepts-and-findings.md), and the bounded hardware plan is
 [qualification-plan.md](qualification-plan.md). The detailed audit is in
-[`../2026-11-19-Iterative-approach/03-step6-output-path-comparison.md`](../2026-11-19-Iterative-approach/03-step6-output-path-comparison.md).
+[`../2026-11-19-1-Iterative-approach/03-step6-output-path-comparison.md`](../2026-11-19-1-Iterative-approach/03-step6-output-path-comparison.md).
 The retained raw-evidence location and immutable manifest are indexed in
 [artifacts/README.md](artifacts/README.md).

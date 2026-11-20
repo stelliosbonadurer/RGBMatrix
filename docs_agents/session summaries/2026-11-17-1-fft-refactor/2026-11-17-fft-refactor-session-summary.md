@@ -5,9 +5,9 @@
 > comparison on 2026-11-18. It was removed from the working runtime and the repository
 > implementation was returned to commit `f23a34a`. Do not treat this document as the
 > current architecture or as a design to reimplement unchanged. See
-> [`2026-11-18-performance-comparison/README.md`](2026-11-18-performance-comparison/README.md)
+> [`2026-11-18-1-performance-comparison/README.md`](../2026-11-18-1-performance-comparison/README.md)
 > and
-> [`pipeline-comparison-and-next-architecture.md`](2026-11-18-performance-comparison/pipeline-comparison-and-next-architecture.md)
+> [`pipeline-comparison-and-next-architecture.md`](../2026-11-18-1-performance-comparison/pipeline-comparison-and-next-architecture.md)
 > for the measured failure and replacement direction.
 
 ## Outcome

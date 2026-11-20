@@ -476,6 +476,16 @@ class AudioProcessor:
     def latest_analysis_publish_time_ns(self) -> int:
         """Monotonic publication time for opt-in result-age measurement."""
         return self._analysis_transport.published_time_ns
+
+    @property
+    def last_acquired_analysis_sequence(self) -> int:
+        """Sequence of the exact result slot most recently leased by rendering."""
+        return self._analysis_transport.last_acquired_sequence
+
+    @property
+    def last_acquired_analysis_publish_time_ns(self) -> int:
+        """Publication time of the exact result slot most recently leased."""
+        return self._analysis_transport.last_acquired_time_ns
     
     def __enter__(self):
         """Context manager entry."""

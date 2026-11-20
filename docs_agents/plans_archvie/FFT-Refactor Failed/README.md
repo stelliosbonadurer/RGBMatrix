@@ -8,10 +8,10 @@
 
 See the archived session evidence:
 
-- [`2026-11-17-fft-refactor-session-summary.md`](../../session%20summaries/2026-11-17-fft-refactor-session-summary.md)
-- [`2026-11-17-tests-fft-refactor.md`](../../session%20summaries/2026-11-17-tests-fft-refactor.md)
-- [`2026-11-18-performance-comparison/README.md`](../../session%20summaries/2026-11-18-performance-comparison/README.md)
-- [`pipeline-comparison-and-next-architecture.md`](../../session%20summaries/2026-11-18-performance-comparison/pipeline-comparison-and-next-architecture.md)
+- [`2026-11-17-fft-refactor-session-summary.md`](../../session%20summaries/2026-11-17-1-fft-refactor/2026-11-17-fft-refactor-session-summary.md)
+- [`2026-11-17-tests-fft-refactor.md`](../../session%20summaries/2026-11-17-1-fft-refactor/2026-11-17-tests-fft-refactor.md)
+- [`2026-11-18-1-performance-comparison/README.md`](../../session%20summaries/2026-11-18-1-performance-comparison/README.md)
+- [`pipeline-comparison-and-next-architecture.md`](../../session%20summaries/2026-11-18-1-performance-comparison/pipeline-comparison-and-next-architecture.md)
 
 ## Historical target
 

@@ -7,7 +7,7 @@
 ## Purpose
 
 This implements step 3 of the rebuild sequence in
-[`pipeline-comparison-and-next-architecture.md`](../2026-11-18-performance-comparison/pipeline-comparison-and-next-architecture.md):
+[`pipeline-comparison-and-next-architecture.md`](../2026-11-18-1-performance-comparison/pipeline-comparison-and-next-architecture.md):
 
 > Introduce interfaces without changing execution. Wrap legacy capture, analyzer,
 > and renderer behind narrow contracts while keeping the same arrays, call order,

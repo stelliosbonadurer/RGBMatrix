@@ -158,3 +158,20 @@ not another Pillow wrapper. It should:
 The engineering lesson is broader than this matrix: optimize the complete critical
 path, verify where an abstraction performs its hidden work, and treat concurrency as
 a measured property rather than an implication of thread count.
+
+## Scope caveat added after review (2026-11-19)
+
+This rejection applies to **one sparse bar layer** (~400–450 lit pixels). Two later
+findings limit how far it extends:
+
+1. The loop was refresh-bound. `SwapOnVSync` waits for the end of a ≈9.6 ms
+   (≈104 Hz) panel refresh at 11 PWM bits and 130 ns LSB. Any render time saved
+   became VSync wait, so the FPS gate could not be passed by *any* output-path
+   change at this workload.
+2. Direct drawing cost grows with lit pixels across all layers, including overlap.
+   A full-frame upload costs a fixed 4,096 pixels. With several layers, `SetImage` or
+   a native buffer upload may scale better.
+
+Re-run the output-path comparison when the composite multi-layer path exists. See
+[`../2026-11-19-3-output-pacing-plan/`](../2026-11-19-3-output-pacing-plan/README.md)
+(D-008).

@@ -294,6 +294,14 @@ separate future experiment.
 
 Exact runtime hashes, recovery identity, artifact location, manifest, and final Pi
 state are in
-[`../2026-11-19-fft-step6-output-path/qualification-plan.md`](../2026-11-19-fft-step6-output-path/qualification-plan.md).
+[`../2026-11-19-2-fft-step6-output-path/qualification-plan.md`](../2026-11-19-2-fft-step6-output-path/qualification-plan.md).
 The explanatory engineering record is
-[`../2026-11-19-fft-step6-output-path/concepts-and-findings.md`](../2026-11-19-fft-step6-output-path/concepts-and-findings.md).
+[`../2026-11-19-2-fft-step6-output-path/concepts-and-findings.md`](../2026-11-19-2-fft-step6-output-path/concepts-and-findings.md).
+
+## Scope caveat (added 2026-11-19)
+
+The rejection holds only for the single sparse qualification layer. The loop was
+bound by the ≈104 Hz panel refresh. Bulk upload may scale better with multiple
+layers. See
+[`../2026-11-19-3-output-pacing-plan/decisions.md`](../2026-11-19-3-output-pacing-plan/decisions.md)
+D-008.

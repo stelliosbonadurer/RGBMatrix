@@ -1,0 +1,2 @@
+python per-pixel top-down (5 layers, 4096 px): 0.55 ms/frame
+numpy top-down mask compose (5 layers):        0.113 ms/frame

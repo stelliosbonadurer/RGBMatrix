@@ -64,6 +64,7 @@ from matrix_controller.runtime_transport import (
     RuntimeControlClient,
 )
 from runtime_control import FftRuntimeController
+from qualification_metrics import Step6QualificationMetrics
 
 
 STATE_VERSION = 1
@@ -506,6 +507,10 @@ def main():
                 f"{DIRECT_OUTPUT_PATH!r} or {PILLOW_BULK_OUTPUT_PATH!r}"
             )
 
+        qualification_metrics = Step6QualificationMetrics.from_environment(
+            output_mode=output_path,
+        )
+
         controller = FftRuntimeController(
             settings=settings,
             visualizer=visualizer,
@@ -533,6 +538,8 @@ def main():
         keyboard_enabled = not args.non_interactive
         with ShutdownSignalHandler(), capture, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
             time.sleep(0.5)  # Let audio stream settle
+            if qualification_metrics is not None:
+                qualification_metrics.arm(audio)
             if runtime_client is not None:
                 def serve_runtime_controls() -> None:
                     """Keep control-channel failures isolated from rendering."""
@@ -559,6 +566,11 @@ def main():
             last_state_save_time = 0.0
             state_save_interval = 2.0
             while True:
+                if (
+                    qualification_metrics is not None
+                    and qualification_metrics.poll(audio)
+                ):
+                    break
                 # IPC listeners only enqueue validated request envelopes.  Drain a
                 # small bounded batch here so all visualizer/audio mutations happen
                 # between frames on this render thread.
@@ -581,7 +593,13 @@ def main():
 
                 if bars is None:
                     now = time.time()
-                    if state_dirty or (now - last_state_save_time) >= state_save_interval:
+                    if (
+                        qualification_metrics is None
+                        and (
+                            state_dirty
+                            or (now - last_state_save_time) >= state_save_interval
+                        )
+                    ):
                         save_runtime_state(build_runtime_state())
                         last_state_save_time = now
                     time.sleep(0.001)
@@ -599,12 +617,27 @@ def main():
                 finally:
                     analyzer.release_fft_magnitudes()
 
+                measure_frame = (
+                    qualification_metrics is not None
+                    and qualification_metrics.begin_frame(audio)
+                )
+                if qualification_metrics is not None and qualification_metrics.complete:
+                    break
+                if measure_frame:
+                    analysis_sequence = audio.last_acquired_analysis_sequence
+                    analysis_publish_time_ns = (
+                        audio.last_acquired_analysis_publish_time_ns
+                    )
+                    draw_started_ns = time.perf_counter_ns()
+
                 # Draw visualization
                 renderer.draw(
                     app.canvas,
                     smoothed,
                     None
                 )
+                if measure_frame:
+                    draw_completed_ns = time.perf_counter_ns()
                 
                 # Draw peaks as an independent overlay.
                 if settings.peak.enabled:
@@ -617,19 +650,46 @@ def main():
                     )
                 
                 # Swap buffers
+                if measure_frame:
+                    swap_started_ns = time.perf_counter_ns()
                 app.swap_canvas()
+                if measure_frame:
+                    swap_completed_ns = time.perf_counter_ns()
+                    if qualification_metrics.record_frame(
+                        audio=audio,
+                        smoothed_bars=smoothed,
+                        height=app.height,
+                        overflow_multiplier=settings.overflow.multiplier,
+                        draw_started_ns=draw_started_ns,
+                        draw_completed_ns=draw_completed_ns,
+                        swap_started_ns=swap_started_ns,
+                        swap_completed_ns=swap_completed_ns,
+                        analysis_sequence=analysis_sequence,
+                        analysis_publish_time_ns=analysis_publish_time_ns,
+                    ):
+                        break
                 
                 # Frame delay
                 time.sleep(settings.audio.sleep_delay)
 
                 now = time.time()
-                if state_dirty or (now - last_state_save_time) >= state_save_interval:
+                if (
+                    qualification_metrics is None
+                    and (
+                        state_dirty
+                        or (now - last_state_save_time) >= state_save_interval
+                    )
+                ):
                     save_runtime_state(build_runtime_state())
                     last_state_save_time = now
                 
     except KeyboardInterrupt:
+        if qualification_metrics is not None:
+            qualification_metrics.finish(audio, reason="keyboard_interrupt")
         print("\nExiting...")
     except Exception as e:
+        if qualification_metrics is not None:
+            qualification_metrics.finish(audio, reason="runtime_error")
         print(f"Runtime error: {e}")
         raise
     finally:
@@ -637,11 +697,21 @@ def main():
         runtime_bridge.close()
         if runtime_thread is not None:
             runtime_thread.join(timeout=1.0)
-        try:
-            save_runtime_state(build_runtime_state())
-        except Exception:
-            pass
+        if qualification_metrics is None:
+            try:
+                save_runtime_state(build_runtime_state())
+            except Exception:
+                pass
+        qualification_write_failure = None
+        if qualification_metrics is not None:
+            try:
+                qualification_metrics.write(audio)
+            except Exception as exc:
+                print(f"Qualification metrics write failed: {exc}")
+                qualification_write_failure = exc
         app.clear()
+        if qualification_write_failure is not None and sys.exc_info()[0] is None:
+            raise RuntimeError("qualification metrics write failed") from qualification_write_failure
 
 
 if __name__ == "__main__":
