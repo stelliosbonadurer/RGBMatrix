@@ -13,8 +13,7 @@ __pycache__/
 .env
 .venv
 
-# Private development context lives in the RGBMatrix_Agents repository. These
-# ignores also allow a local checkout or AGENTS.md symlink without recommitting it.
-/AGENTS.md
+# Private development context lives in the RGBMatrix_Agents repository. Keep the
+# context directories private; the tracked root AGENTS.md only points agents there.
 /docs_agents/
 /docs_overview/
