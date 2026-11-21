@@ -3,7 +3,7 @@
 Telemetry is off unless ``--telemetry-out`` is given. When it is on, ``main.py``
 records exact per-frame samples into fixed-capacity arrays allocated up front,
 stops after the settle period plus the measured duration, and writes a JSON summary
-(schema ``rgbmatrix-fft-telemetry`` version 2) beside a ``.npz`` of raw samples.
+(schema ``rgbmatrix-fft-telemetry`` version 3) beside a ``.npz`` of raw samples.
 When it is off, the frame loop holds ``None`` and does no telemetry work.
 
 Configuration is CLI-only. The FFT child inherits the web supervisor's environment,
@@ -25,7 +25,7 @@ import numpy as np  # type: ignore
 
 
 TELEMETRY_SCHEMA = "rgbmatrix-fft-telemetry"
-TELEMETRY_SCHEMA_VERSION = 2
+TELEMETRY_SCHEMA_VERSION = 3
 DEFAULT_SETTLE_SECONDS = 60.0
 DEFAULT_DURATION_SECONDS = 300.0
 DEFAULT_MAX_SAMPLES = 100_000
@@ -188,6 +188,21 @@ def _audio_counters(audio: Any) -> dict[str, int]:
         "skipped_generation_count": int(audio.skipped_generation_count),
         "worker_failure_count": int(audio.worker_failure_count),
         "transport_drop_count": int(audio.transport_drop_count),
+    }
+
+
+def _audio_format(audio: Any) -> dict[str, Optional[int]]:
+    """Sample rate and callback block size, so result age can be judged in blocks.
+
+    Either is ``None`` when unknown, for example when the stream never started.
+    """
+
+    sample_rate = int(getattr(audio, "sample_rate", 0) or 0)
+    settings = getattr(audio, "audio_settings", None)
+    block_size = int(getattr(settings, "block_size", 0) or 0)
+    return {
+        "sample_rate": sample_rate if sample_rate > 0 else None,
+        "block_size": block_size if block_size > 0 else None,
     }
 
 
@@ -476,6 +491,7 @@ class FrameTelemetry:
                     else None
                 ),
             },
+            "audio": _audio_format(audio),
             "audio_counters_start": counters_start,
             "audio_counters_end": counters_end,
             "audio_counter_deltas": counter_deltas,

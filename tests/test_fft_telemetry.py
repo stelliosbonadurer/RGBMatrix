@@ -65,7 +65,7 @@ finally:
     sys.modules.update(_prior_core_modules)
 
 
-# The e9c0442 recorder's key tree plus "schema" (D-005). Percentile dictionaries are
+# The e9c0442 recorder's key tree plus "schema" (D-005) and, in version 3, "audio". Percentile dictionaries are
 # populated only when the run has samples.
 _PERCENTILE_KEYS = {"p50_ms", "p95_ms", "p99_ms", "max_ms"}
 _COUNTER_KEYS = {
@@ -113,6 +113,7 @@ EXPECTED_KEY_TREE = {
         "visible_pixels_p50": None,
         "visible_pixels_p95": None,
     },
+    "audio": {"sample_rate": None, "block_size": None},
     "audio_counters_start": {key: None for key in _COUNTER_KEYS},
     "audio_counters_end": {key: None for key in _COUNTER_KEYS},
     "audio_counter_deltas": {key: None for key in _COUNTER_KEYS},
@@ -146,6 +147,8 @@ def _audio(**overrides):
         "skipped_generation_count": 5,
         "worker_failure_count": 0,
         "transport_drop_count": 0,
+        "sample_rate": 44100,
+        "audio_settings": SimpleNamespace(block_size=512),
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -330,8 +333,9 @@ class TelemetrySchemaTests(unittest.TestCase):
 
             summary = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(summary["schema"], "rgbmatrix-fft-telemetry")
-            self.assertEqual(summary["schema_version"], 2)
+            self.assertEqual(summary["schema_version"], 3)
             self.assertEqual(_key_tree(summary), EXPECTED_KEY_TREE)
+            self.assertEqual(summary["audio"], {"sample_rate": 44100, "block_size": 512})
             self.assertEqual(summary["raw_samples"], str(output_path.with_suffix(".npz")))
 
             with np.load(output_path.with_suffix(".npz")) as raw:
@@ -361,6 +365,53 @@ class TelemetrySchemaTests(unittest.TestCase):
             expected["latency"] = {name: {} for name in EXPECTED_KEY_TREE["latency"]}
             self.assertEqual(_key_tree(summary), expected)
             self.assertIsNone(summary["workload"]["visible_pixels_mean"])
+
+    def test_sample_rate_is_null_when_the_stream_was_never_set_up(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "unstarted.json"
+            telemetry = FrameTelemetry(
+                output_path=output_path,
+                run_label="unstarted",
+                source_id="candidate",
+                output_mode="direct",
+                settle_seconds=0,
+                duration_seconds=1,
+                max_samples=4,
+            )
+            audio = _audio(sample_rate=0)
+            telemetry.arm(audio, now_ns=0)
+            telemetry.write(audio)
+
+            summary = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["audio"], {"sample_rate": None, "block_size": 512})
+
+
+class PiCheckGateCompatibilityTests(unittest.TestCase):
+    def test_pi_check_gates_find_every_field_in_a_real_summary(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "pi_cycle_remote_for_schema_test",
+            FFT_ROOT.parent.parent / "tools" / "pi" / "remote.py",
+        )
+        remote = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = remote
+        try:
+            spec.loader.exec_module(remote)
+        finally:
+            sys.modules.pop(spec.name, None)
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "run.json"
+            telemetry, audio = _two_frame_run(output_path)
+            telemetry.write(audio)
+            summary = json.loads(output_path.read_text(encoding="utf-8"))
+
+        run = {"label": "direct-1", "mode": "direct", "returncode": 0, "throttled": 0}
+        evaluation = remote.evaluate_run(run, summary, 0)
+        self.assertTrue(evaluation["gates"]["schema"])
+        for field in ("frames", "swap_fps", "unique_fps", "analyzed_published_fraction",
+                      "result_age_p95_ms", "result_age_limit_ms", "callback_failures",
+                      "worker_failures"):
+            self.assertIsNotNone(evaluation[field], field)
+        self.assertAlmostEqual(evaluation["result_age_limit_ms"], 2 * 512 / 44100 * 1000)
 
 
 class TelemetryWriteFailureTests(unittest.TestCase):
