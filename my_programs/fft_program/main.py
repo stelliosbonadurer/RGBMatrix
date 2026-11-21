@@ -63,6 +63,8 @@ from matrix_controller.runtime_transport import (
     RuntimeControlClient,
 )
 from runtime_control import FftRuntimeController
+from core.matrix_process import matrix_process_experiment_enabled
+from core.matrix_process_runtime import run_matrix_process_experiment
 from core.telemetry import (
     TelemetryConfigurationError,
     add_telemetry_arguments,
@@ -334,7 +336,8 @@ def main():
     try:
         check_retired_environment(os.environ)
         telemetry = telemetry_from_args(args, output_mode=output_path)
-    except TelemetryConfigurationError as exc:
+        matrix_process_enabled = matrix_process_experiment_enabled(os.environ)
+    except (TelemetryConfigurationError, ValueError) as exc:
         app.parser.error(str(exc))
 
     # Load settings from file or use defaults
@@ -398,6 +401,30 @@ def main():
     
     # Always use the unified visualizer
     visualizer_name = "bars"
+
+    # The provisional split is startup-only and leaves this default in-process
+    # assembly untouched. The child creates the native matrix only after all parent
+    # configuration above has been validated.
+    if matrix_process_enabled:
+        restored_state = prior_state if reload_prior_state else None
+        # The parent constructed this object only to validate the existing CLI
+        # contract before native startup. The renderer owns the real recorder; do
+        # not retain duplicate fixed sample arrays in the measured parent.
+        del telemetry
+        try:
+            with ShutdownSignalHandler():
+                run_matrix_process_experiment(
+                    args=args,
+                    settings=settings,
+                    gradient_enabled=gradient_enabled,
+                    output_path=output_path,
+                    prior_state=restored_state,
+                    keyboard_handler_factory=KeyboardHandler,
+                )
+        except Exception as exc:
+            print(f"Matrix-process experiment failed: {exc}")
+            raise
+        return
     
     # Initialize matrix
     if not app.initialize_matrix():
