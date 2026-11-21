@@ -1,0 +1,15 @@
+# Hardware-free test dependencies for a development machine (for example the Mac).
+#
+# The versions match the Raspberry Pi (Debian 12, Python 3.11.2), so a local test run
+# also checks compatibility with what the Pi actually runs. Update them when the
+# Pi's packages change. Use a Python 3.11 interpreter:
+#
+#   python3.11 -m venv .venv
+#   .venv/bin/python -m pip install --only-binary=:all: -r requirements-test.txt
+#
+# sounddevice and rgbmatrix are intentionally absent. The FFT tests that import the
+# audio code install their own sounddevice stub, the others never import it, and no
+# test imports the native matrix binding.
+
+numpy==1.24.2
+Pillow==9.4.0
