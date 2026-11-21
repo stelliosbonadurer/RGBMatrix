@@ -63,7 +63,12 @@ from matrix_controller.runtime_transport import (
     RuntimeControlClient,
 )
 from runtime_control import FftRuntimeController
-from qualification_metrics import Step6QualificationMetrics
+from core.telemetry import (
+    TelemetryConfigurationError,
+    add_telemetry_arguments,
+    check_retired_environment,
+    telemetry_from_args,
+)
 
 
 STATE_VERSION = 1
@@ -311,6 +316,7 @@ def main():
         action="store_true",
         help="List available themes and exit"
     )
+    add_telemetry_arguments(app.parser)
     
     # Parse arguments
     args = app.process_args()
@@ -321,7 +327,16 @@ def main():
         for theme_name in list_themes():
             print(f"  - {theme_name}")
         sys.exit(0)
-    
+
+    # Validate telemetry before touching state, audio, or the matrix. Telemetry is
+    # None unless --telemetry-out is given; configuration errors exit with code 2.
+    output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
+    try:
+        check_retired_environment(os.environ)
+        telemetry = telemetry_from_args(args, output_mode=output_path)
+    except TelemetryConfigurationError as exc:
+        app.parser.error(str(exc))
+
     # Load settings from file or use defaults
     settings_path = getattr(args, 'settings', None)
     settings = load_settings(settings_path)
@@ -398,8 +413,6 @@ def main():
     
     # Initialize components
     try:
-        output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
-
         compiled_graph = compile_current_bars_graph(
             audio_settings=settings.audio,
             frequency_settings=settings.frequency,
@@ -502,10 +515,6 @@ def main():
             initial_layer_plan.incompatible_runtime_paths
         )
 
-        qualification_metrics = Step6QualificationMetrics.from_environment(
-            output_mode=output_path,
-        )
-
         controller = FftRuntimeController(
             settings=settings,
             visualizer=visualizer,
@@ -533,8 +542,8 @@ def main():
         keyboard_enabled = not args.non_interactive
         with ShutdownSignalHandler(), capture, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
             time.sleep(0.5)  # Let audio stream settle
-            if qualification_metrics is not None:
-                qualification_metrics.arm(audio)
+            if telemetry is not None:
+                telemetry.arm(audio)
             if runtime_client is not None:
                 def serve_runtime_controls() -> None:
                     """Keep control-channel failures isolated from rendering."""
@@ -562,8 +571,8 @@ def main():
             state_save_interval = 2.0
             while True:
                 if (
-                    qualification_metrics is not None
-                    and qualification_metrics.poll(audio)
+                    telemetry is not None
+                    and telemetry.poll(audio)
                 ):
                     break
                 # IPC listeners only enqueue validated request envelopes.  Drain a
@@ -593,7 +602,7 @@ def main():
                 if smoothed is None:
                     now = time.time()
                     if (
-                        qualification_metrics is None
+                        telemetry is None
                         and (
                             state_dirty
                             or (now - last_state_save_time) >= state_save_interval
@@ -605,10 +614,10 @@ def main():
                     continue
 
                 measure_frame = (
-                    qualification_metrics is not None
-                    and qualification_metrics.begin_frame(audio)
+                    telemetry is not None
+                    and telemetry.begin_frame(audio)
                 )
-                if qualification_metrics is not None and qualification_metrics.complete:
+                if telemetry is not None and telemetry.complete:
                     break
                 if measure_frame:
                     analysis_sequence = audio.last_acquired_analysis_sequence
@@ -629,7 +638,7 @@ def main():
                 app.swap_canvas()
                 if measure_frame:
                     swap_completed_ns = time.perf_counter_ns()
-                    if qualification_metrics.record_frame(
+                    if telemetry.record_frame(
                         audio=audio,
                         smoothed_bars=smoothed,
                         height=app.height,
@@ -648,7 +657,7 @@ def main():
 
                 now = time.time()
                 if (
-                    qualification_metrics is None
+                    telemetry is None
                     and (
                         state_dirty
                         or (now - last_state_save_time) >= state_save_interval
@@ -658,12 +667,12 @@ def main():
                     last_state_save_time = now
                 
     except KeyboardInterrupt:
-        if qualification_metrics is not None:
-            qualification_metrics.finish(audio, reason="keyboard_interrupt")
+        if telemetry is not None:
+            telemetry.finish(audio, reason="keyboard_interrupt")
         print("\nExiting...")
     except Exception as e:
-        if qualification_metrics is not None:
-            qualification_metrics.finish(audio, reason="runtime_error")
+        if telemetry is not None:
+            telemetry.finish(audio, reason="runtime_error")
         print(f"Runtime error: {e}")
         raise
     finally:
@@ -671,21 +680,21 @@ def main():
         runtime_bridge.close()
         if runtime_thread is not None:
             runtime_thread.join(timeout=1.0)
-        if qualification_metrics is None:
+        if telemetry is None:
             try:
                 save_runtime_state(build_runtime_state())
             except Exception:
                 pass
-        qualification_write_failure = None
-        if qualification_metrics is not None:
+        telemetry_write_failure = None
+        if telemetry is not None:
             try:
-                qualification_metrics.write(audio)
+                telemetry.write(audio)
             except Exception as exc:
-                print(f"Qualification metrics write failed: {exc}")
-                qualification_write_failure = exc
+                print(f"Telemetry write failed: {exc}")
+                telemetry_write_failure = exc
         app.clear()
-        if qualification_write_failure is not None and sys.exc_info()[0] is None:
-            raise RuntimeError("qualification metrics write failed") from qualification_write_failure
+        if telemetry_write_failure is not None and sys.exc_info()[0] is None:
+            raise RuntimeError("telemetry write failed") from telemetry_write_failure
 
 
 if __name__ == "__main__":

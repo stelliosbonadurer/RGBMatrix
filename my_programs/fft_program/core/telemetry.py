@@ -1,28 +1,170 @@
-"""Temporary, opt-in metrics for the step-6 Pi output-path comparison.
+"""Opt-in, bounded frame telemetry for the FFT visualizer.
 
-This module is qualification scaffolding, not product telemetry.  It is loaded only
-when the output JSON path environment variable is present and is intentionally kept
-out of the committed candidate source identity.
+Telemetry is off unless ``--telemetry-out`` is given. When it is on, ``main.py``
+records exact per-frame samples into fixed-capacity arrays allocated up front,
+stops after the settle period plus the measured duration, and writes a JSON summary
+(schema ``rgbmatrix-fft-telemetry`` version 2) beside a ``.npz`` of raw samples.
+When it is off, the frame loop holds ``None`` and does no telemetry work.
+
+Configuration is CLI-only. The FFT child inherits the web supervisor's environment,
+so an environment switch could start a bounded run by accident. The retired
+``RGBMATRIX_FFT_STEP6_*`` variables abort startup instead of being ignored.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import os
 from pathlib import Path
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import numpy as np  # type: ignore
 
 
-METRICS_PATH_ENVIRONMENT = "RGBMATRIX_FFT_STEP6_METRICS_PATH"
-RUN_LABEL_ENVIRONMENT = "RGBMATRIX_FFT_STEP6_RUN_LABEL"
-SOURCE_ID_ENVIRONMENT = "RGBMATRIX_FFT_STEP6_SOURCE_ID"
-SETTLE_SECONDS_ENVIRONMENT = "RGBMATRIX_FFT_STEP6_SETTLE_SECONDS"
-DURATION_SECONDS_ENVIRONMENT = "RGBMATRIX_FFT_STEP6_DURATION_SECONDS"
-MAX_SAMPLES_ENVIRONMENT = "RGBMATRIX_FFT_STEP6_MAX_SAMPLES"
+TELEMETRY_SCHEMA = "rgbmatrix-fft-telemetry"
+TELEMETRY_SCHEMA_VERSION = 2
+DEFAULT_SETTLE_SECONDS = 60.0
+DEFAULT_DURATION_SECONDS = 300.0
+DEFAULT_MAX_SAMPLES = 100_000
+RETIRED_ENVIRONMENT_PREFIX = "RGBMATRIX_FFT_STEP6_"
+
+# Options that only make sense with --telemetry-out, keyed by argparse dest.
+_DEPENDENT_OPTIONS = {
+    "telemetry_label": "--telemetry-label",
+    "telemetry_source_id": "--telemetry-source-id",
+    "telemetry_settle": "--telemetry-settle",
+    "telemetry_duration": "--telemetry-duration",
+    "telemetry_max_samples": "--telemetry-max-samples",
+}
+
+
+class TelemetryConfigurationError(ValueError):
+    """Invalid telemetry options, reported before the matrix or audio starts."""
+
+
+def add_telemetry_arguments(parser: argparse.ArgumentParser) -> None:
+    """Register the telemetry options on the FFT command-line parser."""
+
+    group = parser.add_argument_group(
+        "telemetry",
+        "Bounded frame-telemetry run. Off unless --telemetry-out is given; the "
+        "program exits after the settle period plus the duration.",
+    )
+    group.add_argument(
+        "--telemetry-out",
+        metavar="PATH",
+        default=None,
+        help=(
+            "absolute .json summary path in an existing directory; raw samples go "
+            "to the same name with .npz. Neither file may already exist. Enables "
+            "telemetry."
+        ),
+    )
+    group.add_argument(
+        "--telemetry-label",
+        metavar="LABEL",
+        default=None,
+        help="run label recorded in the summary (required with --telemetry-out)",
+    )
+    group.add_argument(
+        "--telemetry-source-id",
+        metavar="ID",
+        default=None,
+        help=(
+            "source identity recorded in the summary, such as a commit SHA "
+            "(required with --telemetry-out)"
+        ),
+    )
+    group.add_argument(
+        "--telemetry-settle",
+        metavar="SECONDS",
+        type=float,
+        default=None,
+        help=f"seconds to run before measuring (default {DEFAULT_SETTLE_SECONDS:g})",
+    )
+    group.add_argument(
+        "--telemetry-duration",
+        metavar="SECONDS",
+        type=float,
+        default=None,
+        help=f"measured seconds after settling (default {DEFAULT_DURATION_SECONDS:g})",
+    )
+    group.add_argument(
+        "--telemetry-max-samples",
+        metavar="N",
+        type=int,
+        default=None,
+        help=(
+            "frame-sample capacity; the run ends invalid if it fills "
+            f"(default {DEFAULT_MAX_SAMPLES})"
+        ),
+    )
+
+
+def check_retired_environment(environ: Mapping[str, str]) -> None:
+    """Refuse to start when a retired STEP6 telemetry variable is present."""
+
+    retired = sorted(
+        name for name in environ if name.startswith(RETIRED_ENVIRONMENT_PREFIX)
+    )
+    if retired:
+        raise TelemetryConfigurationError(
+            f"{', '.join(retired)} no longer configure telemetry; unset them and "
+            "use --telemetry-out, --telemetry-label, --telemetry-source-id, "
+            "--telemetry-settle, --telemetry-duration, and --telemetry-max-samples"
+        )
+
+
+def telemetry_from_args(
+    args: argparse.Namespace,
+    output_mode: str,
+) -> Optional["FrameTelemetry"]:
+    """Build the recorder from parsed options, or return None when telemetry is off."""
+
+    if args.telemetry_out is None:
+        orphaned = [
+            flag
+            for dest, flag in _DEPENDENT_OPTIONS.items()
+            if getattr(args, dest) is not None
+        ]
+        if orphaned:
+            raise TelemetryConfigurationError(
+                f"{', '.join(orphaned)} require --telemetry-out"
+            )
+        return None
+
+    missing = [
+        flag
+        for dest, flag in (
+            ("telemetry_label", "--telemetry-label"),
+            ("telemetry_source_id", "--telemetry-source-id"),
+        )
+        if not getattr(args, dest)
+    ]
+    if missing:
+        raise TelemetryConfigurationError(
+            f"--telemetry-out requires {' and '.join(missing)}"
+        )
+
+    def _value(dest: str, default: Any) -> Any:
+        value = getattr(args, dest)
+        return default if value is None else value
+
+    try:
+        return FrameTelemetry(
+            output_path=Path(args.telemetry_out),
+            run_label=args.telemetry_label,
+            source_id=args.telemetry_source_id,
+            output_mode=output_mode,
+            settle_seconds=_value("telemetry_settle", DEFAULT_SETTLE_SECONDS),
+            duration_seconds=_value("telemetry_duration", DEFAULT_DURATION_SECONDS),
+            max_samples=_value("telemetry_max_samples", DEFAULT_MAX_SAMPLES),
+        )
+    except (ValueError, FileExistsError) as exc:
+        raise TelemetryConfigurationError(f"telemetry: {exc}") from exc
 
 
 def _percentiles(values: np.ndarray) -> dict[str, float]:
@@ -49,8 +191,8 @@ def _audio_counters(audio: Any) -> dict[str, int]:
     }
 
 
-class Step6QualificationMetrics:
-    """Fixed-capacity exact samples for one bounded qualification run."""
+class FrameTelemetry:
+    """Fixed-capacity exact samples for one bounded telemetry run."""
 
     def __init__(
         self,
@@ -58,21 +200,21 @@ class Step6QualificationMetrics:
         run_label: str,
         source_id: str,
         output_mode: str,
-        settle_seconds: float = 60.0,
-        duration_seconds: float = 300.0,
-        max_samples: int = 100_000,
+        settle_seconds: float = DEFAULT_SETTLE_SECONDS,
+        duration_seconds: float = DEFAULT_DURATION_SECONDS,
+        max_samples: int = DEFAULT_MAX_SAMPLES,
         density_interval: int = 256,
     ) -> None:
         if not output_path.is_absolute():
-            raise ValueError("qualification metrics path must be absolute")
+            raise ValueError("output path must be absolute")
         if output_path.suffix != ".json":
-            raise ValueError("qualification metrics path must end in .json")
+            raise ValueError("output path must end in .json")
         if not output_path.parent.is_dir():
-            raise ValueError("qualification metrics directory must already exist")
+            raise ValueError("output directory must already exist")
         if output_path.exists() or output_path.with_suffix(".npz").exists():
-            raise FileExistsError("qualification metrics output already exists")
+            raise FileExistsError("output already exists")
         if not run_label or not source_id:
-            raise ValueError("qualification run label and source identity are required")
+            raise ValueError("run label and source identity are required")
         if not math.isfinite(settle_seconds) or settle_seconds < 0:
             raise ValueError("settle seconds must be finite and non-negative")
         if not math.isfinite(duration_seconds) or duration_seconds <= 0:
@@ -114,27 +256,9 @@ class Step6QualificationMetrics:
         self.requested_duration_complete = False
         self.termination_reason: Optional[str] = None
 
-    @classmethod
-    def from_environment(
-        cls,
-        output_mode: str,
-    ) -> Optional["Step6QualificationMetrics"]:
-        path_text = os.environ.get(METRICS_PATH_ENVIRONMENT)
-        if path_text is None:
-            return None
-        return cls(
-            output_path=Path(path_text),
-            run_label=os.environ.get(RUN_LABEL_ENVIRONMENT, ""),
-            source_id=os.environ.get(SOURCE_ID_ENVIRONMENT, ""),
-            output_mode=output_mode,
-            settle_seconds=float(os.environ.get(SETTLE_SECONDS_ENVIRONMENT, "60")),
-            duration_seconds=float(os.environ.get(DURATION_SECONDS_ENVIRONMENT, "300")),
-            max_samples=int(os.environ.get(MAX_SAMPLES_ENVIRONMENT, "100000")),
-        )
-
     def arm(self, audio: Any, now_ns: Optional[int] = None) -> None:
         if self.armed_ns is not None:
-            raise RuntimeError("qualification metrics are already armed")
+            raise RuntimeError("telemetry is already armed")
         current_ns = time.perf_counter_ns() if now_ns is None else now_ns
         self.armed_ns = current_ns
         self.measurement_start_ns = current_ns + self.settle_ns
@@ -147,7 +271,7 @@ class Step6QualificationMetrics:
 
         current_ns = time.perf_counter_ns() if now_ns is None else now_ns
         if self.measurement_start_ns is None or self.measurement_deadline_ns is None:
-            raise RuntimeError("qualification metrics must be armed before rendering")
+            raise RuntimeError("telemetry must be armed before rendering")
         if current_ns < self.measurement_start_ns:
             return False
         if self.start_counters is None:
@@ -174,7 +298,7 @@ class Step6QualificationMetrics:
         if self.poll(audio, now_ns=current_ns):
             return False
         if self.measurement_start_ns is None:
-            raise RuntimeError("qualification metrics must be armed before rendering")
+            raise RuntimeError("telemetry must be armed before rendering")
         return current_ns >= self.measurement_start_ns
 
     @property
@@ -255,7 +379,7 @@ class Step6QualificationMetrics:
 
     def write(self, audio: Any) -> None:
         if self.measurement_start_ns is None:
-            raise RuntimeError("qualification metrics were never armed")
+            raise RuntimeError("telemetry was never armed")
         if not self.complete:
             self.finish(audio, reason="application_exit")
         if self.end_counters is None:
@@ -299,7 +423,8 @@ class Step6QualificationMetrics:
         density_values = self.visible_pixel_samples[:self.density_count]
 
         summary = {
-            "schema_version": 1,
+            "schema": TELEMETRY_SCHEMA,
+            "schema_version": TELEMETRY_SCHEMA_VERSION,
             "run_label": self.run_label,
             "source_id": self.source_id,
             "output_mode": self.output_mode,
@@ -364,25 +489,48 @@ class Step6QualificationMetrics:
         json_temp_path = self.output_path.with_name(
             f".{self.output_path.name}.{os.getpid()}.tmp"
         )
-        np.savez_compressed(
-            raw_temp_path,
-            render_ns=self.render_ns[:count],
-            swap_ns=self.swap_ns[:count],
-            total_ns=self.total_ns[:count],
-            completed_ns=self.completed_ns[:count],
-            result_age_ns=self.result_age_ns[:count],
-            analysis_sequences=sequences,
-            density_frame_indices=self.density_frame_indices[:self.density_count],
-            visible_pixel_samples=self.visible_pixel_samples[:self.density_count],
-        )
-        with json_temp_path.open("x", encoding="utf-8") as output:
-            json.dump(summary, output, indent=2, sort_keys=True)
-            output.write("\n")
-        os.replace(raw_temp_path, self.raw_path)
-        os.replace(json_temp_path, self.output_path)
+        # Publish both files or neither: on any failure, remove what this call
+        # created (temporaries, and the .npz if it was already moved into place).
+        created: list[Path] = []
+        try:
+            created.append(raw_temp_path)
+            np.savez_compressed(
+                raw_temp_path,
+                render_ns=self.render_ns[:count],
+                swap_ns=self.swap_ns[:count],
+                total_ns=self.total_ns[:count],
+                completed_ns=self.completed_ns[:count],
+                result_age_ns=self.result_age_ns[:count],
+                analysis_sequences=sequences,
+                density_frame_indices=self.density_frame_indices[:self.density_count],
+                visible_pixel_samples=self.visible_pixel_samples[:self.density_count],
+            )
+            with json_temp_path.open("x", encoding="utf-8") as output:
+                created.append(json_temp_path)
+                json.dump(summary, output, indent=2, sort_keys=True)
+                output.write("\n")
+            os.replace(raw_temp_path, self.raw_path)
+            created[0] = self.raw_path
+            os.replace(json_temp_path, self.output_path)
+        except BaseException:
+            for path in created:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+            raise
 
 
 __all__ = [
-    "METRICS_PATH_ENVIRONMENT",
-    "Step6QualificationMetrics",
+    "DEFAULT_DURATION_SECONDS",
+    "DEFAULT_MAX_SAMPLES",
+    "DEFAULT_SETTLE_SECONDS",
+    "FrameTelemetry",
+    "RETIRED_ENVIRONMENT_PREFIX",
+    "TELEMETRY_SCHEMA",
+    "TELEMETRY_SCHEMA_VERSION",
+    "TelemetryConfigurationError",
+    "add_telemetry_arguments",
+    "check_retired_environment",
+    "telemetry_from_args",
 ]
