@@ -48,10 +48,13 @@ PI_REMOTE = "pi"
 DEPLOY_REF = "refs/heads/deploy"
 RESULT_MARKER = "@@PI_CYCLE_RESULT@@ "
 OUTPUT_MODES = ("direct", "pillow-bulk")
-# Fixed by the approved Step 4 measurement plan; not command-line options.
+# Fixed by the Step 4 v2 measurement plan (D-011b); not command-line options.
+# 250,000 samples leave room for about 275 FPS over 900 s.
 MEASURE_SETTLE_SECONDS = 60.0
-MEASURE_DURATION_SECONDS = 300.0
-MEASURE_MAX_SAMPLES = 100000
+MEASURE_DURATION_SECONDS = 900.0
+MEASURE_MAX_SAMPLES = 250000
+# Only the long measure-split call: probe every 30 s, give up after 5 silent minutes.
+SSH_KEEPALIVE_OPTIONS = ("-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=10")
 
 EXIT_OK = 0
 EXIT_GATE_FAILED = 1
@@ -73,8 +76,10 @@ class Target:
     push_url: str = ""
     source: str = ""
 
-    def ssh_argv(self) -> list[str]:
+    def ssh_argv(self, *, keepalive: bool = False) -> list[str]:
         argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+        if keepalive:
+            argv += SSH_KEEPALIVE_OPTIONS
         if self.port is not None:
             argv += ["-p", str(self.port)]
         return argv + [self.destination]
@@ -159,22 +164,25 @@ def resolve_local_commit(ref: str, git: Callable[..., Any] = _git) -> str:
     return resolved.stdout.strip()
 
 
-def remote_command(target: Target, args: Sequence[str]) -> list[str]:
+def remote_command(target: Target, args: Sequence[str], *,
+                   keepalive: bool = False) -> list[str]:
     """The SSH argv. The remote shell sees one quoted ``python3 - ...`` command."""
 
     remote_args = ["--checkout", target.checkout, *args]
-    return [*target.ssh_argv(), "python3 - " + " ".join(shlex.quote(a) for a in remote_args)]
+    return [*target.ssh_argv(keepalive=keepalive),
+            "python3 - " + " ".join(shlex.quote(a) for a in remote_args)]
 
 
 def run_remote(target: Target, args: Sequence[str], *,
                popen: Callable[..., Any] = subprocess.Popen,
-               out: Any = None) -> tuple[int, Optional[dict[str, Any]]]:
+               out: Any = None, keepalive: bool = False) -> tuple[int, Optional[dict[str, Any]]]:
     """Stream progress lines, return the remote exit code and its result document."""
 
     out = out or sys.stdout
     script = REMOTE_SCRIPT.read_bytes()
     process = popen(
-        remote_command(target, args), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        remote_command(target, args, keepalive=keepalive),
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=None, text=False,
     )
     process.stdin.write(script)
@@ -259,7 +267,8 @@ def build_parser() -> argparse.ArgumentParser:
     restore.add_argument("ref", help="Resolved on the Pi, so Pi-only branches work.")
     measure = sub.add_parser(
         "measure-split",
-        help="Step 4: the approved eight-run baseline/candidate matrix-process sequence.",
+        help="Step 4 v2: the approved eight-run baseline/candidate matrix-process"
+             " sequence (report-only).",
     )
     measure.add_argument("baseline", help="In-process baseline commit.")
     measure.add_argument("candidate", help="Split candidate commit; must descend from"
@@ -382,7 +391,7 @@ def _measure_split(args: Any, target: Target, git: Callable[..., Any],
         "--tool-commit", tool_commit,
         "--tool-sha256", tool_sha256,
         "--audio-note", args.audio_note,
-    ], popen=popen, out=out)
+    ], popen=popen, out=out, keepalive=True)
     if result and result.get("results_markdown"):
         _print(out)
         out.write(result["results_markdown"])

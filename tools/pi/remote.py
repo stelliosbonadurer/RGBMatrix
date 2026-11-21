@@ -57,10 +57,11 @@ CHILD_MARGIN_SECONDS = 90.0
 THROTTLE_CURRENT_MASK = 0xF
 THROTTLE_STICKY_MASK = 0xF0000
 
-# Step 4 matrix-process measurement (measurement-plan.md, amendments A-1 to A-7).
+# Step 4 matrix-process measurement, v2 report-only (measurement-plan-v2.md; the
+# unchanged parts of measurement-plan.md, A-1 to A-3 and A-6 to A-8).
 EXPERIMENT_ENV = "RGBMATRIX_FFT_MATRIX_PROCESS_EXPERIMENT"
 OUTPUT_PATH_ENV = "RGBMATRIX_FFT_OUTPUT_PATH"
-MEASURE_EVIDENCE_PREFIX = "fft-step4-matrix-process-"
+MEASURE_EVIDENCE_PREFIX = "fft-step4-matrix-process-v2-"
 # (label, topology, backend), in the approved symmetric order.
 MEASURE_SEQUENCE = (
     ("baseline-direct-1", "baseline", "direct"),
@@ -78,23 +79,18 @@ SAMPLER_MARGIN_SECONDS = 30.0
 SAMPLER_EXIT_GRACE_SECONDS = 10.0
 # The resource tracker exits only after it reads EOF from its departed parent.
 RESIDUAL_GRACE_SECONDS = 5.0
-# Gates that judge the harness rather than the candidate: their failure makes the
-# sequence incomplete (repeat it), not a candidate rejection.
+# Gates that judge the harness rather than the candidate: a run that fails one
+# measured the wrong thing, so the sequence stops and is incomplete (repeat it).
 HARNESS_GATES = ("sampler", "exact_commit", "topology_env")
+# v2 (D-011a): only these stop the sequence. Every other failed gate is a flag on
+# the run's row, and the sequence continues; there is no fixed accept/reject rule.
+STOP_GATES = (*HARNESS_GATES, "no_residual_process")
 # At least this fraction of the expected one-per-second samples inside the window.
 MIN_SAMPLER_COVERAGE = 0.9
 APP_ROLES = ("parent", "renderer", "resource_tracker")
-# Decision rule (measurement-plan.md "Comparative accept/reject rule", A-4, A-5).
-RULE_MIN_RATE_RATIO = 0.95
-RULE_MAX_AGE_RATIO = 1.10
-RULE_MAX_FRACTION_INCREASE = 0.02
-RULE_MAX_CPU_RATIO = 1.25
-RULE_MAX_MEMORY_RATIO = 1.50
-RULE_MAX_MEMORY_INCREASE_KIB = 32 * 1024
-RULE_MAX_DENSITY_DIFFERENCE = 0.15
-BENEFIT_MIN_SWAP_RATIO = 1.10
-BENEFIT_MAX_AGE_RATIO = 0.85
-BENEFIT_RUN_TOLERANCE = 0.05
+# Report-only summaries (measurement-plan-v2.md "Report").
+WINDOW_SECONDS = 60.0
+DENSITY_NOTE_DIFFERENCE = 0.15
 
 # Run as root (one ``sudo -n`` per run) under the Pi's system Python. Arguments:
 # root PID, interval seconds, deadline seconds. Writes one JSON header line and then
@@ -1199,6 +1195,88 @@ def superseded_count(sequences: Sequence[int]) -> int:
     return sum(max(0, b - a - 1) for a, b in zip(sequences, sequences[1:]))
 
 
+def window_count(span_seconds: float) -> int:
+    """v2: about one window per WINDOW_SECONDS, at least one."""
+
+    return max(1, round(span_seconds / WINDOW_SECONDS))
+
+
+def frame_windows(completed_ns: Sequence[int], result_age_ns: Sequence[int],
+                  sequences: Sequence[int]) -> list[dict[str, Optional[float]]]:
+    """v2: equal windows from the first to the last frame completion.
+
+    Swap FPS is frames over the window width; published FPS is the rendered
+    sequence advance over the time between the window's first and last frames.
+    """
+
+    count = len(completed_ns)
+    if count < 2 or len(result_age_ns) != count or len(sequences) != count:
+        return []
+    start, end = completed_ns[0], completed_ns[-1]
+    if end <= start:
+        return []
+    windows = window_count((end - start) / 1e9)
+    width_ns = (end - start) / windows
+    buckets: list[list[int]] = [[] for _ in range(windows)]
+    for index, stamp in enumerate(completed_ns):
+        buckets[min(windows - 1, max(0, int((stamp - start) / width_ns)))].append(index)
+    result: list[dict[str, Optional[float]]] = []
+    for indices in buckets:
+        if not indices:
+            result.append({"swap_fps": 0.0, "published_fps": None, "age_p95_ms": None})
+            continue
+        first, last = indices[0], indices[-1]
+        elapsed = (completed_ns[last] - completed_ns[first]) / 1e9
+        result.append({
+            "swap_fps": len(indices) / (width_ns / 1e9),
+            "published_fps": ((sequences[last] - sequences[first]) / elapsed
+                              if elapsed > 0 else None),
+            "age_p95_ms": _percentile([result_age_ns[i] / 1e6 for i in indices], 0.95),
+        })
+    return result
+
+
+def cpu_windows(header: Optional[dict[str, Any]], samples: list[dict[str, Any]],
+                role_pids: dict[str, list[int]],
+                window: tuple[Optional[float], Optional[float]],
+                windows: int) -> list[Optional[float]]:
+    """v2: app-role CPU cores in equal windows of the telemetry wall-clock span."""
+
+    start, end = window
+    clk = float((header or {}).get("clk_tck") or 0)
+    if start is None or end is None or end <= start or windows < 1 or clk <= 0:
+        return []
+    app = {pid for role in APP_ROLES for pid in role_pids.get(role, [])}
+    width = (end - start) / windows
+    points: list[dict[int, list[tuple[float, int]]]] = [{} for _ in range(windows)]
+    for sample in samples:
+        t = float(sample["t"])
+        if not start <= t <= end:
+            continue
+        slot = points[min(windows - 1, int((t - start) / width))]
+        for row in sample["procs"]:
+            pid = int(row["pid"])
+            if pid in app:
+                slot.setdefault(pid, []).append((t, int(row["utime"]) + int(row["stime"])))
+    result: list[Optional[float]] = []
+    for per_pid in points:
+        total: Optional[float] = None
+        for series in per_pid.values():
+            if len(series) >= 2 and series[-1][0] > series[0][0]:
+                cores = (series[-1][1] - series[0][1]) / clk / (series[-1][0] - series[0][0])
+                total = (total or 0.0) + cores
+        result.append(total)
+    return result
+
+
+def spread(values: Sequence[Optional[float]]) -> dict[str, Optional[float]]:
+    """min/median/max over the values that exist."""
+
+    present = sorted(v for v in values if isinstance(v, (int, float)))
+    return {"n": len(present), "min": present[0] if present else None,
+            "median": _percentile(present, 0.5), "max": present[-1] if present else None}
+
+
 def load_samples(path: Path) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
     header: Optional[dict[str, Any]] = None
     samples: list[dict[str, Any]] = []
@@ -1339,8 +1417,10 @@ def evaluate_measured_run(run: dict[str, Any], summary: Optional[dict[str, Any]]
                           sequences: Optional[list[int]],
                           processes: dict[str, Any],
                           survivors: Sequence[str],
-                          throttle_baseline: Optional[int]) -> dict[str, Any]:
-    """Step 3 gates plus the Step 4 lifecycle and validity gates."""
+                          throttle_baseline: Optional[int],
+                          windows: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Step 3 gates plus the Step 4 gates. v2: only STOP_GATES stop the sequence;
+    every other failed gate is a flag (D-011a)."""
 
     base = evaluate_run(run, summary, throttle_baseline)
     gates = dict(base["gates"])
@@ -1352,8 +1432,8 @@ def evaluate_measured_run(run: dict[str, Any], summary: Optional[dict[str, Any]]
     gates["exact_commit"] = run.get("head") == run.get("sha") and run.get("clean") is True
     expected_experiment = "1" if run.get("topology") == "candidate" else None
     gates["topology_env"] = (run.get("env") or {}).get(EXPERIMENT_ENV) == expected_experiment
+    # v2: transport drops are reported as a fraction, not gated (measurement-plan-v2).
     drops = deltas.get("transport_drop_count")
-    gates["transport_drops_zero"] = drops == 0
     generations = deltas.get("sample_generation")
     skipped = deltas.get("skipped_generation_count")
     skipped_fraction = (
@@ -1374,6 +1454,11 @@ def evaluate_measured_run(run: dict[str, Any], summary: Optional[dict[str, Any]]
         if superseded is not None and isinstance(published, int) and published > 0
         else None
     )
+    drop_fraction = (
+        drops / published
+        if isinstance(drops, int) and isinstance(published, int) and published > 0
+        else None
+    )
     density = (summary.get("workload") or {}).get("visible_pixels_mean")
     gates["density"] = isinstance(density, (int, float))
 
@@ -1387,12 +1472,17 @@ def evaluate_measured_run(run: dict[str, Any], summary: Optional[dict[str, Any]]
         and not role_pids.get("unknown")
     )
     expected = processes.get("expected_window_samples")
+    # v2: a run with no telemetry window (no summary, or it stopped during settle,
+    # as when the renderer misses readiness) is flagged through schema, duration,
+    # and frames. The sampler is a harness fault only on its own exit or euid, or on
+    # poor coverage of a window that exists.
     gates["sampler"] = (
         run.get("sampler_returncode") == 0
         and processes.get("sampler_euid") == 0
-        and expected is not None
-        and processes.get("window_samples", 0) >= MIN_SAMPLER_COVERAGE * expected
-        and processes.get("cpu_total") is not None
+        and (expected is None or (
+            processes.get("window_samples", 0) >= MIN_SAMPLER_COVERAGE * expected
+            and processes.get("cpu_total") is not None
+        ))
     )
     gates["no_residual_process"] = not survivors
 
@@ -1416,12 +1506,16 @@ def evaluate_measured_run(run: dict[str, Any], summary: Optional[dict[str, Any]]
         "superseded": superseded,
         "superseded_fraction": superseded_fraction,
         "transport_drops": drops,
+        "drop_fraction": drop_fraction,
         "density_mean": density,
         "processes": {k: v for k, v in processes.items() if k != "processes"},
+        "windows": windows or {"frames": [], "cpu": []},
         "gates": gates,
-        "failed_gates": [name for name, passed in gates.items() if not passed],
+        "flags": [name for name, passed in gates.items() if not passed],
         "notes": notes,
     })
+    base.pop("failed_gates", None)
+    base["stops"] = [name for name in base["flags"] if name in STOP_GATES]
     return base
 
 
@@ -1431,148 +1525,107 @@ def _ratio(candidate: Optional[float], baseline: Optional[float]) -> Optional[fl
     return candidate / baseline
 
 
-def decide(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
-    """The fixed accept/reject rule. Medians of two runs per side, per backend."""
+def _mean(values: Sequence[Any]) -> Optional[float]:
+    present = [float(v) for v in values if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    return sum(present) / len(present) if present else None
 
-    from statistics import median
+
+ARM_METRICS: dict[str, Callable[[dict[str, Any]], Any]] = {
+    "swap_fps": lambda e: e.get("swap_fps"),
+    "published_fps": lambda e: e.get("published_fps"),
+    "unique_fps": lambda e: e.get("unique_fps"),
+    "analyzed_fraction": lambda e: e.get("analyzed_published_fraction"),
+    "result_age_p50_ms": lambda e: (e.get("result_age_ms") or {}).get("p50_ms"),
+    "result_age_p95_ms": lambda e: e.get("result_age_p95_ms"),
+    "result_age_p99_ms": lambda e: (e.get("result_age_ms") or {}).get("p99_ms"),
+    "skipped_fraction": lambda e: e.get("skipped_fraction"),
+    "superseded_fraction": lambda e: e.get("superseded_fraction"),
+    "drop_fraction": lambda e: e.get("drop_fraction"),
+    "cpu_total": lambda e: (e.get("processes") or {}).get("cpu_total"),
+    "density_mean": lambda e: e.get("density_mean"),
+}
+WINDOW_METRICS = ("swap_fps", "published_fps", "age_p95_ms", "cpu")
+
+
+def summarize_measurement(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
+    """v2 report-only summary (D-011a). Arm means, ratios, and window spreads.
+
+    There is no accept/reject rule: the user decides from the report. The outcome
+    is ``incomplete`` when the sequence stopped early or a run failed a harness
+    gate, and ``report-only`` otherwise, whatever the flags.
+    """
 
     measured = [item for item in evaluations if not item.get("skipped")]
-    complete = len(measured) == len(MEASURE_SEQUENCE)
-    candidate_failures = {
-        item["label"]: [g for g in item["failed_gates"] if g not in HARNESS_GATES]
-        for item in measured
-    }
-    candidate_failures = {k: v for k, v in candidate_failures.items() if v}
-    harness_failures = [
-        item["label"] for item in measured
-        if any(g in HARNESS_GATES for g in item["failed_gates"])
-    ]
-    if candidate_failures:
-        return {
-            "decision": "reject",
-            "reason": "lifecycle/validity failure: " + "; ".join(
-                f"{label} ({', '.join(gates)})" for label, gates in candidate_failures.items()),
-            "note": "Rejects unless a separately demonstrated environmental fault"
-                    " invalidates the whole sequence (human judgment, not the tool).",
-            "backends": {},
-        }
-    if not complete or harness_failures:
-        return {
-            "decision": "incomplete",
-            "reason": f"{len(measured)} of {len(MEASURE_SEQUENCE)} runs measured"
-                      + (f"; harness gates failed: {', '.join(harness_failures)}"
-                         if harness_failures else "")
-                      + "; no decision. A repeat is the complete sequence under a new"
-                        " evidence directory.",
-            "backends": {},
-        }
-
-    def med(items: list[dict[str, Any]], getter: Callable[[dict[str, Any]], Any]) -> Optional[float]:
-        values = [getter(item) for item in items]
-        if any(not isinstance(v, (int, float)) for v in values):
-            return None
-        return float(median(values))
+    harness = [item["label"] for item in measured
+               if any(flag in HARNESS_GATES for flag in item.get("flags", []))]
+    flagged = {item["label"]: item["flags"] for item in measured if item.get("flags")}
+    usable = [item for item in measured if item["label"] not in harness]
 
     backends: dict[str, Any] = {}
-    invalid: list[str] = []
     for mode in OUTPUT_MODES:
-        base = [e for e in evaluations if e["mode"] == mode and e["topology"] == "baseline"]
-        cand = [e for e in evaluations if e["mode"] == mode and e["topology"] == "candidate"]
-        use_pss = all(e["processes"].get("pss_available") for e in base + cand)
+        arms = {
+            topology: [e for e in usable if e["mode"] == mode and e["topology"] == topology]
+            for topology in ("baseline", "candidate")
+        }
+        runs = arms["baseline"] + arms["candidate"]
+        use_pss = bool(runs) and all((e.get("processes") or {}).get("pss_available")
+                                     for e in runs)
         memory_key = "pss_total_kb" if use_pss else "rss_total_kb"
-        metric = {
-            "swap_fps": lambda e: e["swap_fps"],
-            "published_fps": lambda e: e["published_fps"],
-            "result_age_p95_ms": lambda e: e["result_age_p95_ms"],
-            "skipped_fraction": lambda e: e["skipped_fraction"],
-            "superseded_fraction": lambda e: e["superseded_fraction"],
-            "cpu_total": lambda e: e["processes"].get("cpu_total"),
-            "memory_p95_kb": lambda e: (e["processes"].get(memory_key) or {}).get("p95"),
-            "density_mean": lambda e: e["density_mean"],
+        metrics = dict(ARM_METRICS)
+        metrics["memory_p95_kb"] = (
+            lambda e, key=memory_key: ((e.get("processes") or {}).get(key) or {}).get("p95"))
+        summary: dict[str, Any] = {"memory_metric": memory_key, "notes": []}
+        for topology, items in arms.items():
+            pooled: dict[str, list[Optional[float]]] = {name: [] for name in WINDOW_METRICS}
+            for item in items:
+                windows = item.get("windows") or {}
+                for window in windows.get("frames") or []:
+                    for name in ("swap_fps", "published_fps", "age_p95_ms"):
+                        pooled[name].append(window.get(name))
+                pooled["cpu"].extend(windows.get("cpu") or [])
+            summary[topology] = {
+                "runs": [item["label"] for item in items],
+                "mean": {name: _mean([getter(item) for item in items])
+                         for name, getter in metrics.items()},
+                "windows": {name: spread(values) for name, values in pooled.items()},
+            }
+        summary["ratios"] = {
+            name: _ratio(summary["candidate"]["mean"][name], summary["baseline"]["mean"][name])
+            for name in metrics
         }
-        b = {name: med(base, getter) for name, getter in metric.items()}
-        c = {name: med(cand, getter) for name, getter in metric.items()}
-        limit = min(e["result_age_limit_ms"] for e in base + cand)
+        # Differences read better than ratios for fractions with a zero baseline.
+        summary["differences"] = {
+            name: (summary["candidate"]["mean"][name] - summary["baseline"]["mean"][name]
+                   if None not in (summary["candidate"]["mean"][name],
+                                   summary["baseline"]["mean"][name]) else None)
+            for name in metrics
+        }
+        density = summary["ratios"].get("density_mean")
+        if density is not None and abs(density - 1) > DENSITY_NOTE_DIFFERENCE:
+            summary["notes"].append(
+                f"workload density differs by {abs(density - 1) * 100:.1f}% between arms"
+                " (informational)")
+        backends[mode] = summary
 
-        def le(x: Optional[float], y: Optional[float]) -> bool:
-            return x is not None and y is not None and x <= y
-
-        density_ok = (
-            b["density_mean"] not in (None, 0) and c["density_mean"] is not None
-            and abs(c["density_mean"] - b["density_mean"]) / b["density_mean"]
-            <= RULE_MAX_DENSITY_DIFFERENCE
-        )
-        if not density_ok:
-            invalid.append(mode)
-        rules = {
-            "swap_fps_floor": le(RULE_MIN_RATE_RATIO * (b["swap_fps"] or math.inf), c["swap_fps"]),
-            "published_fps_floor": le(RULE_MIN_RATE_RATIO * (b["published_fps"] or math.inf),
-                                      c["published_fps"]),
-            "result_age_ceiling": (
-                le(c["result_age_p95_ms"], RULE_MAX_AGE_RATIO * (b["result_age_p95_ms"] or -math.inf))
-                and c["result_age_p95_ms"] < limit
-            ),
-            "skipped_increase": le((c["skipped_fraction"] or 0) - (b["skipped_fraction"] or 0),
-                                   RULE_MAX_FRACTION_INCREASE)
-            and None not in (c["skipped_fraction"], b["skipped_fraction"]),
-            "superseded_increase": le((c["superseded_fraction"] or 0)
-                                      - (b["superseded_fraction"] or 0),
-                                      RULE_MAX_FRACTION_INCREASE)
-            and None not in (c["superseded_fraction"], b["superseded_fraction"]),
-            "transport_drops_zero": all(e["transport_drops"] == 0 for e in base + cand),
-            "cpu_ceiling": le(c["cpu_total"], RULE_MAX_CPU_RATIO * (b["cpu_total"] or -math.inf)),
-            "memory_ceiling": (
-                le(c["memory_p95_kb"], RULE_MAX_MEMORY_RATIO * (b["memory_p95_kb"] or -math.inf))
-                and le(c["memory_p95_kb"], (b["memory_p95_kb"] or -math.inf)
-                       + RULE_MAX_MEMORY_INCREASE_KIB)
-            ),
-        }
-        swap_runs = [e["swap_fps"] for e in cand]
-        age_runs = [e["result_age_p95_ms"] for e in cand]
-        benefits = {
-            "swap_fps_plus_10pct": (
-                le(BENEFIT_MIN_SWAP_RATIO * (b["swap_fps"] or math.inf), c["swap_fps"])
-                and all(le((1 - BENEFIT_RUN_TOLERANCE) * b["swap_fps"], v) for v in swap_runs)
-            ),
-            "result_age_p95_minus_15pct": (
-                le(c["result_age_p95_ms"], BENEFIT_MAX_AGE_RATIO * (b["result_age_p95_ms"] or -math.inf))
-                and all(le(v, (1 + BENEFIT_RUN_TOLERANCE) * b["result_age_p95_ms"])
-                        for v in age_runs)
-            ),
-        }
-        backends[mode] = {
-            "baseline_median": b, "candidate_median": c,
-            "ratios": {name: _ratio(c[name], b[name]) for name in metric},
-            "memory_metric": memory_key, "result_age_limit_ms": limit,
-            "density_comparable": density_ok, "rules": rules, "benefits": benefits,
-        }
-
-    if invalid:
-        return {"decision": "invalid",
-                "reason": f"workload density differs by more than 15% ({', '.join(invalid)});"
-                          " repeat the whole sequence with corrected input",
+    if len(measured) < len(MEASURE_SEQUENCE) or harness:
+        reason = (f"{len(measured)} of {len(MEASURE_SEQUENCE)} runs measured"
+                  + (f"; harness gates failed: {', '.join(harness)}" if harness else "")
+                  + ". A repeat is the complete sequence under a new evidence directory.")
+        return {"decision": "incomplete", "reason": reason, "flagged": flagged,
                 "backends": backends}
-    regressions = [f"{mode}: {name}" for mode, item in backends.items()
-                   for name, ok in item["rules"].items() if not ok]
-    shared_benefits = [
-        name for name in ("swap_fps_plus_10pct", "result_age_p95_minus_15pct")
-        if all(item["benefits"][name] for item in backends.values())
-    ]
-    if regressions:
-        return {"decision": "reject", "reason": "limit exceeded: " + "; ".join(regressions),
-                "backends": backends}
-    if not shared_benefits:
-        return {"decision": "reject",
-                "reason": "no material benefit consistent in both backends",
-                "backends": backends}
-    return {"decision": "accept", "reason": "benefit: " + ", ".join(shared_benefits),
+    reason = (f"{len(measured)} of {len(MEASURE_SEQUENCE)} runs measured; no fixed rule,"
+              " the user decides from this report (D-011a)")
+    if flagged:
+        reason += "; flagged: " + "; ".join(
+            f"{label} ({', '.join(flags)})" for label, flags in flagged.items())
+    return {"decision": "report-only", "reason": reason, "flagged": flagged,
             "backends": backends}
 
 
 def measure_markdown(context: dict[str, Any], evaluations: list[dict[str, Any]],
                      decision: dict[str, Any]) -> str:
     lines = [
-        "# Step 4 matrix-process measurement",
+        "# Step 4 matrix-process measurement (v2, report-only)",
         "",
         f"- Baseline `{context['baseline']}` (in-process) · candidate "
         f"`{context['candidate']}` ({EXPERIMENT_ENV}=1)",
@@ -1585,7 +1638,7 @@ def measure_markdown(context: dict[str, Any], evaluations: list[dict[str, Any]],
         f"{'healthy' if context['healthy'] else 'UNHEALTHY'}",
         "",
         "| Run | Swap FPS | Published FPS | Age p95 ms | Skipped | Superseded "
-        "| Drops | Density | CPU cores | Mem p95 MiB | Roles | Failed gates |",
+        "| Drops | Density | CPU cores | Mem p95 MiB | Roles | Flags |",
         "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for item in evaluations:
@@ -1605,42 +1658,75 @@ def measure_markdown(context: dict[str, Any], evaluations: list[dict[str, Any]],
             _fmt(procs.get("cpu_total"), ".3f"),
             _fmt(None if not memory or memory.get("p95") is None else memory["p95"] / 1024,
                  ".1f"),
-            roles or "—", ", ".join(item.get("failed_gates") or []) or "none",
+            roles or "—", ", ".join(item.get("flags") or []) or "none",
         ))
     for mode, item in decision.get("backends", {}).items():
         lines += ["", f"## {mode}", "",
-                  "| Metric | Baseline median | Candidate median | Ratio |",
-                  "|---|---:|---:|---:|"]
-        for name, value in item["baseline_median"].items():
+                  f"Runs: baseline {', '.join(item['baseline']['runs']) or '—'}; "
+                  f"candidate {', '.join(item['candidate']['runs']) or '—'}. "
+                  f"Memory metric: {item['memory_metric']}.",
+                  "",
+                  "| Metric | Baseline mean | Candidate mean | Candidate/baseline "
+                  "| Candidate − baseline |",
+                  "|---|---:|---:|---:|---:|"]
+        for name, value in item["baseline"]["mean"].items():
             lines.append(f"| {name} | {_fmt(value, '.4f')} | "
-                         f"{_fmt(item['candidate_median'][name], '.4f')} | "
-                         f"{_fmt(item['ratios'][name], '.4f')} |")
-        lines.append("")
-        lines.append(f"Memory metric: {item['memory_metric']}. Rules: " + ", ".join(
-            f"{name}={'pass' if ok else 'FAIL'}" for name, ok in item["rules"].items()))
-        lines.append("Benefits: " + ", ".join(
-            f"{name}={'yes' if ok else 'no'}" for name, ok in item["benefits"].items()))
+                         f"{_fmt(item['candidate']['mean'][name], '.4f')} | "
+                         f"{_fmt(item['ratios'][name], '.4f')} | "
+                         f"{_fmt(item['differences'][name], '.4f')} |")
+        lines += ["", f"| {WINDOW_SECONDS:g} s windows | Baseline min / median / max (n) "
+                      "| Candidate min / median / max (n) |", "|---|---:|---:|"]
+        for name in WINDOW_METRICS:
+            cells = []
+            for topology in ("baseline", "candidate"):
+                s = item[topology]["windows"][name]
+                cells.append(f"{_fmt(s['min'], '.3f')} / {_fmt(s['median'], '.3f')} / "
+                             f"{_fmt(s['max'], '.3f')} ({s['n']})")
+            lines.append(f"| {name} | {cells[0]} | {cells[1]} |")
+        lines += [f"- {mode}: {note}" for note in item["notes"]]
     notes = [f"- {item['label']}: {note}" for item in evaluations for note in item.get("notes", [])]
     notes += [f"- {error}" for error in context["errors"]]
     if notes:
         lines += ["", "Notes:", *notes]
-    lines += ["", f"Decision (fixed rule): **{decision['decision'].upper()}** — "
-              f"{decision['reason']}", ""]
+    lines += ["", f"Result: **{decision['decision'].upper()}** — {decision['reason']}"]
+    exit_code = context.get("exit_code", EXIT_OK)
+    if exit_code != EXIT_OK:
+        lines.append(f"Operation: exit {exit_code} (restored `{context['restored']}`, service "
+                     f"{'healthy' if context['healthy'] else 'UNHEALTHY'}); errors are"
+                     " listed under Notes.")
+    lines.append("")
     return "\n".join(lines)
 
 
 MEASURE_INTERPRETATIONS = {
-    "median_of_two": "mean of the two runs",
+    "decision": "report-only (D-011a): no fixed accept/reject rule; the user decides",
+    "stops": "only " + ", ".join(STOP_GATES) + " (and interruptions or pre-run"
+             " refusals) stop the sequence; every other failed gate is a flag",
+    "arm_value": "mean of the arm's runs that report the metric; runs with a harness"
+                 " flag are excluded",
     "cpu": "per process (utime+stime) from first to last in-window sample divided by"
            " that span, summed over parent/renderer/resource_tracker",
     "memory": "per run p95 of the per-sample summed app-role PSS; RSS for a backend if"
-              " any of its four runs lacks PSS",
+              " any of its runs lacks PSS",
     "skipped_fraction": "skipped_generation_count / sample_generation (deltas)",
     "superseded_fraction": "sum(max(0, delta_seq - 1)) / published_content_frames",
-    "harness_gates": "sampler (exit 0, euid 0, >=90% window coverage), exact_commit,"
-                     " topology_env: failure makes the sequence incomplete, not a reject",
+    "drop_fraction": "transport_drop_count / published_content_frames (not gated)",
+    "frame_windows": "round(span / 60 s) equal windows from first to last frame"
+                     " completion; swap FPS = frames / width; published FPS = rendered"
+                     " sequence advance / first-to-last frame time; age p95 per window",
+    "cpu_windows": "the same count of equal windows over the telemetry wall-clock span",
+    "density": "an arm difference above 15% is noted, not invalidating",
+    "harness_gates": "sampler (exit 0, euid 0, and >=90% coverage of the telemetry window"
+                     " when one exists), exact_commit, topology_env: failure stops the"
+                     " sequence as incomplete",
+    "residual": "a process alive after its run's 5 s grace stops the sequence (exit 1);"
+                " one still alive at cleanup keeps the service stopped (exit 3)",
+    "throttling": "each run's baseline is read just before its launch; a sticky bit"
+                  " already set cannot reveal a repeat event",
+    "outcome_and_exit": "the outcome describes the measurement; exit code and"
+                        " operational errors are recorded beside it in decision.json",
     "transient_descendants": "A-8: unclassified descendants never seen inside the"
-                             " telemetry window are recorded, not failed",
+                             " telemetry window are recorded, not flagged",
 }
 
 
@@ -1806,6 +1892,11 @@ def cmd_measure(host: PiHost, report: Reporter, *, baseline: str, candidate: str
                 runs.append(record)
                 report.line(f"run       {label} ({topology} {sha[:7]}, {mode}), "
                             f"about {settle + duration:g} s")
+                # v2: each run's own throttle baseline, so a sticky bit set in one run
+                # flags only that run. A bit already set can't reveal a repeat event.
+                record["throttled_before"] = _parse_throttled(
+                    host.run(["vcgencmd", "get_throttled"]).stdout
+                )
                 record.update(host.run_measured(
                     argv, cwd=Path(launch["cwd"]), env=env, timeout=child_timeout,
                     log_path=evidence_dir / f"{label}.log",
@@ -1822,13 +1913,18 @@ def cmd_measure(host: PiHost, report: Reporter, *, baseline: str, candidate: str
                 if collected.returncode != 0:
                     errors.append(f"evidence copy failed after {label}: "
                                   f"{collected.stderr.strip()}")
+                throttle_baseline = (record["throttled_before"]
+                                     if record["throttled_before"] is not None
+                                     else before["throttled"])
                 evaluation = _evaluate_measured(host, record, evidence_dir, python,
-                                                all_processes, before["throttled"])
+                                                all_processes, throttle_baseline)
                 evaluations.append(evaluation)
                 report.line(f"done      {label}: exit {record['returncode']}, "
-                            f"failed gates: {', '.join(evaluation['failed_gates']) or 'none'}")
-                if evaluation["failed_gates"]:
-                    raise RuntimeError(f"{label} failed gates; stopping the sequence")
+                            f"flags: {', '.join(evaluation['flags']) or 'none'}")
+                # v2 (D-011a): only a survivor or a harness fault stops the sequence.
+                if evaluation["stops"]:
+                    raise RuntimeError(f"{label} failed {', '.join(evaluation['stops'])};"
+                                       " stopping the sequence")
         except (Exception, KeyboardInterrupt) as exc:
             errors.append(f"measurement stopped early: {type(exc).__name__}: {exc}")
         finally:
@@ -1900,23 +1996,44 @@ def cmd_measure(host: PiHost, report: Reporter, *, baseline: str, candidate: str
     for label, topology, mode in MEASURE_SEQUENCE:
         if label not in done:
             evaluations.append({"label": label, "mode": mode, "topology": topology,
-                                "skipped": True, "failed_gates": ["skipped"], "notes": []})
+                                "skipped": True, "flags": ["skipped"], "stops": [],
+                                "notes": []})
     order = [label for label, _, _ in MEASURE_SEQUENCE]
     evaluations.sort(key=lambda item: order.index(item["label"]))
     _write_json(evidence_dir / "runs.json", evaluations)
     try:
-        decision = decide(evaluations)
+        decision = summarize_measurement(evaluations)
     except Exception as exc:  # keep the evidence; never lose a sequence to a bug here
-        decision = {"decision": "incomplete", "reason": f"decision error: {exc!r}",
-                    "backends": {}}
+        decision = {"decision": "incomplete", "reason": f"summary error: {exc!r}",
+                    "flagged": {}, "backends": {}}
+    # The outcome describes the measurement; the exit code describes Pi operations.
+    # Both are recorded together so results.md and decision.json can't disagree
+    # with what the tool returned.
+    if not healthy or restored != start_sha or any(
+            error.startswith(("service ", "restore ", "processes outlived"))
+            for error in errors):
+        exit_code = EXIT_OPERATION_FAILED
+    elif errors or decision["decision"] == "incomplete":
+        exit_code = EXIT_GATE_FAILED
+    else:
+        exit_code = EXIT_OK
+    decision["operation"] = {"exit_code": exit_code, "restored": restored,
+                             "healthy": healthy, "errors": list(errors)}
     context = {
         "baseline": shas["baseline"], "candidate": shas["candidate"],
         "tool_commit": tool_commit, "tool_sha256": tool_sha256, "settle": settle,
         "duration": duration, "max_samples": max_samples, "stamp": stamp,
         "audio_note": audio_note, "evidence_dir": str(evidence_dir),
         "restored": restored, "healthy": healthy, "errors": errors,
+        "exit_code": exit_code,
     }
-    markdown = measure_markdown(context, evaluations, decision)
+    try:
+        markdown = measure_markdown(context, evaluations, decision)
+    except Exception as exc:  # never lose the manifest or result line to a report bug
+        markdown = (f"# Step 4 matrix-process measurement (v2, report-only)\n\n"
+                    f"Report rendering failed: {exc!r}. See runs.json and decision.json.\n\n"
+                    f"Result: **{decision['decision'].upper()}** — {decision['reason']}\n"
+                    f"Operation: exit {exit_code}\n")
     (evidence_dir / "results.md").write_text(markdown, encoding="utf-8")
     _write_json(evidence_dir / "decision.json", decision)
     payload.update({
@@ -1929,13 +2046,8 @@ def cmd_measure(host: PiHost, report: Reporter, *, baseline: str, candidate: str
     _write_manifest(evidence_dir)
     manifest_sha = hashlib.sha256((evidence_dir / "SHA256SUMS").read_bytes()).hexdigest()
     report.line(f"manifest  {evidence_dir / 'SHA256SUMS'} sha256 {manifest_sha}")
-    if not healthy or restored != start_sha or any(
-            error.startswith(("service ", "restore ", "processes outlived"))
-            for error in errors):
-        return EXIT_OPERATION_FAILED
-    if errors or decision["decision"] in ("invalid", "incomplete"):
-        return EXIT_GATE_FAILED
-    return EXIT_OK
+    # v2: flags never change the exit code (computed above, before the report).
+    return exit_code
 
 
 def _evaluate_measured(host: PiHost, record: dict[str, Any], evidence_dir: Path,
@@ -1950,9 +2062,9 @@ def _evaluate_measured(host: PiHost, record: dict[str, Any], evidence_dir: Path,
         sequences: Optional[list[int]] = read_npz_uint64(
             evidence_dir / f"{label}.npz", "analysis_sequences"
         )
-    except (OSError, ValueError, KeyError, SyntaxError) as exc:
+    except Exception as exc:  # v2: an unreadable file is a flag, never a stop
         sequences = None
-        record["error"] = f"raw sequences unreadable: {exc}"
+        record["error"] = f"raw sequences unreadable: {exc!r}"
     header, samples = load_samples(evidence_dir / f"{label}.proc.jsonl")
     window = (
         summary.get("start_wall_time") if isinstance(summary, dict) else None,
@@ -1962,8 +2074,26 @@ def _evaluate_measured(host: PiHost, record: dict[str, Any], evidence_dir: Path,
     all_processes.extend(processes["processes"])
     survivors = (host.stop_survivors(processes["processes"]) + host.fft_processes()
                  + host.multiprocessing_processes(python))
+    # v2 one-minute windows. Any failure here only empties the windows (and is
+    # noted); it never stops the sequence.
+    windows: dict[str, Any] = {"frames": [], "cpu": []}
+    try:
+        if sequences is not None:
+            windows["frames"] = frame_windows(
+                read_npz_uint64(evidence_dir / f"{label}.npz", "completed_ns"),
+                read_npz_uint64(evidence_dir / f"{label}.npz", "result_age_ns"),
+                sequences,
+            )
+            if not windows["frames"] and not record.get("error"):
+                record["error"] = "no frame windows (fewer than 2 frames or mismatched arrays)"
+        span = (window[1] - window[0]) if None not in window else 0.0
+        count = len(windows["frames"]) or (window_count(span) if span > 0 else 0)
+        windows["cpu"] = cpu_windows(header, samples, processes["role_pids"], window, count)
+    except Exception as exc:
+        if not record.get("error"):
+            record["error"] = f"window computation failed: {exc!r}"
     return evaluate_measured_run(record, summary, sequences, processes, survivors,
-                                 throttle_baseline)
+                                 throttle_baseline, windows)
 
 
 # Entry point ----------------------------------------------------------------------

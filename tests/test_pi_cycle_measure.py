@@ -1,9 +1,10 @@
-"""Hardware-free tests for the Step 4 ``measure-split`` command in tools/pi.
+"""Hardware-free tests for the Step 4 v2 ``measure-split`` command in tools/pi.
 
 SSH, sudo, systemd, vcgencmd, ``/proc``, the root sampler, and the FFT child are
 faked. The Pi-side sequence (stop once, per-run checkout, runs, unconditional
-restore and restart), the gates, role discovery, metric aggregation, the fixed
-decision rule, and the evidence layout run for real against a temporary directory.
+restore and restart), the stop gates and flags, role discovery, metric aggregation,
+the report-only summary with one-minute windows, and the evidence layout run for
+real against a temporary directory.
 """
 
 from __future__ import annotations
@@ -50,10 +51,17 @@ DURATION = 10.0
 WINDOW = (1000.0, 1000.0 + DURATION)
 
 
-def npz_bytes(sequences) -> bytes:
+def npz_bytes(sequences, *, swap_fps=104.0, age_p95=20.0) -> bytes:
+    """Raw arrays as telemetry writes them: one frame every 1/swap_fps seconds."""
+
+    count = len(sequences)
+    completed = 5_000_000_000 + np.arange(count, dtype=np.uint64) * np.uint64(
+        round(1e9 / swap_fps))
     buffer = io.BytesIO()
     np.savez_compressed(buffer, analysis_sequences=np.asarray(sequences, dtype=np.uint64),
-                        render_ns=np.zeros(len(sequences), dtype=np.uint64))
+                        render_ns=np.zeros(count, dtype=np.uint64),
+                        completed_ns=completed,
+                        result_age_ns=np.full(count, int(age_p95 * 1e6), dtype=np.uint64))
     return buffer.getvalue()
 
 
@@ -176,8 +184,12 @@ class MeasureHost(base.FakeHost):
         topology = "candidate" if label.startswith("candidate") else "baseline"
         out = argv[argv.index("--telemetry-out") + 1]
         sequences = spec.get("sequences", list(range(1040)))
-        self.run_files[out] = json.dumps(run_summary(frames=len(sequences), **spec))
-        self.run_files[out[:-len(".json")] + ".npz"] = npz_bytes(sequences)
+        if not spec.get("no_telemetry"):  # e.g. the renderer missed readiness
+            self.run_files[out] = json.dumps(run_summary(frames=len(sequences), **spec))
+            self.run_files[out[:-len(".json")] + ".npz"] = npz_bytes(
+                sequences, **{k: spec[k] for k in ("swap_fps", "age_p95") if k in spec})
+        if "throttle_after" in spec:
+            self.throttled = spec["throttle_after"]
         samples_path.write_text(samples_lines(
             topology, **{k: spec[k] for k in ("cpu", "pss_kb", "extra", "renderer", "pss",
                                               "startup_only")
@@ -228,8 +240,16 @@ class MeasureCase(base.TempHostCase):
         return MeasureHost(self.root, **state)
 
 
+def _decision(result):
+    return json.loads((Path(result["evidence_dir"]) / "decision.json").read_text())
+
+
+def _runs(result):
+    return json.loads((Path(result["evidence_dir"]) / "runs.json").read_text())
+
+
 class MeasureSequenceTests(MeasureCase):
-    def test_even_results_run_the_fixed_order_restore_and_reject(self):
+    def test_even_results_run_the_fixed_order_restore_and_report(self):
         host = self.host()
         code, result, output = _measure(host)
         self.assertEqual(code, remote.EXIT_OK, output)
@@ -250,12 +270,13 @@ class MeasureSequenceTests(MeasureCase):
         self.assertGreater(names.index("start"), len(names) - 1 - names[::-1].index("measured"))
         self.assertEqual(host.head, START)
         self.assertTrue(host.service_running)
-        self.assertEqual(result["decision"], "reject")
-        self.assertIn("no material benefit", result["decision_reason"])
+        self.assertEqual(result["decision"], "report-only")
+        self.assertIn("no fixed rule", result["decision_reason"])
+        self.assertNotIn("flagged", result["decision_reason"])
         self.assertEqual(result["restored"], START)
 
         evidence = Path(result["evidence_dir"])
-        self.assertEqual(evidence.name, "fft-step4-matrix-process-20261120T120000Z")
+        self.assertEqual(evidence.name, "fft-step4-matrix-process-v2-20261120T120000Z")
         for name in ("plan.json", "argv.json", "env.json", "status-before.json",
                      "status-after.json", "runs.json", "decision.json", "results.md",
                      "measure.log", "SHA256SUMS", "baseline-direct-1.proc.jsonl",
@@ -263,82 +284,82 @@ class MeasureSequenceTests(MeasureCase):
             self.assertTrue((evidence / name).is_file(), name)
         plan = json.loads((evidence / "plan.json").read_text())
         self.assertEqual((plan["tool_commit"], plan["audio_note"]), ("f" * 40, "mic, steady speaker"))
+        self.assertIn("report-only", plan["interpretations"]["decision"])
         manifest = (evidence / "SHA256SUMS").read_text()
         self.assertIn("results.md", manifest)
         self.assertIn("measure.log", manifest)
-        runs = json.loads((evidence / "runs.json").read_text())
-        self.assertTrue(all(not run["failed_gates"] for run in runs))
+        runs = _runs(result)
+        self.assertTrue(all(not run["flags"] and not run["stops"] for run in runs))
         candidate = next(run for run in runs if run["label"] == "candidate-direct-1")
         self.assertEqual(candidate["processes"]["role_pids"],
                          {"parent": [101], "renderer": [102], "resource_tracker": [103],
                           "sudo": [100]})
         self.assertAlmostEqual(candidate["processes"]["cpu_total"], 0.9)
-        self.assertIn("Decision (fixed rule): **REJECT**", result["results_markdown"])
+        decision = _decision(result)
+        self.assertEqual(decision["backends"]["direct"]["baseline"]["runs"],
+                         ["baseline-direct-1", "baseline-direct-2"])
+        self.assertEqual(decision["backends"]["pillow-bulk"]["candidate"]["runs"],
+                         ["candidate-pillow-1", "candidate-pillow-2"])
+        markdown = result["results_markdown"]
+        self.assertIn("Result: **REPORT-ONLY**", markdown)
+        self.assertIn("| 60 s windows |", markdown)
+        self.assertNotIn("Operation: exit", markdown)
+        self.assertEqual(decision["operation"], {"exit_code": 0, "restored": START,
+                                                 "healthy": True, "errors": []})
 
-    def test_consistent_swap_benefit_in_both_backends_accepts(self):
-        host = self.host(measure=_both("candidate", swap_fps=116.0))
-        code, result, _ = _measure(host)
-        self.assertEqual(code, remote.EXIT_OK)
-        self.assertEqual(result["decision"], "accept")
-        self.assertIn("swap_fps_plus_10pct", result["decision_reason"])
-
-    def test_age_benefit_accepts_but_one_reversed_run_rejects(self):
-        host = self.host(measure=_both("candidate", age_p95=16.0))
-        self.assertEqual(_measure(host)[1]["decision"], "accept")
-        # Pillow median (12 + 21.5) / 2 = 16.75 meets -15%, but 21.5 > 105% of 20.
-        spec = _both("candidate", age_p95=12.0)
-        spec["candidate-pillow-2"] = {"age_p95": 21.5}
-        root = self.root / "reversed"
-        root.mkdir()
-        result = _measure(MeasureHost(root, measure=spec))[1]
-        self.assertEqual(result["decision"], "reject")
-        self.assertIn("no material benefit", result["decision_reason"])
-
-    def test_benefit_in_only_one_backend_rejects(self):
-        host = self.host(measure=_both("candidate-direct", swap_fps=116.0))
-        result = _measure(host)[1]
-        self.assertEqual(result["decision"], "reject")
-        decision = json.loads((Path(result["evidence_dir"]) / "decision.json").read_text())
-        self.assertTrue(decision["backends"]["direct"]["benefits"]["swap_fps_plus_10pct"])
-        self.assertFalse(decision["backends"]["pillow-bulk"]["benefits"]["swap_fps_plus_10pct"])
-
-    def test_cpu_and_memory_limits_reject_despite_a_benefit(self):
-        heavy = {"parent": 0.6, "renderer": 0.5, "resource_tracker": 0.0}  # 1.1 > 1.25*0.8
-        host = self.host(measure=_both("candidate", swap_fps=116.0, cpu=heavy))
-        result = _measure(host)[1]
-        self.assertEqual(result["decision"], "reject")
-        self.assertIn("cpu_ceiling", result["decision_reason"])
-
-        root = self.root / "memory"
-        root.mkdir()
-        # 50 + 50 + 5 = 105 MiB: within 150% of 60 MiB, but above 60 + 32 MiB.
-        bigger = {"parent": 50_000, "renderer": 50_000, "resource_tracker": 5_000}
-        host = MeasureHost(root, measure=_both("candidate", swap_fps=116.0, pss_kb=bigger))
-        result = _measure(host)[1]
-        self.assertEqual(result["decision"], "reject")
-        self.assertIn("memory_ceiling", result["decision_reason"])
+    def test_arm_means_ratios_and_window_spreads(self):
+        spec = _both("candidate", swap_fps=116.0, age_p95=15.0)
+        spec["candidate-direct-2"] = {"swap_fps": 120.0, "age_p95": 15.0}
+        result = _measure(self.host(measure=spec))[1]
+        direct = _decision(result)["backends"]["direct"]
+        self.assertAlmostEqual(direct["candidate"]["mean"]["swap_fps"], 118.0)
+        self.assertAlmostEqual(direct["baseline"]["mean"]["swap_fps"], 104.0)
+        self.assertAlmostEqual(direct["ratios"]["swap_fps"], 118.0 / 104.0)
+        self.assertAlmostEqual(direct["ratios"]["result_age_p95_ms"], 15.0 / 20.0)
+        self.assertAlmostEqual(direct["ratios"]["cpu_total"], 0.9 / 0.8)
+        self.assertAlmostEqual(direct["ratios"]["memory_p95_kb"], 65_000 / 60_000)
+        # A 10 s fake run is one window, so each arm pools two windows.
+        windows = direct["candidate"]["windows"]
+        self.assertEqual(windows["swap_fps"]["n"], 2)
+        self.assertAlmostEqual(windows["swap_fps"]["min"], 116.0, delta=0.2)
+        self.assertAlmostEqual(windows["swap_fps"]["max"], 120.0, delta=0.2)
+        self.assertAlmostEqual(windows["age_p95_ms"]["median"], 15.0)
+        self.assertAlmostEqual(windows["cpu"]["median"], 0.9)
+        self.assertAlmostEqual(direct["baseline"]["windows"]["cpu"]["median"], 0.8)
 
     def test_rss_is_used_when_pss_is_unavailable(self):
         host = self.host(measure={"baseline-direct-1": {"pss": False}})
-        result = _measure(host)[1]
-        decision = json.loads((Path(result["evidence_dir"]) / "decision.json").read_text())
+        decision = _decision(_measure(host)[1])
         self.assertEqual(decision["backends"]["direct"]["memory_metric"], "rss_total_kb")
         self.assertEqual(decision["backends"]["pillow-bulk"]["memory_metric"], "pss_total_kb")
 
-    def test_workload_density_mismatch_is_invalid(self):
+    def test_workload_density_mismatch_is_noted_not_invalid(self):
         host = self.host(measure=_both("candidate-pillow", density=1200.0))
         code, result, _ = _measure(host)
-        self.assertEqual(code, remote.EXIT_GATE_FAILED)
-        self.assertEqual(result["decision"], "invalid")
+        self.assertEqual(code, remote.EXIT_OK)
+        self.assertEqual(result["decision"], "report-only")
+        notes = _decision(result)["backends"]["pillow-bulk"]["notes"]
+        self.assertTrue(any("density differs by 33.3%" in note for note in notes), notes)
+        self.assertEqual(_decision(result)["backends"]["direct"]["notes"], [])
         self.assertTrue(host.service_running)
         self.assertEqual(host.head, START)
+
+    def test_transport_drops_are_a_fraction_not_a_flag(self):
+        host = self.host(measure={"baseline-direct-1": {"drops": 3}})
+        code, result, _ = _measure(host)
+        self.assertEqual(code, remote.EXIT_OK)
+        self.assertEqual(len(host.measured()), len(remote.MEASURE_SEQUENCE))
+        run = _runs(result)[0]
+        self.assertEqual(run["transport_drops"], 3)
+        self.assertAlmostEqual(run["drop_fraction"], 3 / 845)
+        self.assertEqual(run["flags"], [])
+        self.assertNotIn("transport_drops_zero", run["gates"])
 
     def test_superseded_fraction_comes_from_raw_sequence_gaps(self):
         gaps = [0, 1, 4, 4, 5, 9]  # gaps of 2 and 3 superseded results -> 5
         host = self.host(measure={"candidate-direct-1": {"sequences": gaps}})
         result = _measure(host)[1]
-        runs = json.loads((Path(result["evidence_dir"]) / "runs.json").read_text())
-        run = next(item for item in runs if item["label"] == "candidate-direct-1")
+        run = next(item for item in _runs(result) if item["label"] == "candidate-direct-1")
         self.assertEqual(run["superseded"], 5)
         self.assertAlmostEqual(run["superseded_fraction"], 5 / 845)
 
@@ -348,42 +369,122 @@ class MeasureFailureTests(MeasureCase):
         self.assertEqual(host.head, START)
         self.assertEqual(host.service_running, started)
 
-    def _stops_after(self, label, spec, gate, decision="reject"):
+    def _stops_after(self, label, spec, gate):
         host = self.host(measure={label: spec})
         code, result, _ = _measure(host)
         self.assertEqual(code, remote.EXIT_GATE_FAILED)
         self.assertEqual(host.measured()[-1][1], label)
-        self.assertEqual(result["decision"], decision)
-        runs = json.loads((Path(result["evidence_dir"]) / "runs.json").read_text())
+        self.assertEqual(result["decision"], "incomplete")
+        runs = _runs(result)
         failed = next(item for item in runs if item["label"] == label)
-        self.assertIn(gate, failed["failed_gates"])
+        self.assertIn(gate, failed["flags"])
+        self.assertIn(gate, failed["stops"])
         later = [item for item in runs if item.get("skipped")]
         self.assertEqual(len(later) + len(host.measured()), len(remote.MEASURE_SEQUENCE))
         self.assert_restored(host)
         return host, result
 
-    def test_candidate_without_renderer_fails_roles_and_stops(self):
-        self._stops_after("candidate-direct-1", {"renderer": False}, "roles")
+    def _flags_and_continues(self, label, spec, flag):
+        """v2 (D-011a): a non-stop gate is a flag; every run still happens."""
 
-    def test_baseline_with_a_renderer_fails_roles(self):
-        self._stops_after("baseline-direct-1", {"renderer": True}, "roles")
+        host = self.host(measure={label: spec})
+        code, result, output = _measure(host)
+        self.assertEqual(code, remote.EXIT_OK, output)
+        self.assertEqual(len(host.measured()), len(remote.MEASURE_SEQUENCE))
+        self.assertEqual(result["decision"], "report-only")
+        self.assertIn(f"flagged: {label} (", result["decision_reason"])
+        run = next(item for item in _runs(result) if item["label"] == label)
+        self.assertIn(flag, run["flags"])
+        self.assertEqual(run["stops"], [])
+        self.assertIn(flag, _decision(result)["flagged"][label])
+        row = next(line for line in result["results_markdown"].splitlines()
+                   if line.startswith(f"| {label} |"))
+        self.assertIn(flag, row.rsplit("|", 2)[-2])
+        self.assert_restored(host)
+        return host, result
 
-    def test_unknown_descendant_fails_roles(self):
+    def test_candidate_without_renderer_is_flagged_and_the_sequence_continues(self):
+        self._flags_and_continues("candidate-direct-1", {"renderer": False}, "roles")
+
+    def test_baseline_with_a_renderer_is_flagged(self):
+        self._flags_and_continues("baseline-direct-1", {"renderer": True}, "roles")
+
+    def test_unknown_descendant_in_the_window_is_flagged(self):
         extra = [(150, 101, ["/bin/sh", "-c", "true"], "other")]
-        self._stops_after("candidate-pillow-1", {"extra": extra}, "roles")
+        self._flags_and_continues("candidate-pillow-1", {"extra": extra}, "roles")
 
-    def test_transport_drop_and_skipped_fraction_gates(self):
-        self._stops_after("baseline-direct-1", {"drops": 1}, "transport_drops_zero")
-        root = self.root / "skip"
+    def test_skipped_fraction_and_age_limit_are_flags(self):
+        self._flags_and_continues("baseline-direct-1", {"skipped": 50, "generations": 860},
+                                  "skipped_fraction")
+        root = self.root / "age"
         root.mkdir()
         self.root = root
-        self._stops_after("baseline-direct-1", {"skipped": 50, "generations": 860},
-                          "skipped_fraction")
+        self._flags_and_continues("baseline-direct-1", {"age_p95": 23.5}, "result_age_p95")
 
-    def test_sampler_failure_is_a_harness_fault_not_a_reject(self):
-        _, result = self._stops_after("baseline-direct-1", {"sampler_rc": 1}, "sampler",
-                                      decision="incomplete")
+    def test_flagged_runs_still_count_toward_the_arm_means(self):
+        result = self._flags_and_continues(
+            "candidate-direct-1", {"returncode": 1, "swap_fps": 90.0}, "exit_zero")[1]
+        direct = _decision(result)["backends"]["direct"]
+        self.assertIn("candidate-direct-1", direct["candidate"]["runs"])
+        self.assertAlmostEqual(direct["candidate"]["mean"]["swap_fps"], (90.0 + 104.0) / 2)
+
+    def test_run_without_telemetry_is_flagged_not_a_harness_fault(self):
+        host, result = self._flags_and_continues(
+            "candidate-direct-1", {"no_telemetry": True, "returncode": 1}, "exit_zero")
+        run = next(item for item in _runs(result) if item["label"] == "candidate-direct-1")
+        self.assertIn("schema", run["flags"])
+        self.assertNotIn("sampler", run["flags"])
+        self.assertEqual(run["windows"], {"frames": [], "cpu": []})
+        direct = _decision(result)["backends"]["direct"]
+        self.assertAlmostEqual(direct["candidate"]["mean"]["swap_fps"], 104.0)
+
+    def test_sticky_throttle_flags_only_the_run_that_set_it(self):
+        host, result = self._flags_and_continues(
+            "candidate-pillow-1", {"throttle_after": "throttled=0x80000"}, "no_throttling")
+        flagged = [item["label"] for item in _runs(result) if "no_throttling" in item["flags"]]
+        self.assertEqual(flagged, ["candidate-pillow-1"])
+
+    def test_operational_error_is_recorded_beside_a_complete_report(self):
+        host = self.host()
+        host.remove_run_dir = lambda run_dir: remote.Result(1, "", "busy")
+        code, result, _ = _measure(host)
+        self.assertEqual(code, remote.EXIT_GATE_FAILED)
+        self.assertEqual(result["decision"], "report-only")
+        operation = _decision(result)["operation"]
+        self.assertEqual(operation["exit_code"], remote.EXIT_GATE_FAILED)
+        self.assertTrue(any("could not remove" in e for e in operation["errors"]))
+        self.assertIn("Operation: exit 1", result["results_markdown"])
+
+    def test_survivor_killed_after_its_grace_stops_the_sequence_and_restarts(self):
+        host = self.host()
+        killed = []
+        original_run = host.run
+
+        def run(argv, **kwargs):
+            if list(argv[:3]) == ["sudo", "-n", "kill"] and argv[4] == "KILL":
+                killed.append(argv[-1])
+            return original_run(argv, **kwargs)
+
+        def alive(processes):
+            if host.current_label == "candidate-direct-1" and not killed \
+                    and (102, 5102) in processes:
+                return [(102, 5102)]
+            return []
+
+        host.run = run
+        host.alive_processes = alive
+        code, result, _ = _measure(host)
+        self.assertEqual(code, remote.EXIT_GATE_FAILED)
+        self.assertEqual(killed, ["102"])
+        self.assertEqual(host.measured()[-1][1], "candidate-direct-1")
+        self.assertIn("no_residual_process", _runs(result)[1]["stops"])
+        self.assertEqual(result["decision"], "incomplete")
+        self.assert_restored(host)  # nothing remains, so the service restarts
+
+    def test_sampler_failure_stops_as_incomplete_and_leaves_the_run_out(self):
+        _, result = self._stops_after("baseline-direct-1", {"sampler_rc": 1}, "sampler")
         self.assertIn("harness gates failed: baseline-direct-1", result["decision_reason"])
+        self.assertEqual(_decision(result)["backends"]["direct"]["baseline"]["runs"], [])
 
     def test_startup_only_transient_is_recorded_not_failed(self):
         ldconfig = [(140, 101, ["/sbin/ldconfig", "-p"], "transient")]
@@ -395,8 +496,8 @@ class MeasureFailureTests(MeasureCase):
         self.assertEqual(run["processes"]["transients"], {"140": ["/sbin/ldconfig", "-p"]})
         self.assertEqual(run["processes"]["role_pids"]["transient"], [140])
 
-    def test_nonzero_exit_fails_the_run(self):
-        self._stops_after("candidate-direct-1", {"returncode": 1}, "exit_zero")
+    def test_nonzero_exit_is_flagged_and_the_sequence_continues(self):
+        self._flags_and_continues("candidate-direct-1", {"returncode": 1}, "exit_zero")
 
     def test_residual_process_is_signalled_keeps_service_stopped_restores_checkout(self):
         host = self.host(survivors={"candidate-direct-1": [(102, 5102)]})
@@ -409,8 +510,12 @@ class MeasureFailureTests(MeasureCase):
         self.assertNotIn("start", host.names())
         self.assert_restored(host, started=False)
         self.assertTrue(any("FFT process still running" in e for e in result["errors"]))
-        runs = json.loads((Path(result["evidence_dir"]) / "runs.json").read_text())
-        self.assertIn("no_residual_process", runs[1]["failed_gates"])
+        runs = _runs(result)
+        self.assertIn("no_residual_process", runs[1]["stops"])
+        self.assertEqual(result["decision"], "incomplete")
+        self.assertEqual(_decision(result)["operation"]["exit_code"],
+                         remote.EXIT_OPERATION_FAILED)
+        self.assertIn("Operation: exit 3", result["results_markdown"])
 
     def test_resource_tracker_exiting_within_grace_is_not_residual(self):
         host = self.host()
@@ -660,6 +765,49 @@ class MeasureHelperTests(unittest.TestCase):
         self.assertEqual(remote.superseded_count([]), 0)
         self.assertEqual(remote.superseded_count([3, 3, 4, 7, 6, 10]), 2 + 3)
 
+    def test_window_count(self):
+        self.assertEqual(remote.window_count(900.0), 15)
+        self.assertEqual(remote.window_count(899.99), 15)
+        self.assertEqual(remote.window_count(10.0), 1)
+        self.assertEqual(remote.window_count(0.0), 1)
+
+    def test_frame_windows_split_the_span_and_measure_each_window(self):
+        # 60 s at 100 FPS, 60 s at 50 FPS, 60 s at 100 FPS; results published at 80/s.
+        times = ([i * 0.01 for i in range(6000)] + [60 + i * 0.02 for i in range(3000)]
+                 + [120 + i * 0.01 for i in range(6000)])
+        completed = [int(round(t * 1e9)) for t in times]
+        ages = [int((20 if 60 <= t < 120 else 10) * 1e6) for t in times]
+        sequences = [int(t * 80) for t in times]
+        windows = remote.frame_windows(completed, ages, sequences)
+        self.assertEqual(len(windows), 3)
+        for window, fps, age in zip(windows, (100, 50, 100), (10, 20, 10)):
+            self.assertAlmostEqual(window["swap_fps"], fps, delta=0.1)
+            self.assertAlmostEqual(window["published_fps"], 80, delta=0.1)
+            self.assertAlmostEqual(window["age_p95_ms"], age)
+        self.assertEqual(remote.frame_windows([1], [1], [1]), [])
+        self.assertEqual(remote.frame_windows([1, 2], [1], [1, 2]), [])
+
+    def test_cpu_windows_follow_app_roles_only(self):
+        # The parent uses 0.5 cores for 60 s and then 1.0; sudo's ticks are ignored.
+        samples = []
+        for t in range(121):
+            parent = 50 * t if t <= 60 else 3000 + 100 * (t - 60)
+            samples.append({"t": float(t), "procs": [
+                {"pid": 101, "utime": parent, "stime": 0},
+                {"pid": 100, "utime": 1000 * t, "stime": 0}]})
+        roles = {"parent": [101], "sudo": [100]}
+        cores = remote.cpu_windows({"clk_tck": 100}, samples, roles, (0.0, 120.0), 2)
+        self.assertEqual(len(cores), 2)
+        self.assertAlmostEqual(cores[0], 0.5)
+        self.assertAlmostEqual(cores[1], 1.0)
+        self.assertEqual(remote.cpu_windows({"clk_tck": 100}, samples, roles,
+                                            (None, None), 2), [])
+
+    def test_spread(self):
+        self.assertEqual(remote.spread([3.0, None, 1.0, 2.0]),
+                         {"n": 3, "min": 1.0, "median": 2.0, "max": 3.0})
+        self.assertEqual(remote.spread([]), {"n": 0, "min": None, "median": None, "max": None})
+
     def test_measured_environment_controls_topology_and_backend(self):
         inherited = {"PATH": "/bin", remote.EXPERIMENT_ENV: "1",
                      remote.OUTPUT_PATH_ENV: "pillow-bulk", "RGBMATRIX_FFT_STEP6_X": "1"}
@@ -813,10 +961,14 @@ class MeasureMacTests(unittest.TestCase):
         self.assertEqual(len(pushes), 1)
         self.assertEqual(pushes[0][-1], f"+{CANDIDATE}:refs/heads/deploy")
         self.assertTrue(popen.calls[0][0][-1].endswith(" status"))
+        # Only the long measure-split call carries the SSH keepalive.
+        self.assertNotIn("ServerAliveInterval=30", popen.calls[0][0])
+        self.assertIn("ServerAliveInterval=30", popen.calls[1][0])
+        self.assertIn("ServerAliveCountMax=10", popen.calls[1][0])
         command = popen.calls[1][0][-1]
         sha256 = __import__("hashlib").sha256((base.TOOL_DIR / "remote.py").read_bytes()).hexdigest()
         self.assertIn(f"measure-split {BASELINE} {CANDIDATE} --expect-start {START} "
-                      "--settle 60 --duration 300 --max-samples 100000 "
+                      "--settle 60 --duration 900 --max-samples 250000 "
                       f"--tool-commit {'f' * 40} --tool-sha256 {sha256} "
                       "--audio-note 'mic, steady speaker'", command)
         self.assertIn("Evidence (on the Pi): /e", output)
