@@ -16,9 +16,15 @@ fail() {
 }
 
 [ "$(id -u)" -ne 0 ] || fail "run as the desktop user, not root"
-for command in sudo cmp modprobe systemctl wpctl awk grep rm rmdir; do
+for command in sudo cmp systemctl wpctl awk grep rm rmdir; do
     command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
 done
+MODPROBE=$(sudo sh -c 'command -v modprobe') || \
+    fail "missing privileged command: modprobe"
+case "$MODPROBE" in
+    /*) ;;
+    *) fail "privileged modprobe path is not absolute" ;;
+esac
 
 verify_user_file() {
     source_file=$1
@@ -83,7 +89,7 @@ if [ "$needs_restart" -eq 1 ]; then
     systemctl --user stop wireplumber
     wireplumber_stopped=1
     if grep -q '^snd_aloop ' /proc/modules; then
-        sudo modprobe -r snd-aloop
+        sudo "$MODPROBE" -r snd-aloop
     fi
     restart_wireplumber
 fi

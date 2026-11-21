@@ -44,6 +44,16 @@ class BluetoothAudioDeployTests(unittest.TestCase):
         self.assertIn('${loaded_indexes%%,*}', install)
         self.assertIn('${loaded_substreams%%,*}', install)
 
+    def test_scripts_resolve_modprobe_through_privileged_path(self):
+        for script_name in ("install.sh", "uninstall.sh"):
+            script = (DEPLOY / script_name).read_text()
+            with self.subTest(script=script_name):
+                self.assertIn(
+                    "MODPROBE=$(sudo sh -c 'command -v modprobe')",
+                    script,
+                )
+                self.assertNotIn(" cmp modprobe systemctl", script)
+
     def test_scripts_parse_and_uninstall_has_required_revert_order(self):
         for script_name in ("install.sh", "uninstall.sh"):
             result = subprocess.run(
@@ -56,7 +66,7 @@ class BluetoothAudioDeployTests(unittest.TestCase):
 
         uninstall = (DEPLOY / "uninstall.sh").read_text()
         stop = uninstall.index("systemctl --user stop wireplumber")
-        unload = uninstall.index("sudo modprobe -r snd-aloop")
+        unload = uninstall.index('sudo "$MODPROBE" -r snd-aloop')
         start = uninstall.rindex("    restart_wireplumber")
         self.assertLess(stop, unload)
         self.assertLess(unload, start)

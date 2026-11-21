@@ -15,9 +15,15 @@ fail() {
 }
 
 [ "$(id -u)" -ne 0 ] || fail "run as the desktop user, not root"
-for command in sudo install cmp modprobe systemctl wireplumber wpctl awk grep sleep cat; do
+for command in sudo install cmp systemctl wireplumber wpctl awk grep sleep cat; do
     command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
 done
+MODPROBE=$(sudo sh -c 'command -v modprobe') || \
+    fail "missing privileged command: modprobe"
+case "$MODPROBE" in
+    /*) ;;
+    *) fail "privileged modprobe path is not absolute" ;;
+esac
 
 case "$(wireplumber --version 2>/dev/null)" in
     *0.4.*) ;;
@@ -51,7 +57,7 @@ install_root_file "$FILES_DIR/modprobe.conf" "$MODPROBE_DEST"
 install_user_file "$FILES_DIR/60-rgb-matrix-bluetooth-audio.lua" "$WP_DEST"
 
 if ! grep -q '^snd_aloop ' /proc/modules; then
-    sudo modprobe snd-aloop
+    sudo "$MODPROBE" snd-aloop
     changed=1
 fi
 grep -q '^ *10 .*Loopback' /proc/asound/cards || \
