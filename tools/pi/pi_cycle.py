@@ -7,6 +7,8 @@
                                               [--duration 30] [--settle 5]
                                               [--max-samples 100000]
     python3 tools/pi/pi_cycle.py restore <ref>
+    python3 tools/pi/pi_cycle.py measure-split <baseline> <candidate> \
+        --expect-start <sha> --audio-note "..."
 
 The Pi is ``--host``, else ``RGBMATRIX_PI_HOST``, else the ``pi`` git remote's URL.
 No hostname is committed. Each command sends ``remote.py`` (beside this file) to the
@@ -24,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 import os
@@ -45,6 +48,10 @@ PI_REMOTE = "pi"
 DEPLOY_REF = "refs/heads/deploy"
 RESULT_MARKER = "@@PI_CYCLE_RESULT@@ "
 OUTPUT_MODES = ("direct", "pillow-bulk")
+# Fixed by the approved Step 4 measurement plan; not command-line options.
+MEASURE_SETTLE_SECONDS = 60.0
+MEASURE_DURATION_SECONDS = 300.0
+MEASURE_MAX_SAMPLES = 100000
 
 EXIT_OK = 0
 EXIT_GATE_FAILED = 1
@@ -250,6 +257,17 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Telemetry frame capacity per run.")
     restore = sub.add_parser("restore", help="Check out a commit already on the Pi.")
     restore.add_argument("ref", help="Resolved on the Pi, so Pi-only branches work.")
+    measure = sub.add_parser(
+        "measure-split",
+        help="Step 4: the approved eight-run baseline/candidate matrix-process sequence.",
+    )
+    measure.add_argument("baseline", help="In-process baseline commit.")
+    measure.add_argument("candidate", help="Split candidate commit; must descend from"
+                         " the baseline, and is the only commit pushed.")
+    measure.add_argument("--expect-start", required=True,
+                         help="Commit the Pi must be at before, and is restored to after.")
+    measure.add_argument("--audio-note", required=True,
+                         help="Description of the fixed audio source and level.")
     return parser
 
 
@@ -286,6 +304,9 @@ def main(argv: Optional[Sequence[str]] = None, *,
                                       popen=popen, out=out)
             return _report_checkout(out, code, result)
 
+        if args.command == "measure-split":
+            return _measure_split(args, target, git, popen, run, out)
+
         if args.command == "restore":
             code, result = run_remote(target, ["checkout", args.ref], popen=popen, out=out)
             return _report_checkout(out, code, result)
@@ -309,10 +330,64 @@ def main(argv: Optional[Sequence[str]] = None, *,
         _print(out, f"refused: {exc}")
         return EXIT_REFUSED
     except KeyboardInterrupt:
-        _print(out, "\ninterrupted. The Pi side keeps going: a check finishes the run in"
-               " progress, skips the rest, restarts the service, and keeps its evidence."
-               " Run `status` to see the Pi.")
+        if args.command == "measure-split":
+            _print(out, "\ninterrupted. The Pi side keeps going: it finishes the run in"
+                   " progress, stops the sequence, restores the preflight commit, restarts"
+                   " the service unless a process survives, and keeps its evidence. Run"
+                   " `status` to see the Pi.")
+        else:
+            _print(out, "\ninterrupted. The Pi side keeps going: a check finishes the run"
+                   " in progress, skips the rest, restarts the service, and keeps its"
+                   " evidence. Run `status` to see the Pi.")
         return 130
+
+
+def _measure_split(args: Any, target: Target, git: Callable[..., Any],
+                   popen: Callable[..., Any], run: Callable[..., Any], out: Any) -> int:
+    """Read-only preflight, one push of the candidate, then the Pi-side sequence."""
+
+    baseline = resolve_local_commit(args.baseline, git)
+    candidate = resolve_local_commit(args.candidate, git)
+    expect_start = resolve_local_commit(args.expect_start, git)
+    if baseline == candidate:
+        raise UsageError("baseline and candidate are the same commit")
+    if git("merge-base", "--is-ancestor", baseline, candidate).returncode != 0:
+        raise UsageError("the baseline must be an ancestor of the candidate (A-6)")
+    tools_dirty = git("status", "--porcelain", "--", "tools/pi")
+    if tools_dirty.returncode != 0 or tools_dirty.stdout.strip():
+        raise UsageError("tools/pi has uncommitted changes; commit the tool first (A-7)")
+    tool_commit = resolve_local_commit("HEAD", git)
+    tool_sha256 = hashlib.sha256(REMOTE_SCRIPT.read_bytes()).hexdigest()
+
+    code, result = run_remote(target, ["status"], popen=popen, out=out)
+    status = (result or {}).get("status") or {}
+    if code != EXIT_OK or status.get("head") != expect_start or not status.get("detached") \
+            or status.get("porcelain") != []:
+        _print(out, f"refused: the Pi is not clean and detached at {expect_start};"
+               " nothing was pushed")
+        return EXIT_REFUSED
+
+    _print(out, f"pushing {candidate} to {DEPLOY_REF}")
+    pushed = run(["git", "-C", str(REPO_ROOT), "push", target.push_url,
+                  f"+{candidate}:{DEPLOY_REF}"])
+    if pushed.returncode != 0:
+        _print(out, "push failed; the Pi was not changed")
+        return EXIT_REFUSED
+    code, result = run_remote(target, [
+        "measure-split", baseline, candidate,
+        "--expect-start", expect_start,
+        "--settle", f"{MEASURE_SETTLE_SECONDS:g}",
+        "--duration", f"{MEASURE_DURATION_SECONDS:g}",
+        "--max-samples", str(MEASURE_MAX_SAMPLES),
+        "--tool-commit", tool_commit,
+        "--tool-sha256", tool_sha256,
+        "--audio-note", args.audio_note,
+    ], popen=popen, out=out)
+    if result and result.get("results_markdown"):
+        _print(out)
+        out.write(result["results_markdown"])
+        _print(out, f"Evidence (on the Pi): {result['evidence_dir']}")
+    return code
 
 
 def _report_checkout(out: Any, code: int, result: Optional[dict[str, Any]]) -> int:

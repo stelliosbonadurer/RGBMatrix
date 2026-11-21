@@ -57,6 +57,113 @@ CHILD_MARGIN_SECONDS = 90.0
 THROTTLE_CURRENT_MASK = 0xF
 THROTTLE_STICKY_MASK = 0xF0000
 
+# Step 4 matrix-process measurement (measurement-plan.md, amendments A-1 to A-7).
+EXPERIMENT_ENV = "RGBMATRIX_FFT_MATRIX_PROCESS_EXPERIMENT"
+OUTPUT_PATH_ENV = "RGBMATRIX_FFT_OUTPUT_PATH"
+MEASURE_EVIDENCE_PREFIX = "fft-step4-matrix-process-"
+# (label, topology, backend), in the approved symmetric order.
+MEASURE_SEQUENCE = (
+    ("baseline-direct-1", "baseline", "direct"),
+    ("candidate-direct-1", "candidate", "direct"),
+    ("candidate-pillow-1", "candidate", "pillow-bulk"),
+    ("baseline-pillow-1", "baseline", "pillow-bulk"),
+    ("baseline-pillow-2", "baseline", "pillow-bulk"),
+    ("candidate-pillow-2", "candidate", "pillow-bulk"),
+    ("candidate-direct-2", "candidate", "direct"),
+    ("baseline-direct-2", "baseline", "direct"),
+)
+MAX_SKIPPED_FRACTION = 0.05
+SAMPLER_INTERVAL_SECONDS = 1.0
+SAMPLER_MARGIN_SECONDS = 30.0
+SAMPLER_EXIT_GRACE_SECONDS = 10.0
+# The resource tracker exits only after it reads EOF from its departed parent.
+RESIDUAL_GRACE_SECONDS = 5.0
+# Gates that judge the harness rather than the candidate: their failure makes the
+# sequence incomplete (repeat it), not a candidate rejection.
+HARNESS_GATES = ("sampler", "exact_commit", "topology_env")
+# At least this fraction of the expected one-per-second samples inside the window.
+MIN_SAMPLER_COVERAGE = 0.9
+APP_ROLES = ("parent", "renderer", "resource_tracker")
+# Decision rule (measurement-plan.md "Comparative accept/reject rule", A-4, A-5).
+RULE_MIN_RATE_RATIO = 0.95
+RULE_MAX_AGE_RATIO = 1.10
+RULE_MAX_FRACTION_INCREASE = 0.02
+RULE_MAX_CPU_RATIO = 1.25
+RULE_MAX_MEMORY_RATIO = 1.50
+RULE_MAX_MEMORY_INCREASE_KIB = 32 * 1024
+RULE_MAX_DENSITY_DIFFERENCE = 0.15
+BENEFIT_MIN_SWAP_RATIO = 1.10
+BENEFIT_MAX_AGE_RATIO = 0.85
+BENEFIT_RUN_TOLERANCE = 0.05
+
+# Run as root (one ``sudo -n`` per run) under the Pi's system Python. Arguments:
+# root PID, interval seconds, deadline seconds. Writes one JSON header line and then
+# one JSON line per sample to stdout; exits when the root PID is gone or a zombie.
+SAMPLER_SNIPPET = r"""
+import json, os, signal, sys, time
+root = int(sys.argv[1]); interval = float(sys.argv[2])
+deadline = time.monotonic() + float(sys.argv[3])
+stopping = []
+signal.signal(signal.SIGTERM, lambda *_: stopping.append(1))
+signal.signal(signal.SIGINT, lambda *_: stopping.append(1))
+def emit(value):
+    sys.stdout.write(json.dumps(value, sort_keys=True) + "\n"); sys.stdout.flush()
+def stat(pid):
+    with open("/proc/%d/stat" % pid, "rb") as f:
+        data = f.read().decode("utf-8", "replace")
+    fields = data[data.rindex(")") + 2:].split()
+    return {"state": fields[0], "ppid": int(fields[1]), "pgrp": int(fields[2]),
+            "session": int(fields[3]), "utime": int(fields[11]),
+            "stime": int(fields[12]), "start": int(fields[19])}
+def kib(path, keys):
+    found = {}
+    try:
+        with open(path, "rb") as f:
+            for line in f.read().decode("utf-8", "replace").splitlines():
+                name, _, rest = line.partition(":")
+                if name in keys:
+                    found[keys[name]] = int(rest.split()[0])
+    except (OSError, ValueError, IndexError):
+        pass
+    return found
+emit({"header": {"clk_tck": os.sysconf("SC_CLK_TCK"), "root_pid": root,
+                 "interval": interval, "sampler_pid": os.getpid(),
+                 "euid": os.geteuid()}})
+while not stopping:
+    began = time.monotonic()
+    table = {}
+    for name in os.listdir("/proc"):
+        if name.isdigit():
+            try:
+                table[int(name)] = stat(int(name))
+            except (OSError, ValueError, IndexError):
+                pass
+    children = {}
+    for pid, info in table.items():
+        children.setdefault(info["ppid"], []).append(pid)
+    tree, stack = [], ([root] if root in table else [])
+    while stack:
+        pid = stack.pop(); tree.append(pid); stack.extend(children.get(pid, ()))
+    rows = []
+    for pid in sorted(tree):
+        row = dict(table[pid], pid=pid)
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as f:
+                row["cmd"] = [a.decode("utf-8", "replace")[:512]
+                              for a in f.read(8192).split(b"\0") if a]
+        except OSError:
+            row["cmd"] = []
+        row.update(kib("/proc/%d/status" % pid, {"VmRSS": "rss_kb", "VmHWM": "hwm_kb"}))
+        row.update(kib("/proc/%d/smaps_rollup" % pid, {"Pss": "pss_kb"}))
+        rows.append(row)
+    emit({"t": time.time(), "m": time.monotonic(), "procs": rows})
+    if root not in table or table[root]["state"] in ("Z", "X"):
+        break
+    if time.monotonic() >= deadline:
+        emit({"deadline": True}); break
+    time.sleep(max(0.0, interval - (time.monotonic() - began)))
+"""
+
 # Printed as JSON by the checkout's own controller code, run with the service's
 # interpreter, so the check launches exactly what the web service would (D-003).
 FFT_ARGV_SNIPPET = r"""
@@ -281,6 +388,113 @@ class PiHost:
 
         found = self.run(["pgrep", "-af", "fft_program/main.py"])
         return found.stdout.splitlines() if found.returncode == 0 else []
+
+    # Matrix-process measurement (Step 4) -------------------------------------------
+
+    def run_measured(self, argv: Sequence[str], *, cwd: Path, env: dict[str, str],
+                     timeout: float, log_path: Path, samples_path: Path,
+                     sampler_log_path: Path) -> dict[str, Any]:
+        """Run one bounded FFT child with the root ``/proc`` sampler beside it.
+
+        The sampler is one ``sudo -n`` process per run (A-3). It follows the
+        descendant tree of the launched ``sudo`` PID (A-2) and exits by itself when
+        that PID is gone; it is stopped explicitly only if it outlives the child.
+        """
+
+        child_env = measured_environment(os.environ, env)
+        with log_path.open("w", encoding="utf-8") as log, \
+                samples_path.open("w", encoding="utf-8") as samples, \
+                sampler_log_path.open("w", encoding="utf-8") as sampler_log:
+            child: Optional[subprocess.Popen] = None
+            sampler: Optional[subprocess.Popen] = None
+            timed_out = False
+            escalated = False
+            try:
+                child = subprocess.Popen(
+                    list(argv), cwd=cwd, env=child_env, stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                )
+                sampler = subprocess.Popen(
+                    sampler_argv(child.pid, timeout + SAMPLER_MARGIN_SECONDS),
+                    stdin=subprocess.DEVNULL, stdout=samples, stderr=sampler_log,
+                )
+                child.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+            finally:
+                if child is not None and child.poll() is None:
+                    escalated = self._stop_child_group(child)
+                sampler_rc = self._finish_sampler(sampler)
+            return {
+                "returncode": None if child is None else child.returncode,
+                "timed_out": timed_out,
+                "kill_escalated": escalated,
+                "sampler_returncode": sampler_rc,
+            }
+
+    def _finish_sampler(self, sampler: Optional[subprocess.Popen]) -> Optional[int]:
+        if sampler is None:
+            return None
+        for sig in (None, "TERM", "KILL"):
+            if sig is not None:
+                # The sampler runs as root behind sudo; sudo relays the signal.
+                self.run(["sudo", "-n", "kill", "-s", sig, "--", str(sampler.pid)],
+                         timeout=10)
+            try:
+                return sampler.wait(timeout=SAMPLER_EXIT_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                continue
+        return sampler.poll()
+
+    def alive_processes(self, processes: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Processes from a run's tree that still exist (same PID and start time)."""
+
+        alive = []
+        for pid, start in processes:
+            try:
+                info = parse_proc_stat(Path(f"/proc/{pid}/stat").read_text())
+            except (OSError, ValueError, IndexError):
+                continue
+            if info["start"] == start and info["state"] not in ("Z", "X"):
+                alive.append((pid, start))
+        return alive
+
+    def surviving(self, processes: Sequence[tuple[int, int]]) -> list[str]:
+        return [f"pid {pid}" for pid, _ in self.alive_processes(processes)]
+
+    def stop_survivors(self, processes: Sequence[tuple[int, int]]) -> list[str]:
+        """Allow a short exit grace, then INT/TERM/KILL any survivor by verified PID.
+
+        Returns what was still alive after the grace (a lifecycle failure even if
+        the signals then remove it). The caller re-checks before starting the
+        service.
+        """
+
+        deadline = self.clock() + RESIDUAL_GRACE_SECONDS
+        while self.alive_processes(processes) and self.clock() < deadline:
+            self.sleep(0.25)
+        lingering = self.surviving(processes)
+        for sig in ("INT", "TERM", "KILL"):
+            alive = self.alive_processes(processes)
+            if not alive:
+                break
+            for pid, _ in alive:
+                self.run(["sudo", "-n", "kill", "-s", sig, "--", str(pid)], timeout=10)
+            stop_by = self.clock() + RESIDUAL_GRACE_SECONDS
+            while self.alive_processes(processes) and self.clock() < stop_by:
+                self.sleep(0.25)
+        return lingering
+
+    def multiprocessing_processes(self, python: Optional[str]) -> list[str]:
+        """FFT-venv multiprocessing helpers that ``fft_processes`` cannot see (A-1)."""
+
+        found = self.run(["pgrep", "-af", "multiprocessing"])
+        if found.returncode != 0:
+            return []
+        return [
+            line for line in found.stdout.splitlines()
+            if python and python in line
+        ]
 
 
 # Status ---------------------------------------------------------------------------
@@ -665,6 +879,33 @@ def _raise_aborted(signum: int, _frame: Any) -> None:
     raise CheckAborted(f"signal {signal.Signals(signum).name}")
 
 
+def _raise_aborted_once(signum: int, _frame: Any) -> None:
+    """Measurement handler: later stop signals can't interrupt the cleanup."""
+
+    _set_stop_signals(signal.SIG_IGN)
+    raise CheckAborted(f"signal {signal.Signals(signum).name}")
+
+
+class _Deferred:
+    """Hold SIGHUP/SIGTERM across a step that must not be cut short (a checkout)."""
+
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self.pending: list[int] = []
+        self.previous: dict[int, Any] = {}
+
+    def __enter__(self) -> "_Deferred":
+        if self.enabled:
+            self.previous = _set_stop_signals(lambda signum, _f: self.pending.append(signum))
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        if self.enabled:
+            _restore_signals(self.previous)
+            if self.pending and exc[0] is None:
+                _raise_aborted_once(self.pending[0], None)
+
+
 _STOP_SIGNALS = (signal.SIGHUP, signal.SIGTERM)
 
 
@@ -868,6 +1109,863 @@ def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
     return EXIT_OK if passed else EXIT_GATE_FAILED
 
 
+# Matrix-process measurement (Step 4) -----------------------------------------------
+
+
+def measured_environment(inherited: dict[str, str], overrides: dict[str, str]) -> dict[str, str]:
+    """The child's environment: topology and backend come only from ``overrides``."""
+
+    child_env = {
+        key: value for key, value in inherited.items()
+        if not key.startswith("RGBMATRIX_FFT_STEP6_")
+        and key not in (EXPERIMENT_ENV, OUTPUT_PATH_ENV)
+    }
+    child_env.update(overrides)
+    return child_env
+
+
+def sampler_argv(root_pid: int, deadline_seconds: float) -> list[str]:
+    return ["sudo", "-n", "/usr/bin/python3", "-c", SAMPLER_SNIPPET, str(root_pid),
+            f"{SAMPLER_INTERVAL_SECONDS:g}", f"{deadline_seconds:g}"]
+
+
+def measure_env(topology: str, mode: str, run_dir: Path) -> dict[str, str]:
+    env = {OUTPUT_PATH_ENV: mode, "RGBMATRIX_STATE_DIR": str(run_dir / "state")}
+    if topology == "candidate":
+        env[EXPERIMENT_ENV] = "1"
+    return env
+
+
+def parse_proc_stat(text: str) -> dict[str, Any]:
+    fields = text[text.rindex(")") + 2:].split()
+    return {"state": fields[0], "ppid": int(fields[1]), "utime": int(fields[11]),
+            "stime": int(fields[12]), "start": int(fields[19])}
+
+
+def classify_role(cmd: Sequence[str]) -> str:
+    """A-2 roles. ``sudo`` is checked first because its argv names main.py too."""
+
+    if not cmd:
+        return "unknown"
+    if os.path.basename(cmd[0]) == "sudo":
+        return "sudo"
+    if any("multiprocessing.resource_tracker" in arg for arg in cmd):
+        return "resource_tracker"
+    if any("multiprocessing.spawn" in arg for arg in cmd):
+        return "renderer"
+    if any(arg.endswith("fft_program/main.py") for arg in cmd):
+        return "parent"
+    return "unknown"
+
+
+def read_npz_uint64(path: Path, name: str) -> list[int]:
+    """Read one 1-D little-endian uint64 array from an .npz without NumPy."""
+
+    import array
+    import ast
+    import zipfile
+
+    with zipfile.ZipFile(path) as archive:
+        data = archive.read(f"{name}.npy")
+    if data[:6] != b"\x93NUMPY":
+        raise ValueError(f"{name}: not an .npy member")
+    major = data[6]
+    if major == 1:
+        length, start = int.from_bytes(data[8:10], "little"), 10
+    elif major in (2, 3):
+        length, start = int.from_bytes(data[8:12], "little"), 12
+    else:
+        raise ValueError(f"{name}: unsupported .npy version {major}")
+    header = ast.literal_eval(data[start:start + length].decode("latin1"))
+    shape = header.get("shape")
+    if (header.get("descr") != "<u8" or header.get("fortran_order")
+            or not isinstance(shape, tuple) or len(shape) != 1):
+        raise ValueError(f"{name}: expected 1-D <u8, got {header}")
+    values = array.array("Q")
+    if values.itemsize != 8:
+        raise ValueError("platform array('Q') is not 8 bytes")
+    body = data[start + length:start + length + 8 * shape[0]]
+    if len(body) != 8 * shape[0]:
+        raise ValueError(f"{name}: truncated")
+    values.frombytes(body)
+    if sys.byteorder != "little":
+        values.byteswap()
+    return list(values)
+
+
+def superseded_count(sequences: Sequence[int]) -> int:
+    """A-5: sum of max(0, delta - 1) over consecutive rendered sequences."""
+
+    return sum(max(0, b - a - 1) for a, b in zip(sequences, sequences[1:]))
+
+
+def load_samples(path: Path) -> tuple[Optional[dict[str, Any]], list[dict[str, Any]]]:
+    header: Optional[dict[str, Any]] = None
+    samples: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None, []
+    for line in lines:
+        try:
+            item = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(item, dict) and "header" in item:
+            header = item["header"]
+        elif isinstance(item, dict) and "procs" in item:
+            samples.append(item)
+    return header, samples
+
+
+def _percentile(values: Sequence[float], fraction: float) -> Optional[float]:
+    """Linear interpolation, as numpy.percentile's default."""
+
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    low = math.floor(position)
+    high = min(low + 1, len(ordered) - 1)
+    return ordered[low] + (ordered[high] - ordered[low]) * (position - low)
+
+
+def summarize_processes(header: Optional[dict[str, Any]], samples: list[dict[str, Any]],
+                        window: tuple[Optional[float], Optional[float]]) -> dict[str, Any]:
+    """Roles over the whole run; CPU and memory over the telemetry window."""
+
+    start, end = window
+    last_cmd: dict[int, list[str]] = {}
+    starts: dict[int, int] = {}
+    in_window_pids: set[int] = set()
+    for sample in samples:
+        inside = start is not None and end is not None and start <= sample["t"] <= end
+        for row in sample["procs"]:
+            pid = int(row["pid"])
+            starts[pid] = int(row["start"])
+            if inside:
+                in_window_pids.add(pid)
+            if row.get("cmd"):
+                last_cmd[pid] = list(row["cmd"])
+    roles = {pid: classify_role(last_cmd.get(pid, [])) for pid in starts}
+    # A-8: an unclassified descendant never seen inside the telemetry window (for
+    # example sounddevice's import-time ``ldconfig -p``) is recorded, not failed.
+    # Survivors are caught separately by the residual check.
+    transients = {
+        pid: last_cmd.get(pid, []) for pid, role in roles.items()
+        if role == "unknown" and pid not in in_window_pids
+    }
+    for pid in transients:
+        roles[pid] = "transient"
+    role_pids: dict[str, list[int]] = {}
+    for pid, role in sorted(roles.items()):
+        role_pids.setdefault(role, []).append(pid)
+
+    in_window = [
+        sample for sample in samples
+        if start is not None and end is not None and start <= sample["t"] <= end
+    ]
+    clk = float((header or {}).get("clk_tck") or 0)
+    per_pid: dict[int, list[tuple[float, int]]] = {}
+    totals_rss: list[float] = []
+    totals_pss: list[float] = []
+    pss_available = bool(in_window)
+    hwm: dict[int, int] = {}
+    role_rss: dict[str, list[float]] = {}
+    role_pss: dict[str, list[float]] = {}
+    for sample in in_window:
+        rss = 0.0
+        pss = 0.0
+        sample_role_rss: dict[str, float] = {}
+        sample_role_pss: dict[str, float] = {}
+        for row in sample["procs"]:
+            pid = int(row["pid"])
+            role = roles.get(pid)
+            if role not in APP_ROLES:
+                continue
+            sample_role_rss[role] = sample_role_rss.get(role, 0.0) + float(row.get("rss_kb") or 0)
+            if row.get("pss_kb") is not None:
+                sample_role_pss[role] = sample_role_pss.get(role, 0.0) + float(row["pss_kb"])
+            per_pid.setdefault(pid, []).append(
+                (float(sample["t"]), int(row["utime"]) + int(row["stime"]))
+            )
+            rss += float(row.get("rss_kb") or 0)
+            if row.get("pss_kb") is None:
+                pss_available = False
+            else:
+                pss += float(row["pss_kb"])
+            if row.get("hwm_kb") is not None:
+                hwm[pid] = max(hwm.get(pid, 0), int(row["hwm_kb"]))
+        totals_rss.append(rss)
+        totals_pss.append(pss)
+        for role, value in sample_role_rss.items():
+            role_rss.setdefault(role, []).append(value)
+        for role, value in sample_role_pss.items():
+            role_pss.setdefault(role, []).append(value)
+
+    cpu_by_role: dict[str, float] = {}
+    for pid, points in per_pid.items():
+        if len(points) < 2 or clk <= 0 or points[-1][0] <= points[0][0]:
+            continue
+        cores = (points[-1][1] - points[0][1]) / clk / (points[-1][0] - points[0][0])
+        cpu_by_role[roles[pid]] = cpu_by_role.get(roles[pid], 0.0) + cores
+    cpu_total = sum(cpu_by_role.values()) if cpu_by_role else None
+
+    def stats(values: list[float]) -> dict[str, Optional[float]]:
+        return {"p50": _percentile(values, 0.50), "p95": _percentile(values, 0.95),
+                "max": max(values) if values else None}
+
+    duration = (end - start) if start is not None and end is not None else None
+    interval = float((header or {}).get("interval") or SAMPLER_INTERVAL_SECONDS)
+    return {
+        "role_pids": role_pids,
+        "transients": {str(pid): cmd for pid, cmd in sorted(transients.items())},
+        "processes": sorted(starts.items()),
+        "window_samples": len(in_window),
+        "expected_window_samples": (duration / interval) if duration else None,
+        "sampler_euid": (header or {}).get("euid"),
+        "cpu_by_role": cpu_by_role,
+        "cpu_total": cpu_total,
+        "rss_total_kb": stats(totals_rss),
+        "pss_total_kb": stats(totals_pss) if pss_available else stats([]),
+        "pss_available": pss_available,
+        "hwm_peak_total_kb": sum(hwm.values()) if hwm else None,
+        "rss_by_role_kb": {role: stats(values) for role, values in sorted(role_rss.items())},
+        "pss_by_role_kb": {role: stats(values) for role, values in sorted(role_pss.items())},
+    }
+
+
+def evaluate_measured_run(run: dict[str, Any], summary: Optional[dict[str, Any]],
+                          sequences: Optional[list[int]],
+                          processes: dict[str, Any],
+                          survivors: Sequence[str],
+                          throttle_baseline: Optional[int]) -> dict[str, Any]:
+    """Step 3 gates plus the Step 4 lifecycle and validity gates."""
+
+    base = evaluate_run(run, summary, throttle_baseline)
+    gates = dict(base["gates"])
+    summary = summary if isinstance(summary, dict) else {}
+    deltas = summary.get("audio_counter_deltas") or {}
+    rates = summary.get("rates") or {}
+    age = (summary.get("latency") or {}).get("result_age") or {}
+
+    gates["exact_commit"] = run.get("head") == run.get("sha") and run.get("clean") is True
+    expected_experiment = "1" if run.get("topology") == "candidate" else None
+    gates["topology_env"] = (run.get("env") or {}).get(EXPERIMENT_ENV) == expected_experiment
+    drops = deltas.get("transport_drop_count")
+    gates["transport_drops_zero"] = drops == 0
+    generations = deltas.get("sample_generation")
+    skipped = deltas.get("skipped_generation_count")
+    skipped_fraction = (
+        skipped / generations
+        if isinstance(skipped, int) and isinstance(generations, int) and generations > 0
+        else None
+    )
+    gates["skipped_fraction"] = (
+        skipped_fraction is not None and skipped_fraction <= MAX_SKIPPED_FRACTION
+    )
+    published = rates.get("published_content_frames")
+    gates["raw_sequences"] = (
+        sequences is not None and len(sequences) == summary.get("sample_count")
+    )
+    superseded = superseded_count(sequences) if sequences else None
+    superseded_fraction = (
+        superseded / published
+        if superseded is not None and isinstance(published, int) and published > 0
+        else None
+    )
+    density = (summary.get("workload") or {}).get("visible_pixels_mean")
+    gates["density"] = isinstance(density, (int, float))
+
+    role_pids = processes.get("role_pids", {})
+    renderers = len(role_pids.get("renderer", []))
+    gates["roles"] = (
+        len(role_pids.get("parent", [])) == 1
+        and renderers == (1 if run.get("topology") == "candidate" else 0)
+        and len(role_pids.get("resource_tracker", [])) <= 1
+        and 1 <= len(role_pids.get("sudo", [])) <= 2
+        and not role_pids.get("unknown")
+    )
+    expected = processes.get("expected_window_samples")
+    gates["sampler"] = (
+        run.get("sampler_returncode") == 0
+        and processes.get("sampler_euid") == 0
+        and expected is not None
+        and processes.get("window_samples", 0) >= MIN_SAMPLER_COVERAGE * expected
+        and processes.get("cpu_total") is not None
+    )
+    gates["no_residual_process"] = not survivors
+
+    notes = list(base["notes"])
+    if survivors:
+        notes.append("residual processes: " + "; ".join(survivors))
+    if role_pids.get("unknown"):
+        notes.append(f"unknown processes: {role_pids['unknown']}")
+
+    base.update({
+        "topology": run.get("topology"),
+        "sha": run.get("sha"),
+        "published_fps": rates.get("published_content_fps"),
+        "result_age_ms": {key: age.get(key) for key in ("p50_ms", "p95_ms", "p99_ms", "max_ms")},
+        "callback_generations": generations,
+        "skipped_generations": skipped,
+        "published_frames": published,
+        "unique_frames": rates.get("unique_content_frames"),
+        "temperature": run.get("temperature"),
+        "skipped_fraction": skipped_fraction,
+        "superseded": superseded,
+        "superseded_fraction": superseded_fraction,
+        "transport_drops": drops,
+        "density_mean": density,
+        "processes": {k: v for k, v in processes.items() if k != "processes"},
+        "gates": gates,
+        "failed_gates": [name for name, passed in gates.items() if not passed],
+        "notes": notes,
+    })
+    return base
+
+
+def _ratio(candidate: Optional[float], baseline: Optional[float]) -> Optional[float]:
+    if candidate is None or baseline is None or baseline == 0:
+        return None
+    return candidate / baseline
+
+
+def decide(evaluations: list[dict[str, Any]]) -> dict[str, Any]:
+    """The fixed accept/reject rule. Medians of two runs per side, per backend."""
+
+    from statistics import median
+
+    measured = [item for item in evaluations if not item.get("skipped")]
+    complete = len(measured) == len(MEASURE_SEQUENCE)
+    candidate_failures = {
+        item["label"]: [g for g in item["failed_gates"] if g not in HARNESS_GATES]
+        for item in measured
+    }
+    candidate_failures = {k: v for k, v in candidate_failures.items() if v}
+    harness_failures = [
+        item["label"] for item in measured
+        if any(g in HARNESS_GATES for g in item["failed_gates"])
+    ]
+    if candidate_failures:
+        return {
+            "decision": "reject",
+            "reason": "lifecycle/validity failure: " + "; ".join(
+                f"{label} ({', '.join(gates)})" for label, gates in candidate_failures.items()),
+            "note": "Rejects unless a separately demonstrated environmental fault"
+                    " invalidates the whole sequence (human judgment, not the tool).",
+            "backends": {},
+        }
+    if not complete or harness_failures:
+        return {
+            "decision": "incomplete",
+            "reason": f"{len(measured)} of {len(MEASURE_SEQUENCE)} runs measured"
+                      + (f"; harness gates failed: {', '.join(harness_failures)}"
+                         if harness_failures else "")
+                      + "; no decision. A repeat is the complete sequence under a new"
+                        " evidence directory.",
+            "backends": {},
+        }
+
+    def med(items: list[dict[str, Any]], getter: Callable[[dict[str, Any]], Any]) -> Optional[float]:
+        values = [getter(item) for item in items]
+        if any(not isinstance(v, (int, float)) for v in values):
+            return None
+        return float(median(values))
+
+    backends: dict[str, Any] = {}
+    invalid: list[str] = []
+    for mode in OUTPUT_MODES:
+        base = [e for e in evaluations if e["mode"] == mode and e["topology"] == "baseline"]
+        cand = [e for e in evaluations if e["mode"] == mode and e["topology"] == "candidate"]
+        use_pss = all(e["processes"].get("pss_available") for e in base + cand)
+        memory_key = "pss_total_kb" if use_pss else "rss_total_kb"
+        metric = {
+            "swap_fps": lambda e: e["swap_fps"],
+            "published_fps": lambda e: e["published_fps"],
+            "result_age_p95_ms": lambda e: e["result_age_p95_ms"],
+            "skipped_fraction": lambda e: e["skipped_fraction"],
+            "superseded_fraction": lambda e: e["superseded_fraction"],
+            "cpu_total": lambda e: e["processes"].get("cpu_total"),
+            "memory_p95_kb": lambda e: (e["processes"].get(memory_key) or {}).get("p95"),
+            "density_mean": lambda e: e["density_mean"],
+        }
+        b = {name: med(base, getter) for name, getter in metric.items()}
+        c = {name: med(cand, getter) for name, getter in metric.items()}
+        limit = min(e["result_age_limit_ms"] for e in base + cand)
+
+        def le(x: Optional[float], y: Optional[float]) -> bool:
+            return x is not None and y is not None and x <= y
+
+        density_ok = (
+            b["density_mean"] not in (None, 0) and c["density_mean"] is not None
+            and abs(c["density_mean"] - b["density_mean"]) / b["density_mean"]
+            <= RULE_MAX_DENSITY_DIFFERENCE
+        )
+        if not density_ok:
+            invalid.append(mode)
+        rules = {
+            "swap_fps_floor": le(RULE_MIN_RATE_RATIO * (b["swap_fps"] or math.inf), c["swap_fps"]),
+            "published_fps_floor": le(RULE_MIN_RATE_RATIO * (b["published_fps"] or math.inf),
+                                      c["published_fps"]),
+            "result_age_ceiling": (
+                le(c["result_age_p95_ms"], RULE_MAX_AGE_RATIO * (b["result_age_p95_ms"] or -math.inf))
+                and c["result_age_p95_ms"] < limit
+            ),
+            "skipped_increase": le((c["skipped_fraction"] or 0) - (b["skipped_fraction"] or 0),
+                                   RULE_MAX_FRACTION_INCREASE)
+            and None not in (c["skipped_fraction"], b["skipped_fraction"]),
+            "superseded_increase": le((c["superseded_fraction"] or 0)
+                                      - (b["superseded_fraction"] or 0),
+                                      RULE_MAX_FRACTION_INCREASE)
+            and None not in (c["superseded_fraction"], b["superseded_fraction"]),
+            "transport_drops_zero": all(e["transport_drops"] == 0 for e in base + cand),
+            "cpu_ceiling": le(c["cpu_total"], RULE_MAX_CPU_RATIO * (b["cpu_total"] or -math.inf)),
+            "memory_ceiling": (
+                le(c["memory_p95_kb"], RULE_MAX_MEMORY_RATIO * (b["memory_p95_kb"] or -math.inf))
+                and le(c["memory_p95_kb"], (b["memory_p95_kb"] or -math.inf)
+                       + RULE_MAX_MEMORY_INCREASE_KIB)
+            ),
+        }
+        swap_runs = [e["swap_fps"] for e in cand]
+        age_runs = [e["result_age_p95_ms"] for e in cand]
+        benefits = {
+            "swap_fps_plus_10pct": (
+                le(BENEFIT_MIN_SWAP_RATIO * (b["swap_fps"] or math.inf), c["swap_fps"])
+                and all(le((1 - BENEFIT_RUN_TOLERANCE) * b["swap_fps"], v) for v in swap_runs)
+            ),
+            "result_age_p95_minus_15pct": (
+                le(c["result_age_p95_ms"], BENEFIT_MAX_AGE_RATIO * (b["result_age_p95_ms"] or -math.inf))
+                and all(le(v, (1 + BENEFIT_RUN_TOLERANCE) * b["result_age_p95_ms"])
+                        for v in age_runs)
+            ),
+        }
+        backends[mode] = {
+            "baseline_median": b, "candidate_median": c,
+            "ratios": {name: _ratio(c[name], b[name]) for name in metric},
+            "memory_metric": memory_key, "result_age_limit_ms": limit,
+            "density_comparable": density_ok, "rules": rules, "benefits": benefits,
+        }
+
+    if invalid:
+        return {"decision": "invalid",
+                "reason": f"workload density differs by more than 15% ({', '.join(invalid)});"
+                          " repeat the whole sequence with corrected input",
+                "backends": backends}
+    regressions = [f"{mode}: {name}" for mode, item in backends.items()
+                   for name, ok in item["rules"].items() if not ok]
+    shared_benefits = [
+        name for name in ("swap_fps_plus_10pct", "result_age_p95_minus_15pct")
+        if all(item["benefits"][name] for item in backends.values())
+    ]
+    if regressions:
+        return {"decision": "reject", "reason": "limit exceeded: " + "; ".join(regressions),
+                "backends": backends}
+    if not shared_benefits:
+        return {"decision": "reject",
+                "reason": "no material benefit consistent in both backends",
+                "backends": backends}
+    return {"decision": "accept", "reason": "benefit: " + ", ".join(shared_benefits),
+            "backends": backends}
+
+
+def measure_markdown(context: dict[str, Any], evaluations: list[dict[str, Any]],
+                     decision: dict[str, Any]) -> str:
+    lines = [
+        "# Step 4 matrix-process measurement",
+        "",
+        f"- Baseline `{context['baseline']}` (in-process) · candidate "
+        f"`{context['candidate']}` ({EXPERIMENT_ENV}=1)",
+        f"- Tool commit `{context['tool_commit']}` · remote.py sha256 `{context['tool_sha256']}`",
+        f"- Settle {context['settle']:g} s · duration {context['duration']:g} s · "
+        f"max samples {context['max_samples']} · started {context['stamp']}",
+        f"- Audio: {context['audio_note']}",
+        f"- Evidence: `{context['evidence_dir']}`",
+        f"- Restored to `{context['restored']}` · service "
+        f"{'healthy' if context['healthy'] else 'UNHEALTHY'}",
+        "",
+        "| Run | Swap FPS | Published FPS | Age p95 ms | Skipped | Superseded "
+        "| Drops | Density | CPU cores | Mem p95 MiB | Roles | Failed gates |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
+    ]
+    for item in evaluations:
+        procs = item.get("processes") or {}
+        memory = procs.get("pss_total_kb") if procs.get("pss_available") else procs.get("rss_total_kb")
+        roles = ",".join(f"{role}:{len(pids)}" for role, pids in
+                         sorted((procs.get("role_pids") or {}).items()))
+        lines.append("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
+            item["label"] + (" (skipped)" if item.get("skipped") else ""),
+            _fmt(item.get("swap_fps"), ".3f"), _fmt(item.get("published_fps"), ".3f"),
+            _fmt(item.get("result_age_p95_ms"), ".3f"),
+            _fmt(None if item.get("skipped_fraction") is None
+                 else item["skipped_fraction"] * 100, ".2f", "%"),
+            _fmt(None if item.get("superseded_fraction") is None
+                 else item["superseded_fraction"] * 100, ".2f", "%"),
+            _fmt(item.get("transport_drops")), _fmt(item.get("density_mean"), ".1f"),
+            _fmt(procs.get("cpu_total"), ".3f"),
+            _fmt(None if not memory or memory.get("p95") is None else memory["p95"] / 1024,
+                 ".1f"),
+            roles or "—", ", ".join(item.get("failed_gates") or []) or "none",
+        ))
+    for mode, item in decision.get("backends", {}).items():
+        lines += ["", f"## {mode}", "",
+                  "| Metric | Baseline median | Candidate median | Ratio |",
+                  "|---|---:|---:|---:|"]
+        for name, value in item["baseline_median"].items():
+            lines.append(f"| {name} | {_fmt(value, '.4f')} | "
+                         f"{_fmt(item['candidate_median'][name], '.4f')} | "
+                         f"{_fmt(item['ratios'][name], '.4f')} |")
+        lines.append("")
+        lines.append(f"Memory metric: {item['memory_metric']}. Rules: " + ", ".join(
+            f"{name}={'pass' if ok else 'FAIL'}" for name, ok in item["rules"].items()))
+        lines.append("Benefits: " + ", ".join(
+            f"{name}={'yes' if ok else 'no'}" for name, ok in item["benefits"].items()))
+    notes = [f"- {item['label']}: {note}" for item in evaluations for note in item.get("notes", [])]
+    notes += [f"- {error}" for error in context["errors"]]
+    if notes:
+        lines += ["", "Notes:", *notes]
+    lines += ["", f"Decision (fixed rule): **{decision['decision'].upper()}** — "
+              f"{decision['reason']}", ""]
+    return "\n".join(lines)
+
+
+MEASURE_INTERPRETATIONS = {
+    "median_of_two": "mean of the two runs",
+    "cpu": "per process (utime+stime) from first to last in-window sample divided by"
+           " that span, summed over parent/renderer/resource_tracker",
+    "memory": "per run p95 of the per-sample summed app-role PSS; RSS for a backend if"
+              " any of its four runs lacks PSS",
+    "skipped_fraction": "skipped_generation_count / sample_generation (deltas)",
+    "superseded_fraction": "sum(max(0, delta_seq - 1)) / published_content_frames",
+    "harness_gates": "sampler (exit 0, euid 0, >=90% window coverage), exact_commit,"
+                     " topology_env: failure makes the sequence incomplete, not a reject",
+    "transient_descendants": "A-8: unclassified descendants never seen inside the"
+                             " telemetry window are recorded, not failed",
+}
+
+
+def ignored_tracked_conflicts(host: PiHost, shas: Sequence[str]) -> list[str]:
+    """Ignored untracked Pi files at paths a measured or restored commit tracks."""
+
+    ignored = host.git("ls-files", "--others", "--ignored", "--exclude-standard",
+                       "--directory")
+    if ignored.returncode != 0:
+        raise Refused(f"could not list ignored files: {ignored.stderr.strip()}")
+    entries = [line for line in ignored.stdout.splitlines() if line]
+    files = {entry for entry in entries if not entry.endswith("/")}
+    directories = tuple(entry for entry in entries if entry.endswith("/"))
+    conflicts: set[str] = set()
+    for sha in shas:
+        tracked = host.git("ls-tree", "-r", "--name-only", sha)
+        if tracked.returncode != 0:
+            raise Refused(f"could not list {sha}: {tracked.stderr.strip()}")
+        for path in tracked.stdout.splitlines():
+            if path in files or (directories and path.startswith(directories)):
+                conflicts.add(path)
+    return sorted(conflicts)
+
+
+def cmd_measure(host: PiHost, report: Reporter, *, baseline: str, candidate: str,
+                expect_start: str, settle: float, duration: float, max_samples: int,
+                tool_commit: str, tool_sha256: str, audio_note: str,
+                install_signals: bool = True) -> int:
+    payload: dict[str, Any] = {"command": "measure-split"}
+    try:
+        _validate_check_args(["direct"], settle, duration, max_samples)
+        before = collect_status(host)
+        payload["status_before"] = before
+        if before["porcelain"] != []:
+            raise Refused(f"Pi checkout is not clean: {before['porcelain']}")
+        start_sha = _resolve(host, expect_start)
+        if not before["detached"] or before["head"] != start_sha:
+            raise Refused(f"Pi is at {before['head']}, expected detached {start_sha}")
+        if before["service_active"] != "active" or not before["healthz"]["ok"]:
+            raise Refused("service is not active and healthy before the measurement")
+        throttled = before["throttled"]
+        if throttled is None or throttled & THROTTLE_CURRENT_MASK:
+            raise Refused(f"throttle state not clean before the measurement: {throttled}")
+        # Read-only: may this user run the root /proc sampler (A-3)? Refuse now rather
+        # than fail the first run's sampler gate.
+        if host.run(["sudo", "-n", "-l", "/usr/bin/python3"]).returncode != 0:
+            raise Refused("sudo -n does not allow /usr/bin/python3 for the /proc sampler")
+        shas = {"baseline": _resolve(host, baseline), "candidate": _resolve(host, candidate)}
+        for name, sha in shas.items():
+            if sha != (baseline if name == "baseline" else candidate):
+                raise Refused(f"{name} must be a full commit id present on the Pi")
+        if shas["baseline"] == shas["candidate"]:
+            raise Refused("baseline and candidate are the same commit")
+        conflicts = ignored_tracked_conflicts(host, [*shas.values(), start_sha])
+        if conflicts:
+            raise Refused("ignored Pi files would be overwritten or removed by a"
+                          f" checkout: {conflicts[:10]}")
+    except Refused as exc:
+        payload["refused"] = str(exc)
+        report.line(f"refused: {exc}")
+        report.result(payload)
+        return EXIT_REFUSED
+
+    stamp = host.utc_stamp()
+    run_dir = Path(f"{RUN_DIR_PREFIX}{stamp}")
+    evidence_dir = host.evidence_root() / f"{MEASURE_EVIDENCE_PREFIX}{stamp}"
+    try:
+        evidence_dir.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        payload["refused"] = f"{evidence_dir} already exists; retry in a second"
+        report.line(f"refused: {payload['refused']}")
+        report.result(payload)
+        return EXIT_REFUSED
+    report.log_path = evidence_dir / "measure.log"
+    report.line(f"evidence  {evidence_dir}")
+    report.line(f"start     {start_sha} (restored unconditionally at the end)")
+    _write_json(evidence_dir / "status-before.json", before)
+    _write_json(evidence_dir / "plan.json", {
+        "baseline": shas["baseline"], "candidate": shas["candidate"],
+        "expect_start": start_sha, "settle": settle, "duration": duration,
+        "max_samples": max_samples, "sequence": MEASURE_SEQUENCE,
+        "tool_commit": tool_commit, "tool_sha256": tool_sha256,
+        "audio_note": audio_note, "sampler_interval": SAMPLER_INTERVAL_SECONDS,
+        "interpretations": MEASURE_INTERPRETATIONS,
+        "inherited_rgbmatrix_env": {
+            key: value for key, value in sorted(os.environ.items())
+            if key.startswith("RGBMATRIX_")
+        },
+    })
+
+    commands: dict[str, dict[str, Any]] = {}
+    first_launch: Optional[dict[str, Any]] = None
+
+    def write_commands() -> None:
+        _write_json(evidence_dir / "argv.json", {
+            "controller": first_launch,
+            "runs": {label: item["argv"] for label, item in commands.items()},
+        })
+        _write_json(evidence_dir / "env.json",
+                    {label: item["env"] for label, item in commands.items()})
+
+    child_timeout = settle + duration + CHILD_MARGIN_SECONDS
+    runs: list[dict[str, Any]] = []
+    evaluations: list[dict[str, Any]] = []
+    errors: list[str] = []
+    all_processes: list[tuple[int, int]] = []
+    python: Optional[str] = None
+    restored: Optional[str] = None
+    healthy = False
+    previous_handlers = _set_stop_signals(_raise_aborted_once) if install_signals else {}
+    previous_sigint = None
+    try:
+        try:
+            made = host.make_run_dir(run_dir)
+            if made.returncode != 0:
+                raise RuntimeError(f"could not create {run_dir}: {made.stderr.strip()}")
+            stopped = host.stop_service()
+            if stopped.returncode != 0:
+                raise RuntimeError(f"service stop failed: {stopped.stderr.strip()}")
+            report.line(f"stopped   {host.unit} for the whole sequence")
+            for label, topology, mode in MEASURE_SEQUENCE:
+                if report.stdout_broken:
+                    raise RuntimeError("the Mac side disconnected")
+                present = host.fft_processes() + host.multiprocessing_processes(python)
+                if present:
+                    raise RuntimeError(f"FFT process present before {label}: {present}")
+                sha = shas[topology]
+                with _Deferred(install_signals):
+                    porcelain = host.git("status", "--porcelain")
+                    if porcelain.returncode != 0 or porcelain.stdout.strip():
+                        raise RuntimeError(
+                            f"Pi tree not clean before {label}: {porcelain.stdout!r}")
+                    checked_out = host.git("checkout", "--detach", "--quiet", sha)
+                    if checked_out.returncode != 0:
+                        raise RuntimeError(
+                            f"checkout {sha} failed: {checked_out.stderr.strip()}")
+                    head = host.git("rev-parse", "HEAD").stdout.strip()
+                    clean = host.git("status", "--porcelain")
+                is_clean = clean.returncode == 0 and not clean.stdout.strip()
+                if head != sha or not is_clean:
+                    raise RuntimeError(f"Pi is at {head} (clean={is_clean}) before {label},"
+                                       f" expected clean {sha}")
+                launch = fft_launch(host)
+                if first_launch is None:
+                    first_launch = launch
+                    python = launch.get("python")
+                elif launch != first_launch:
+                    raise RuntimeError(f"controller argv differs at {label}: {launch}")
+                argv = [*launch["argv"],
+                        "--telemetry-out", str(run_dir / f"{label}.json"),
+                        "--telemetry-label", label,
+                        "--telemetry-source-id", sha,
+                        "--telemetry-settle", f"{settle:g}",
+                        "--telemetry-duration", f"{duration:g}",
+                        "--telemetry-max-samples", str(max_samples)]
+                env = measure_env(topology, mode, run_dir)
+                commands[label] = {"argv": argv, "env": env}
+                write_commands()
+                record: dict[str, Any] = {
+                    "label": label, "mode": mode, "topology": topology, "sha": sha,
+                    "head": head, "env": env, "clean": is_clean,
+                }
+                runs.append(record)
+                report.line(f"run       {label} ({topology} {sha[:7]}, {mode}), "
+                            f"about {settle + duration:g} s")
+                record.update(host.run_measured(
+                    argv, cwd=Path(launch["cwd"]), env=env, timeout=child_timeout,
+                    log_path=evidence_dir / f"{label}.log",
+                    samples_path=evidence_dir / f"{label}.proc.jsonl",
+                    sampler_log_path=evidence_dir / f"{label}.sampler.log",
+                ))
+                record["throttled"] = _parse_throttled(
+                    host.run(["vcgencmd", "get_throttled"]).stdout
+                )
+                record["temperature"] = (
+                    host.run(["vcgencmd", "measure_temp"]).stdout.strip() or None
+                )
+                collected = host.collect_run_dir(run_dir, evidence_dir)
+                if collected.returncode != 0:
+                    errors.append(f"evidence copy failed after {label}: "
+                                  f"{collected.stderr.strip()}")
+                evaluation = _evaluate_measured(host, record, evidence_dir, python,
+                                                all_processes, before["throttled"])
+                evaluations.append(evaluation)
+                report.line(f"done      {label}: exit {record['returncode']}, "
+                            f"failed gates: {', '.join(evaluation['failed_gates']) or 'none'}")
+                if evaluation["failed_gates"]:
+                    raise RuntimeError(f"{label} failed gates; stopping the sequence")
+        except (Exception, KeyboardInterrupt) as exc:
+            errors.append(f"measurement stopped early: {type(exc).__name__}: {exc}")
+        finally:
+            if install_signals:
+                _set_stop_signals(signal.SIG_IGN)
+                previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            # A run that never reached evaluation still left a sampled process tree.
+            evaluated = {item["label"] for item in evaluations}
+            for record in runs:
+                if record["label"] not in evaluated:
+                    try:
+                        _, samples = load_samples(
+                            evidence_dir / f"{record['label']}.proc.jsonl")
+                        all_processes.extend(
+                            (int(row["pid"]), int(row["start"]))
+                            for sample in samples for row in sample["procs"])
+                    except Exception as exc:  # cleanup must still restore
+                        errors.append(f"could not read {record['label']} samples: {exc!r}")
+            lingering = host.stop_survivors(all_processes)
+            if lingering:
+                errors.append("processes outlived their run: " + "; ".join(lingering))
+            leftovers = (host.fft_processes() + host.multiprocessing_processes(python)
+                         + host.surviving(all_processes))
+            porcelain = host.git("status", "--porcelain")
+            if porcelain.returncode != 0 or porcelain.stdout.strip():
+                errors.append(f"restore skipped: Pi tree not clean: {porcelain.stdout!r}")
+            else:
+                restored_out = host.git("checkout", "--detach", "--quiet", start_sha)
+                head_now = host.git("rev-parse", "HEAD").stdout.strip()
+                clean_now = host.git("status", "--porcelain")
+                if restored_out.returncode != 0:
+                    errors.append(f"restore checkout failed: {restored_out.stderr.strip()}")
+                elif head_now != start_sha or clean_now.returncode != 0 \
+                        or clean_now.stdout.strip():
+                    errors.append(f"restore checkout left {head_now} {clean_now.stdout!r}")
+                else:
+                    restored = start_sha
+            if leftovers:
+                errors.append("service not started: FFT process still running: "
+                              + "; ".join(leftovers))
+            elif restored != start_sha:
+                # Never start the service on the candidate or a broken tree (B1).
+                errors.append(f"service not started: Pi not restored to {start_sha}")
+            else:
+                started = host.start_service()
+                if started.returncode != 0:
+                    errors.append(f"service start failed: {started.stderr.strip()}")
+            healthy, body = wait_for_healthz(host)
+            report.line(f"healthz   {'ok' if healthy else 'FAIL'} ({body})")
+            collected = host.collect_run_dir(run_dir, evidence_dir)
+            if collected.returncode != 0:
+                errors.append(f"evidence copy failed: {collected.stderr.strip()}")
+            else:
+                removed = host.remove_run_dir(run_dir)
+                if removed.returncode != 0:
+                    errors.append(f"could not remove {run_dir}: {removed.stderr.strip()}")
+    finally:
+        _restore_signals(previous_handlers)
+        if previous_sigint is not None:
+            signal.signal(signal.SIGINT, previous_sigint)
+
+    after = collect_status(host)
+    _write_json(evidence_dir / "status-after.json", after)
+    if after["head"] != start_sha or after["porcelain"] != []:
+        errors.append(f"service restore: Pi is at {after['head']} {after['porcelain']},"
+                      f" expected clean {start_sha}")
+        restored = after["head"]
+    done = {item["label"] for item in evaluations}
+    for label, topology, mode in MEASURE_SEQUENCE:
+        if label not in done:
+            evaluations.append({"label": label, "mode": mode, "topology": topology,
+                                "skipped": True, "failed_gates": ["skipped"], "notes": []})
+    order = [label for label, _, _ in MEASURE_SEQUENCE]
+    evaluations.sort(key=lambda item: order.index(item["label"]))
+    _write_json(evidence_dir / "runs.json", evaluations)
+    try:
+        decision = decide(evaluations)
+    except Exception as exc:  # keep the evidence; never lose a sequence to a bug here
+        decision = {"decision": "incomplete", "reason": f"decision error: {exc!r}",
+                    "backends": {}}
+    context = {
+        "baseline": shas["baseline"], "candidate": shas["candidate"],
+        "tool_commit": tool_commit, "tool_sha256": tool_sha256, "settle": settle,
+        "duration": duration, "max_samples": max_samples, "stamp": stamp,
+        "audio_note": audio_note, "evidence_dir": str(evidence_dir),
+        "restored": restored, "healthy": healthy, "errors": errors,
+    }
+    markdown = measure_markdown(context, evaluations, decision)
+    (evidence_dir / "results.md").write_text(markdown, encoding="utf-8")
+    _write_json(evidence_dir / "decision.json", decision)
+    payload.update({
+        "evidence_dir": str(evidence_dir), "healthy": healthy, "restored": restored,
+        "errors": errors, "decision": decision["decision"],
+        "decision_reason": decision["reason"], "results_markdown": markdown,
+    })
+    report.result(payload)
+    report.log_path = None
+    _write_manifest(evidence_dir)
+    manifest_sha = hashlib.sha256((evidence_dir / "SHA256SUMS").read_bytes()).hexdigest()
+    report.line(f"manifest  {evidence_dir / 'SHA256SUMS'} sha256 {manifest_sha}")
+    if not healthy or restored != start_sha or any(
+            error.startswith(("service ", "restore ", "processes outlived"))
+            for error in errors):
+        return EXIT_OPERATION_FAILED
+    if errors or decision["decision"] in ("invalid", "incomplete"):
+        return EXIT_GATE_FAILED
+    return EXIT_OK
+
+
+def _evaluate_measured(host: PiHost, record: dict[str, Any], evidence_dir: Path,
+                       python: Optional[str], all_processes: list[tuple[int, int]],
+                       throttle_baseline: Optional[int]) -> dict[str, Any]:
+    label = record["label"]
+    try:
+        summary = json.loads((evidence_dir / f"{label}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        summary = None
+    try:
+        sequences: Optional[list[int]] = read_npz_uint64(
+            evidence_dir / f"{label}.npz", "analysis_sequences"
+        )
+    except (OSError, ValueError, KeyError, SyntaxError) as exc:
+        sequences = None
+        record["error"] = f"raw sequences unreadable: {exc}"
+    header, samples = load_samples(evidence_dir / f"{label}.proc.jsonl")
+    window = (
+        summary.get("start_wall_time") if isinstance(summary, dict) else None,
+        summary.get("end_wall_time") if isinstance(summary, dict) else None,
+    )
+    processes = summarize_processes(header, samples, window)
+    all_processes.extend(processes["processes"])
+    survivors = (host.stop_survivors(processes["processes"]) + host.fft_processes()
+                 + host.multiprocessing_processes(python))
+    return evaluate_measured_run(record, summary, sequences, processes, survivors,
+                                 throttle_baseline)
+
+
 # Entry point ----------------------------------------------------------------------
 
 
@@ -886,6 +1984,16 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--settle", type=float, required=True)
     check.add_argument("--duration", type=float, required=True)
     check.add_argument("--max-samples", type=int, required=True)
+    measure = sub.add_parser("measure-split")
+    measure.add_argument("baseline")
+    measure.add_argument("candidate")
+    measure.add_argument("--expect-start", required=True)
+    measure.add_argument("--settle", type=float, required=True)
+    measure.add_argument("--duration", type=float, required=True)
+    measure.add_argument("--max-samples", type=int, required=True)
+    measure.add_argument("--tool-commit", required=True)
+    measure.add_argument("--tool-sha256", required=True)
+    measure.add_argument("--audio-note", required=True)
     return parser
 
 
@@ -899,6 +2007,13 @@ def main(argv: Optional[Sequence[str]] = None,
         return cmd_status(host, report)
     if args.command == "checkout":
         return cmd_checkout(host, report, args.ref, args.expect_sha)
+    if args.command == "measure-split":
+        return cmd_measure(
+            host, report, baseline=args.baseline, candidate=args.candidate,
+            expect_start=args.expect_start, settle=args.settle, duration=args.duration,
+            max_samples=args.max_samples, tool_commit=args.tool_commit,
+            tool_sha256=args.tool_sha256, audio_note=args.audio_note,
+        )
     return cmd_check(
         host, report, sha=args.sha, modes=[m for m in args.modes.split(",") if m],
         settle=args.settle, duration=args.duration, max_samples=args.max_samples,
