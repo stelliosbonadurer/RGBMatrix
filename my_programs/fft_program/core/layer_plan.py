@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeAlias
+from typing import Any, TypeAlias
 
 import numpy as np  # type: ignore
 
 from core.analyzer_registry import (
+    AnalyzerRegistry,
     STANDARD_ANALYZER_ID,
     STANDARD_ANALYZER_TYPE,
     standard_analyzer_capabilities,
@@ -53,12 +54,6 @@ LayerRuntimeFactory: TypeAlias = Callable[
     [CompiledLayerDefinition, Any, str],
     "LayerRuntimeComponents",
 ]
-
-
-class AnalyzerResolver(Protocol):
-    """Startup-only lookup surface used while compiling a render plan."""
-
-    def resolve(self, definition: Any) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +240,7 @@ def _validate_components(
 
 def compile_ordered_layer_plan(
     plan: CompiledRuntimePlan,
-    analyzer_registry: AnalyzerResolver,
+    analyzer_registry: AnalyzerRegistry,
     factories: Mapping[str, LayerRuntimeFactory],
     *,
     begin_draw: Callable[[Any], None],
@@ -437,7 +432,7 @@ def compile_current_bars_graph(
 
 def compile_current_bars_layer_plan(
     graph: CompiledRuntimePlan,
-    analyzer_registry: AnalyzerResolver,
+    analyzer_registry: AnalyzerRegistry,
     *,
     visualizer: Any,
     settings: Any,

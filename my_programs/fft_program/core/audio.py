@@ -81,11 +81,7 @@ class _LatestAnalysisTransport:
             self.transport_drop_count += 1
             return None
 
-    def publish_claimed(
-        self,
-        epoch: int,
-        source_generation: int = 0,
-    ) -> bool:
+    def publish_claimed(self, epoch: int) -> bool:
         """Publish the completely filled slot if its worker epoch is still active."""
         with self._lock:
             index = self._writing_index
@@ -149,10 +145,7 @@ class AudioProcessor:
         audio_settings: AudioSettings,
         freq_settings: FrequencySettings,
         sensitivity_settings: SensitivitySettings,
-        num_bins: int,
-        *,
-        analysis_transport=None,
-        counter_mirror=None,
+        num_bins: int
     ):
         """
         Initialize audio processor.
@@ -184,12 +177,7 @@ class AudioProcessor:
         self._analysis_thread: Optional[threading.Thread] = None
         self._worker_failure: Optional[BaseException] = None
         self._worker_state: Optional[_WorkerAnalysisState] = None
-        self._analysis_transport = (
-            _LatestAnalysisTransport(num_bins)
-            if analysis_transport is None
-            else analysis_transport
-        )
-        self._counter_mirror = counter_mirror
+        self._analysis_transport = _LatestAnalysisTransport(num_bins)
         
         # The standard projection is validated now and compiled after setup learns
         # the device sample rate.  The hot path reads only ``active_plan``.
@@ -221,8 +209,6 @@ class AudioProcessor:
             raise RuntimeError(f"Audio device '{self.audio_settings.device}' not found: {e}")
         
         self.sample_rate = int(device_info['default_samplerate'])
-        if self._counter_mirror is not None:
-            self._counter_mirror.set_sample_rate(self.sample_rate)
         print(f"Using device: {device_info['name']} at {self.sample_rate} Hz")
         
         # Report frequency range
@@ -343,11 +329,6 @@ class AudioProcessor:
         destination = self._analysis_transport.claim_write()
         if destination is None:
             self.skipped_generation_count += 1
-            if self._counter_mirror is not None:
-                self._counter_mirror.update_analysis(
-                    self.last_analyzed_generation,
-                    self.skipped_generation_count,
-                )
             return False
 
         try:
@@ -362,16 +343,6 @@ class AudioProcessor:
             raise
 
         self.last_analyzed_generation = generation
-        if self._counter_mirror is not None:
-            self._counter_mirror.update_analysis(
-                self.last_analyzed_generation,
-                self.skipped_generation_count,
-            )
-        if getattr(self._analysis_transport, "records_source_generation", False):
-            return self._analysis_transport.publish_claimed(
-                state.epoch,
-                source_generation=generation,
-            )
         return self._analysis_transport.publish_claimed(state.epoch)
 
     def _analysis_worker(self) -> None:
@@ -385,10 +356,6 @@ class AudioProcessor:
                 self._process_latest_samples_once()
         except BaseException as exc:
             self.worker_failure_count += 1
-            if self._counter_mirror is not None:
-                self._counter_mirror.update_worker_failure(
-                    self.worker_failure_count,
-                )
             self._worker_failure = exc
             self._analysis_stop.set()
 
@@ -426,11 +393,6 @@ class AudioProcessor:
         if failure is not None:
             raise RuntimeError("analysis worker failed") from failure
 
-    def check_health(self) -> None:
-        """Raise if the asynchronous analyzer worker has failed."""
-
-        self._raise_worker_failure()
-
     def _audio_callback(self, indata, frames, time_info, status):
         """Copy and publish only the newest input block, then wake analysis."""
         samples = indata[:, self.audio_settings.channel].copy()
@@ -440,11 +402,6 @@ class AudioProcessor:
             if status:
                 self.callback_status_count += 1
             self.have_data = True
-            if self._counter_mirror is not None:
-                self._counter_mirror.update_callback(
-                    self.sample_generation,
-                    self.callback_status_count,
-                )
         self._analysis_wake.set()
     
     def start(self) -> None:
