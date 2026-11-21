@@ -63,7 +63,12 @@ def standard_analyzer_definition(
         result_shape=(num_bins,),
         result_dtype="float32",
         settings={
+            "source": audio_settings.source_id,
             "device": audio_settings.device,
+            "resolved_device": audio_settings.resolved_device,
+            "sample_rate": audio_settings.resolved_sample_rate,
+            "capture_channels": audio_settings.capture_channels,
+            "capture_dtype": audio_settings.capture_dtype,
             "channel": audio_settings.channel,
             "block_size": audio_settings.block_size,
             "fft_size": audio_settings.fft_size,

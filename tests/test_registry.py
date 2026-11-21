@@ -67,6 +67,18 @@ class RegistryTests(unittest.TestCase):
         first["theme"] = "warm"
         self.assertEqual(second["theme"], "ocean")
 
+    def test_fft_audio_source_is_public_bounded_and_defaults_to_usb(self) -> None:
+        fft = self.registry.get("fft")
+        source = fft.parameter("audio_source")
+        self.assertEqual(source.default, "usb-mic")
+        self.assertEqual(source.choices, ("usb-mic", "bluetooth"))
+        values = fft.validate_parameters({"audio_source": "bluetooth"})
+        argv = fft.build_argv("/fixed/python", values)
+        index = argv.index("--audio-source")
+        self.assertEqual(argv[index + 1], "bluetooth")
+        with self.assertRaises(ValidationError):
+            fft.validate_parameters({"audio_source": "phone-name"})
+
     def test_argv_is_fixed_and_never_uses_a_shell_string(self) -> None:
         sorts = self.registry.get("sorts")
         values = sorts.validate_parameters({"mode": "single", "sort": "bubble"})

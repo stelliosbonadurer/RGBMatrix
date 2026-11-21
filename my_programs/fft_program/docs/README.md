@@ -43,6 +43,7 @@ python main.py --list-themes
 - [FFT Math Explained](fft_math_explained.md) - Mathematical foundations
 - [Optimization Notes](optimization_notes.md) - Performance lessons learned
 - [Troubleshooting](troubleshooting.md) - Common issues and solutions
+- [Bluetooth Audio](bluetooth_audio.md) - Install, pair, operate, verify, and remove the phone-input bridge
 
 ## Features
 

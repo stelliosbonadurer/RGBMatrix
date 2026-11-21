@@ -208,7 +208,17 @@ class AudioProcessor:
         except ValueError as e:
             raise RuntimeError(f"Audio device '{self.audio_settings.device}' not found: {e}")
         
-        self.sample_rate = int(device_info['default_samplerate'])
+        detected_sample_rate = int(device_info['default_samplerate'])
+        resolved_sample_rate = self.audio_settings.resolved_sample_rate
+        if (
+            resolved_sample_rate is not None
+            and detected_sample_rate != resolved_sample_rate
+        ):
+            raise RuntimeError(
+                "Audio device sample rate changed after source resolution: "
+                f"{resolved_sample_rate} -> {detected_sample_rate}"
+            )
+        self.sample_rate = detected_sample_rate
         print(f"Using device: {device_info['name']} at {self.sample_rate} Hz")
         
         # Report frequency range
@@ -410,10 +420,10 @@ class AudioProcessor:
         try:
             self._stream = sd.InputStream(
                 device=self.audio_settings.device,
-                channels=1,
+                channels=self.audio_settings.capture_channels,
                 samplerate=self.sample_rate,
                 blocksize=self.audio_settings.block_size,
-                dtype="float32",
+                dtype=self.audio_settings.capture_dtype,
                 callback=self._audio_callback
             )
             self._stream.start()

@@ -28,6 +28,10 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertEqual(config.matrix_defaults["led_cols"], 64)
         self.assertEqual(config.matrix_defaults["led_slowdown_gpio"], 2)
         self.assertEqual(config.visualization_defaults["fft"]["theme"], "ocean")
+        self.assertEqual(
+            config.visualization_defaults["fft"]["audio_source"],
+            "usb-mic",
+        )
         self.assertEqual(config.visualization_defaults["master_theorem"]["a"], 2)
         self.assertFalse(config.visualization_defaults["master_theorem"]["animate"])
         self.assertEqual(config.visualization_defaults["graph_traversal"]["e"], 0)

@@ -4,6 +4,11 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.audio import AudioProcessor, FFTData
+from core.audio_source import (
+    AUDIO_SOURCE_IDS,
+    AudioSourceResolutionError,
+    resolve_audio_source,
+)
 from core.analyzer_registry import (
     AnalyzerRegistry,
     AnalyzerRegistryError,
@@ -39,7 +44,9 @@ from core.matrix_app import MatrixApp
 
 __all__ = [
     'AudioProcessor',
+    'AUDIO_SOURCE_IDS',
     'AudioCapture',
+    'AudioSourceResolutionError',
     'ActiveLayerPlan',
     'AnalyzerRegistry',
     'AnalyzerRegistryError',
@@ -65,5 +72,6 @@ __all__ = [
     'current_bars_runtime_definition',
     'current_bars_settings_from_runtime',
     'compile_pillow_bulk_bars_output',
+    'resolve_audio_source',
     'MatrixApp',
 ]

@@ -145,6 +145,26 @@ class RecordingRuntime:
 
 
 class AnalyzerRegistryCompilationTests(unittest.TestCase):
+    def test_standard_identity_includes_source_and_effective_capture_format(self) -> None:
+        audio, frequency, sensitivity = _settings()
+        audio.source_id = "bluetooth"
+        audio.device = "hw:10,1"
+        audio.resolved_device = "Loopback capture"
+        audio.resolved_sample_rate = 44_100
+        definition = standard_analyzer_definition(
+            "music",
+            audio_settings=audio,
+            frequency_settings=frequency,
+            sensitivity_settings=sensitivity,
+            num_bins=64,
+        )
+
+        self.assertEqual(definition.settings["source"], "bluetooth")
+        self.assertEqual(definition.settings["resolved_device"], "Loopback capture")
+        self.assertEqual(definition.settings["sample_rate"], 44_100)
+        self.assertEqual(definition.settings["capture_channels"], 1)
+        self.assertEqual(definition.settings["capture_dtype"], "float32")
+
     def test_equivalent_layer_references_construct_and_resolve_one_runtime(self) -> None:
         plan = _alias_plan()
         runtime = RecordingRuntime()

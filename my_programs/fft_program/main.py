@@ -49,6 +49,7 @@ from core import (
     AnalyzerRegistry,
     AudioCapture,
     AudioProcessor,
+    AudioSourceResolutionError,
     DIRECT_OUTPUT_PATH,
     MatrixApp,
     OUTPUT_PATH_ENVIRONMENT,
@@ -57,6 +58,7 @@ from core import (
     current_bars_runtime_capabilities,
     current_bars_runtime_definition,
     current_bars_settings_from_runtime,
+    resolve_audio_source,
 )
 from themes import get_theme, list_themes
 from visualizers import get_visualizer
@@ -308,6 +310,7 @@ def main():
     # uses None for visual settings so a supplied JSON settings file remains the
     # source of truth unless the user explicitly passes an override.
     direct_defaults = {
+        "audio_source": "usb-mic",
         "theme": None,
         "gradient": None,
         "overflow": None,
@@ -347,6 +350,14 @@ def main():
     # Load settings from file or use defaults
     settings_path = getattr(args, 'settings', None)
     settings = load_settings(settings_path)
+
+    # Resolve and validate the selected endpoint before the child initializes the
+    # matrix. A bad Bluetooth selection therefore cannot take display ownership or
+    # silently fall back to the microphone.
+    try:
+        settings.audio = resolve_audio_source(args.audio_source, settings.audio)
+    except AudioSourceResolutionError as exc:
+        app.parser.error(str(exc))
     
     # Override settings from command line if provided
     if args.theme:
