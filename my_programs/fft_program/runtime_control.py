@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import math
 import time
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional
 
 from themes import get_theme, list_themes
 from matrix_controller.runtime_transport import RuntimeControlError as TransportRuntimeControlError
@@ -45,6 +45,51 @@ NUMERIC_CONTROLS = {
     "settings.peak_fall_speed": ("Peak fall speed", "peaks", 0.0, 1.0, 0.01, "live"),
     "settings.peak_hold_frames": ("Peak hold frames", "peaks", 0, 600, 1, "live"),
 }
+MAX_DYNAMIC_CYCLE_SPEED = 5.0
+
+
+def bounded_dynamic_cycle_speed(value: Any) -> float | None:
+    """Clamp a dynamic-theme speed into the advertised 0-5 control range.
+
+    Live adjustments and restored state use this so neither can leave the theme
+    outside the range that ``dynamic.cycle_speed`` and the structural layer
+    descriptor accept. Returns ``None`` for a non-numeric or non-finite value.
+    """
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    if not math.isfinite(number):
+        return None
+    return min(MAX_DYNAMIC_CYCLE_SPEED, max(0.0, number))
+
+
+PRESENTATION_COMMAND_PATHS = frozenset({
+    "visualizer.theme",
+    "visualizer.gradient",
+    "visualizer.overflow",
+    "visualizer.bars",
+    "visualizer.full",
+    "settings.shadow_enabled",
+    "settings.peak_enabled",
+    "settings.peak_color_mode",
+    "settings.sensitivity_scalar",
+    "settings.smoothing_rise",
+    "settings.smoothing_fall",
+    "settings.overflow_multiplier",
+    "settings.peak_fall_speed",
+    "settings.peak_hold_frames",
+    "theme.next",
+    "theme.previous",
+    "dynamic.adjust_speed",
+    "dynamic.cycle_speed",
+    "dynamic.freeze",
+    "dynamic.frozen",
+    "dynamic.reseed",
+})
 
 
 class RuntimeControlError(ValueError):
@@ -130,6 +175,7 @@ class FftRuntimeController:
         unavailable_command_paths: FrozenSet[str] = frozenset(),
     ):
         self.settings = settings
+        self.presentation_settings = settings
         self.visualizer = visualizer
         self.audio = audio
         self.theme_cycler = theme_cycler
@@ -138,7 +184,42 @@ class FftRuntimeController:
         self.run_id = str(run_id)
         self.visualization_id = str(visualization_id)
         self.unavailable_command_paths = unavailable_command_paths
+        self._structure_snapshot_provider: Callable[[], Dict[str, Any]] | None = None
         self.revision = 0
+
+    def bind_structure_snapshot(
+        self,
+        provider: Callable[[], Dict[str, Any]],
+    ) -> None:
+        """Attach the render-owned structural snapshot provider."""
+
+        if not callable(provider):
+            raise TypeError("structure snapshot provider must be callable")
+        self._structure_snapshot_provider = provider
+
+    def rebind_presentation(
+        self,
+        presentation: Any | None,
+        *,
+        unavailable_command_paths: FrozenSet[str],
+    ) -> None:
+        """Atomically retarget legacy controls to stable ID ``current-bars``."""
+
+        if presentation is not None:
+            self.presentation_settings = presentation.settings
+            self.visualizer = presentation.visualizer
+            self.theme_cycler = presentation.theme_cycler
+        self.unavailable_command_paths = unavailable_command_paths
+
+    def current_presentation_settings(self) -> Dict[str, Any]:
+        """Capture the legacy target's complete structural presentation state."""
+
+        from core.layer_plan import current_bars_settings_from_runtime
+
+        return current_bars_settings_from_runtime(
+            self.presentation_settings,
+            self.visualizer,
+        )
 
     # ------------------------------------------------------------------
     # Public protocol entry points
@@ -154,7 +235,7 @@ class FftRuntimeController:
             "zoom_preset_index": self.settings.frequency.zoom_preset_index,
             "zoom_presets": list(self.settings.frequency.zoom_presets),
         }
-        return {
+        snapshot = {
             "protocol_version": PROTOCOL_VERSION,
             "run_id": self.run_id,
             "visualization_id": self.visualization_id,
@@ -163,6 +244,9 @@ class FftRuntimeController:
             "state": _json_safe(state),
             "controls": self.control_schema(),
         }
+        if self._structure_snapshot_provider is not None:
+            snapshot["structure"] = _json_safe(self._structure_snapshot_provider())
+        return snapshot
 
     def apply_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and apply one IPC-shaped request at a frame boundary.
@@ -259,6 +343,11 @@ class FftRuntimeController:
             raise TransportRuntimeControlError(
                 str(error.get("code", "runtime_error")),
                 str(error.get("message", "runtime command rejected")),
+                path=(
+                    str(error["path"])
+                    if isinstance(error.get("path"), str)
+                    else None
+                ),
             )
         return response.get("snapshot", response)
 
@@ -372,16 +461,16 @@ class FftRuntimeController:
     def control_schema(self) -> List[Dict[str, Any]]:
         """Describe the initial live controls for a schema-driven UI."""
         controls: List[Dict[str, Any]] = []
+        presentation = self.presentation_settings
         for path, label, value, value_type, group in (
             ("visualizer.theme", "Theme", self._active_theme_name(), "choice", "theme"),
             ("visualizer.gradient", "Gradient", self.visualizer.gradient_mode, "boolean", "visualizer"),
             ("visualizer.overflow", "Overflow", self.visualizer.overflow_mode, "boolean", "visualizer"),
             ("visualizer.bars", "Bars", self.visualizer.bars_enabled, "boolean", "visualizer"),
             ("visualizer.full", "Full mode", getattr(self.visualizer, "full_mode", False), "boolean", "visualizer"),
-            ("visualizer.debug", "Debug mode", getattr(self.visualizer, "debug_mode", False), "boolean", "visualizer"),
-            ("settings.shadow_enabled", "Shadows", bool(self.settings.shadow.enabled), "boolean", "settings"),
-            ("settings.peak_enabled", "Peaks", bool(self.settings.peak.enabled), "boolean", "settings"),
-            ("settings.peak_color_mode", "Peak color", self.settings.peak.color_mode, "choice", "settings"),
+            ("settings.shadow_enabled", "Shadows", bool(presentation.shadow.enabled), "boolean", "settings"),
+            ("settings.peak_enabled", "Peaks", bool(presentation.peak.enabled), "boolean", "settings"),
+            ("settings.peak_color_mode", "Peak color", presentation.peak.color_mode, "choice", "settings"),
             ("settings.zoom_preset_index", "Zoom preset", self.settings.frequency.zoom_preset_index, "integer", "frequency"),
         ):
             descriptor: Dict[str, Any] = {
@@ -392,6 +481,7 @@ class FftRuntimeController:
                 "group": group,
                 "apply_mode": "rebuild" if path == "settings.zoom_preset_index" else "live",
                 "value": _json_safe(value),
+                "available": path not in self.unavailable_command_paths,
             }
             if path == "settings.peak_color_mode":
                 descriptor["choices"] = ["white", "bar", "contrast", "peak"]
@@ -411,6 +501,7 @@ class FftRuntimeController:
                 "group": group,
                 "apply_mode": apply_mode,
                 "value": numeric_values[path],
+                "available": path not in self.unavailable_command_paths,
                 "min": minimum,
                 "max": maximum,
                 "step": step,
@@ -418,8 +509,18 @@ class FftRuntimeController:
         # Actions are schema entries as well, so adding controls to another
         # visualization does not require special-purpose browser code.
         controls.extend((
-            self._action_descriptor("theme.previous", "Previous theme", "theme"),
-            self._action_descriptor("theme.next", "Next theme", "theme"),
+            self._action_descriptor(
+                "theme.previous",
+                "Previous theme",
+                "theme",
+                available="theme.previous" not in self.unavailable_command_paths,
+            ),
+            self._action_descriptor(
+                "theme.next",
+                "Next theme",
+                "theme",
+                available="theme.next" not in self.unavailable_command_paths,
+            ),
         ))
         active_theme = self._active_theme()
         if hasattr(active_theme, "adjust_cycle_speed"):
@@ -432,6 +533,7 @@ class FftRuntimeController:
                     "group": "dynamic theme",
                     "apply_mode": "live",
                     "value": float(getattr(active_theme, "cycle_speed", 0.0)),
+                    "available": "dynamic.cycle_speed" not in self.unavailable_command_paths,
                     "min": 0.0,
                     "max": 5.0,
                     "step": 0.01,
@@ -444,9 +546,13 @@ class FftRuntimeController:
                     "group": "dynamic theme",
                     "apply_mode": "live",
                     "value": bool(getattr(active_theme, "frozen", False)),
+                    "available": "dynamic.frozen" not in self.unavailable_command_paths,
                 },
                 self._action_descriptor(
-                    "dynamic.reseed", "Reseed colors", "dynamic theme"
+                    "dynamic.reseed",
+                    "Reseed colors",
+                    "dynamic theme",
+                    available="dynamic.reseed" not in self.unavailable_command_paths,
                 ),
             ))
         return controls
@@ -477,15 +583,16 @@ class FftRuntimeController:
 
     def runtime_state(self) -> Dict[str, Any]:
         """Return the legacy persisted-state shape using current live objects."""
+        presentation = self.presentation_settings
         theme = getattr(self.visualizer, "theme", None)
-        single_theme_name = getattr(theme, "name", getattr(self.settings.color, "theme", "ocean"))
+        single_theme_name = getattr(theme, "name", getattr(presentation.color, "theme", "ocean"))
         return _json_safe({
             "version": 1,
             "timestamp": time.time(),
             "settings": {
-                "shadow_enabled": bool(self.settings.shadow.enabled),
-                "peak_enabled": bool(self.settings.peak.enabled),
-                "peak_color_mode": self.settings.peak.color_mode,
+                "shadow_enabled": bool(presentation.shadow.enabled),
+                "peak_enabled": bool(presentation.peak.enabled),
+                "peak_color_mode": presentation.peak.color_mode,
                 "zoom_preset_index": self.settings.frequency.zoom_preset_index,
                 **{
                     path.removeprefix("settings."): value
@@ -497,7 +604,6 @@ class FftRuntimeController:
                 "overflow_mode": bool(getattr(self.visualizer, "overflow_mode", False)),
                 "bars_enabled": bool(getattr(self.visualizer, "bars_enabled", True)),
                 "full_mode": bool(getattr(self.visualizer, "full_mode", False)),
-                "debug_mode": bool(getattr(self.visualizer, "debug_mode", False)),
                 "single_theme_name": single_theme_name,
                 "single_dynamic": _dynamic_state(theme),
             },
@@ -547,7 +653,7 @@ class FftRuntimeController:
     def _validate_set(self, path: str, value: Any) -> None:
         boolean_paths = {
             "visualizer.gradient", "visualizer.overflow", "visualizer.bars",
-            "visualizer.full", "visualizer.debug", "settings.shadow_enabled",
+            "visualizer.full", "settings.shadow_enabled",
             "settings.peak_enabled",
             "dynamic.frozen",
         }
@@ -595,7 +701,7 @@ class FftRuntimeController:
                 isinstance(value, bool)
                 or not isinstance(value, (int, float))
                 or not math.isfinite(float(value))
-                or not 0 <= float(value) <= 5
+                or not 0 <= float(value) <= MAX_DYNAMIC_CYCLE_SPEED
             ):
                 raise RuntimeControlError(
                     "invalid_value",
@@ -642,6 +748,11 @@ class FftRuntimeController:
             if not hasattr(theme, "adjust_cycle_speed"):
                 raise RuntimeControlError("unavailable", "active theme is not dynamic", path=command.path)
             theme.adjust_cycle_speed(args["delta"])
+            # The delta is bounded but the sum is not; keep the result inside the
+            # range later structural captures must validate.
+            bounded = bounded_dynamic_cycle_speed(theme.cycle_speed)
+            if bounded is not None:
+                theme.cycle_speed = bounded
         elif command.path == "dynamic.reseed":
             theme = self._active_theme()
             if not hasattr(theme, "reseed_start_hue"):
@@ -668,12 +779,16 @@ class FftRuntimeController:
             self.visualizer.bars_enabled = value
         elif path == "visualizer.full":
             self.visualizer.full_mode = value
-        elif path == "visualizer.debug":
-            self.visualizer.debug_mode = value
         elif path == "visualizer.theme":
-            self._set_theme(get_theme(value, brightness_boost=self.settings.color.brightness_boost), value)
+            self._set_theme(
+                get_theme(
+                    value,
+                    brightness_boost=self.presentation_settings.color.brightness_boost,
+                ),
+                value,
+            )
         elif path == "settings.shadow_enabled":
-            self.settings.shadow.enabled = value
+            self.presentation_settings.shadow.enabled = value
             if value:
                 try:
                     import numpy as np  # type: ignore
@@ -691,9 +806,9 @@ class FftRuntimeController:
                 self.visualizer.shadow_buffer = None
                 self.visualizer.shadow_colors = None
         elif path == "settings.peak_enabled":
-            self.settings.peak.enabled = value
+            self.presentation_settings.peak.enabled = value
         elif path == "settings.peak_color_mode":
-            self.settings.peak.color_mode = value
+            self.presentation_settings.peak.color_mode = value
         elif path == "settings.zoom_preset_index":
             self.settings.frequency.zoom_preset_index = value
             if rebuild_analysis:
@@ -721,8 +836,7 @@ class FftRuntimeController:
             "r": RuntimeCommand("action", "zoom.next"),
             "R": RuntimeCommand("action", "zoom.previous"),
             "f": RuntimeCommand("set", "visualizer.full", not bool(getattr(self.visualizer, "full_mode", False))),
-            "d": RuntimeCommand("set", "visualizer.debug", not bool(getattr(self.visualizer, "debug_mode", False))),
-            "s": RuntimeCommand("set", "settings.shadow_enabled", not bool(self.settings.shadow.enabled)),
+            "s": RuntimeCommand("set", "settings.shadow_enabled", not bool(self.presentation_settings.shadow.enabled)),
             "P": RuntimeCommand("set", "settings.peak_color_mode", self._next_peak_mode()),
             "[": RuntimeCommand("action", "dynamic.adjust_speed", args={"delta": -0.01}),
             "]": RuntimeCommand("action", "dynamic.adjust_speed", args={"delta": 0.01}),
@@ -738,7 +852,7 @@ class FftRuntimeController:
         if key == "b":
             return RuntimeCommand("set", "visualizer.bars", not bool(self.visualizer.bars_enabled))
         if key == "p":
-            return RuntimeCommand("set", "settings.peak_enabled", not bool(self.settings.peak.enabled))
+            return RuntimeCommand("set", "settings.peak_enabled", not bool(self.presentation_settings.peak.enabled))
         return None
 
     def _key_message(self, key: str) -> str:
@@ -746,12 +860,11 @@ class FftRuntimeController:
             return f"Theme: {self.theme_cycler.current_theme_name}"
         if key in "rR":
             return f"Zoom preset: {self.settings.frequency.active_min_freq} - {self.settings.frequency.active_max_freq} Hz"
-        labels = {"g": "Gradient", "o": "Overflow", "b": "Bars", "s": "Shadow", "p": "Peak", "f": "Full", "d": "Debug"}
+        labels = {"g": "Gradient", "o": "Overflow", "b": "Bars", "s": "Shadow", "p": "Peak", "f": "Full"}
         if key in labels:
-            if key == "s": value = self.settings.shadow.enabled
-            elif key == "p": value = self.settings.peak.enabled
+            if key == "s": value = self.presentation_settings.shadow.enabled
+            elif key == "p": value = self.presentation_settings.peak.enabled
             elif key == "f": value = self.visualizer.full_mode
-            elif key == "d": value = self.visualizer.debug_mode
             else: value = getattr(self.visualizer, {"g": "gradient_mode", "o": "overflow_mode", "b": "bars_enabled"}[key])
             return f"{labels[key]}: {'ON' if value else 'OFF'}"
         return f"Applied {key}"
@@ -763,17 +876,18 @@ class FftRuntimeController:
         return self.visualizer.theme
 
     def _numeric_values(self) -> Dict[str, Any]:
+        presentation = self.presentation_settings
         return {
             "settings.noise_floor": self.settings.sensitivity.noise_floor,
             "settings.low_freq_weight": self.settings.sensitivity.low_freq_weight,
             "settings.high_freq_weight": self.settings.sensitivity.high_freq_weight,
             "settings.silence_threshold": self.settings.sensitivity.silence_threshold,
-            "settings.sensitivity_scalar": self.settings.scaling.sensitivity_scalar,
-            "settings.smoothing_rise": self.settings.smoothing.rise,
-            "settings.smoothing_fall": self.settings.smoothing.fall,
-            "settings.overflow_multiplier": self.settings.overflow.multiplier,
-            "settings.peak_fall_speed": self.settings.peak.fall_speed,
-            "settings.peak_hold_frames": self.settings.peak.hold_frames,
+            "settings.sensitivity_scalar": presentation.scaling.sensitivity_scalar,
+            "settings.smoothing_rise": presentation.smoothing.rise,
+            "settings.smoothing_fall": presentation.smoothing.fall,
+            "settings.overflow_multiplier": presentation.overflow.multiplier,
+            "settings.peak_fall_speed": presentation.peak.fall_speed,
+            "settings.peak_hold_frames": presentation.peak.hold_frames,
         }
 
     def _apply_numeric_setting(
@@ -788,12 +902,12 @@ class FftRuntimeController:
             "settings.low_freq_weight": (self.settings.sensitivity, "low_freq_weight"),
             "settings.high_freq_weight": (self.settings.sensitivity, "high_freq_weight"),
             "settings.silence_threshold": (self.settings.sensitivity, "silence_threshold"),
-            "settings.sensitivity_scalar": (self.settings.scaling, "sensitivity_scalar"),
-            "settings.smoothing_rise": (self.settings.smoothing, "rise"),
-            "settings.smoothing_fall": (self.settings.smoothing, "fall"),
-            "settings.overflow_multiplier": (self.settings.overflow, "multiplier"),
-            "settings.peak_fall_speed": (self.settings.peak, "fall_speed"),
-            "settings.peak_hold_frames": (self.settings.peak, "hold_frames"),
+            "settings.sensitivity_scalar": (self.presentation_settings.scaling, "sensitivity_scalar"),
+            "settings.smoothing_rise": (self.presentation_settings.smoothing, "rise"),
+            "settings.smoothing_fall": (self.presentation_settings.smoothing, "fall"),
+            "settings.overflow_multiplier": (self.presentation_settings.overflow, "multiplier"),
+            "settings.peak_fall_speed": (self.presentation_settings.peak, "fall_speed"),
+            "settings.peak_hold_frames": (self.presentation_settings.peak, "hold_frames"),
         }
         target, attribute = target_and_attr[path]
         setattr(target, attribute, value)
@@ -809,13 +923,13 @@ class FftRuntimeController:
             getattr(
                 getattr(self.visualizer, "theme", None),
                 "name",
-                self.settings.color.theme,
+                self.presentation_settings.color.theme,
             )
         )
 
     def _set_theme(self, theme: Any, name: str) -> None:
         self.visualizer.set_theme(theme)
-        self.settings.color.theme = name
+        self.presentation_settings.color.theme = name
         if name in getattr(self.theme_cycler, "themes", ()):
             self.theme_cycler.current_index = self.theme_cycler.themes.index(name)
 
@@ -825,4 +939,4 @@ class FftRuntimeController:
 
     def _next_peak_mode(self) -> str:
         modes = ["white", "bar", "contrast", "peak"]
-        return modes[(modes.index(self.settings.peak.color_mode) + 1) % len(modes)]
+        return modes[(modes.index(self.presentation_settings.peak.color_mode) + 1) % len(modes)]

@@ -70,7 +70,6 @@ def _qualification_visualizer() -> BarsUnifiedVisualizer:
     visualizer.gradient_mode = False
     visualizer.bars_enabled = True
     visualizer.full_mode = False
-    visualizer.debug_mode = False
     return visualizer
 
 
@@ -245,7 +244,6 @@ class PillowBulkBarsOutputTests(unittest.TestCase):
                 "theme.next",
                 "theme.previous",
                 "visualizer.bars",
-                "visualizer.debug",
                 "visualizer.full",
                 "visualizer.gradient",
                 "visualizer.overflow",
@@ -295,9 +293,6 @@ class PillowBulkBarsCompilationTests(unittest.TestCase):
                 visualizer, "bars_enabled", False
             ),
             "full mode": lambda visualizer: setattr(visualizer, "full_mode", True),
-            "debug mode": lambda visualizer: setattr(
-                visualizer, "debug_mode", True
-            ),
         }
 
         for name, mutate in cases.items():

@@ -103,7 +103,6 @@ class FakeVisualizer:
         self.overflow_mode = True
         self.bars_enabled = True
         self.full_mode = False
-        self.debug_mode = False
         self.shadow_buffer = None
         self.shadow_colors = None
 

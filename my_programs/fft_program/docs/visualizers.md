@@ -12,7 +12,6 @@ The unified `bars` visualizer supports these toggleable modes:
 | `o` | Overflow | ON = bars can exceed height with layered colors, OFF = clamped to height |
 | `b` | Bars | ON = show bars, OFF = show only peaks |
 | `f` | Full | ON = entire screen lit with crossfade at bar height |
-| `d` | Debug | ON = static gradient test pattern |
 
 ## Mode Combinations
 

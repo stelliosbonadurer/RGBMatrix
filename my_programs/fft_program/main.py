@@ -52,8 +52,11 @@ from core import (
     DIRECT_OUTPUT_PATH,
     MatrixApp,
     OUTPUT_PATH_ENVIRONMENT,
-    compile_current_bars_graph,
     compile_current_bars_layer_plan,
+    compile_runtime_graph,
+    current_bars_runtime_capabilities,
+    current_bars_runtime_definition,
+    current_bars_settings_from_runtime,
 )
 from themes import get_theme, list_themes
 from visualizers import get_visualizer
@@ -62,7 +65,8 @@ from matrix_controller.runtime_transport import (
     FrameBoundaryRuntimeBridge,
     RuntimeControlClient,
 )
-from runtime_control import FftRuntimeController
+from runtime_control import FftRuntimeController, bounded_dynamic_cycle_speed
+from structural_control import StructuralRuntimeCoordinator
 from core.telemetry import (
     TelemetryConfigurationError,
     add_telemetry_arguments,
@@ -108,6 +112,10 @@ def _apply_dynamic_theme_state(theme, dynamic_state: dict) -> None:
 
     for key in ('cycle_speed', 'saturation', 'value', 'column_spread', 'height_spread'):
         value = dynamic_state.get(key)
+        if key == 'cycle_speed' and value is not None:
+            # Clamp a saved speed into the control range so a stale state file
+            # cannot make the startup layer settings fail validation.
+            value = bounded_dynamic_cycle_speed(value)
         if value is not None and hasattr(theme, key):
             setattr(theme, key, value)
 
@@ -285,9 +293,8 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[c] Reseed dynamic start color")
     print(f"[x] Freeze/unfreeze dynamic animation")
 
-    print(f"\nAdvanced Visual Test Modes:")
+    print(f"\nAdvanced Visual Mode:")
     print(f"[f] Toggle full mode (full screen with crossfade)")
-    print(f"[d] Toggle debug mode (static gradient test)")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
 
@@ -413,26 +420,6 @@ def main():
     
     # Initialize components
     try:
-        compiled_graph = compile_current_bars_graph(
-            audio_settings=settings.audio,
-            frequency_settings=settings.frequency,
-            sensitivity_settings=settings.sensitivity,
-            num_bins=app.width,
-            output_backend=output_path,
-        )
-        analyzer_registry = AnalyzerRegistry(
-            compiled_graph,
-            {
-                compiled_graph.analyzers[0].analyzer_type: lambda _definition: AudioProcessor(
-                    audio_settings=settings.audio,
-                    freq_settings=settings.frequency,
-                    sensitivity_settings=settings.sensitivity,
-                    num_bins=app.width,
-                )
-            },
-        )
-        capture: AudioCapture = analyzer_registry
-        
         # Visualizer
         visualizer = get_visualizer(
             visualizer_name,
@@ -467,7 +454,7 @@ def main():
                 settings.peak.color_mode = persisted_settings['peak_color_mode']
 
             # Global/single-mode visualizer flags
-            for attr in ('gradient_mode', 'overflow_mode', 'bars_enabled', 'full_mode', 'debug_mode'):
+            for attr in ('gradient_mode', 'overflow_mode', 'bars_enabled', 'full_mode'):
                 if attr in persisted_visualizer and hasattr(visualizer, attr):
                     setattr(visualizer, attr, bool(persisted_visualizer[attr]))
 
@@ -498,6 +485,33 @@ def main():
             apply_persisted_runtime_state(prior_state)
             print(f"Reloaded prior runtime state from: {RUNTIME_STATE_PATH}")
 
+        initial_layer_settings = current_bars_settings_from_runtime(
+            settings,
+            visualizer,
+        )
+        initial_definition = current_bars_runtime_definition(
+            audio_settings=settings.audio,
+            frequency_settings=settings.frequency,
+            sensitivity_settings=settings.sensitivity,
+            num_bins=app.width,
+            output_backend=output_path,
+            layer_settings=initial_layer_settings,
+        )
+        capabilities = current_bars_runtime_capabilities()
+        compiled_graph = compile_runtime_graph(initial_definition, capabilities)
+        analyzer_registry = AnalyzerRegistry(
+            compiled_graph,
+            {
+                compiled_graph.analyzers[0].analyzer_type: lambda _definition: AudioProcessor(
+                    audio_settings=settings.audio,
+                    freq_settings=settings.frequency,
+                    sensitivity_settings=settings.sensitivity,
+                    num_bins=app.width,
+                )
+            },
+        )
+        capture: AudioCapture = analyzer_registry
+
         # Compile the complete current bars layer and selected output executor once.
         # The layer owns scaling, peaks, visual state, and backend execution; the
         # frame loop retains only direct plan calls and the existing NumPy lease.
@@ -508,6 +522,7 @@ def main():
             settings=settings,
             width=app.width,
             height=app.height,
+            theme_cycler=theme_cycler,
         )
         active_layer_plan = ActiveLayerPlan(initial_layer_plan)
         audio = cast(AudioProcessor, initial_layer_plan.primary_analyzer)
@@ -530,6 +545,25 @@ def main():
             max_pending=32,
             response_timeout=0.75,
         )
+        def compile_structural_definition(definition):
+            graph = compile_runtime_graph(definition, capabilities)
+            return compile_current_bars_layer_plan(
+                graph,
+                analyzer_registry,
+                visualizer=None,
+                settings=settings,
+                width=app.width,
+                height=app.height,
+            )
+
+        structural_controller = StructuralRuntimeCoordinator(
+            controller=controller,
+            active_plan=active_layer_plan,
+            initial_definition=initial_definition,
+            capabilities=capabilities,
+            compile_definition=compile_structural_definition,
+            bridge=runtime_bridge,
+        )
         runtime_stop_event = threading.Event()
         runtime_thread = None
         
@@ -550,7 +584,7 @@ def main():
                     while not runtime_stop_event.is_set():
                         try:
                             runtime_client.serve(
-                                runtime_bridge.handle,
+                                structural_controller.handle_runtime_operation,
                                 stop_event=runtime_stop_event,
                             )
                         except Exception as exc:
@@ -578,10 +612,7 @@ def main():
                 # IPC listeners only enqueue validated request envelopes.  Drain a
                 # small bounded batch here so all visualizer/audio mutations happen
                 # between frames on this render thread.
-                runtime_bridge.process_pending(
-                    controller.handle_runtime_operation,
-                    max_items=4,
-                )
+                structural_controller.process_pending(max_items=4)
                 # Check for keyboard input
                 key = keyboard.get_key()
                 state_dirty = key is not None
@@ -677,7 +708,7 @@ def main():
         raise
     finally:
         runtime_stop_event.set()
-        runtime_bridge.close()
+        structural_controller.close()
         if runtime_thread is not None:
             runtime_thread.join(timeout=1.0)
         if telemetry is None:

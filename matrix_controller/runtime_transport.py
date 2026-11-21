@@ -86,18 +86,20 @@ class RuntimeRunMismatch(RuntimeTransportError):
 class RuntimeRemoteError(RuntimeTransportError):
     """The child rejected a valid request and returned a structured error."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, path: str | None = None):
         self.code = code
         self.message = _bounded_message(message)
+        self.path = _bounded_message(path, 256) if path else None
         super().__init__(f"{code}: {self.message}")
 
 
 class RuntimeControlError(RuntimeTransportError):
     """Handler exception that is safe to return to the supervisor."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, path: str | None = None):
         self.code = code
         self.message = _bounded_message(message)
+        self.path = _bounded_message(path, 256) if path else None
         super().__init__(self.message)
 
 
@@ -139,9 +141,26 @@ class FrameBoundaryRuntimeBridge:
         self._lock = threading.RLock()
         self._closed = False
 
-    def handle(self, operation: str, payload: Any) -> Any:
-        """Enqueue one operation and wait for its frame-boundary result."""
+    def handle(
+        self,
+        operation: str,
+        payload: Any,
+        *,
+        timeout: float | None = None,
+    ) -> Any:
+        """Enqueue one operation and wait for its frame-boundary result.
 
+        ``timeout`` may only shorten the bridge's configured wait, so a caller
+        with an overall transaction deadline can bound each frame-boundary step.
+        """
+
+        wait = (
+            self._response_timeout
+            if timeout is None
+            else min(self._response_timeout, float(timeout))
+        )
+        if not wait > 0:
+            raise RuntimeControlError("timeout", "runtime command was not applied in time")
         item = _PendingRuntimeOperation(operation, payload, threading.Event())
         with self._lock:
             if self._closed:
@@ -151,7 +170,7 @@ class FrameBoundaryRuntimeBridge:
             except queue.Full as exc:
                 raise RuntimeControlError("busy", "runtime command queue is full") from exc
 
-        if not item.completed.wait(self._response_timeout):
+        if not item.completed.wait(wait):
             with self._lock:
                 item.cancelled = True
             raise RuntimeControlError("timeout", "runtime command was not applied in time")
@@ -427,7 +446,12 @@ class RuntimeControlServer:
             error = response.get("error")
             if not isinstance(error, dict):
                 raise RuntimeProtocolError("runtime error response is malformed")
-            raise RuntimeRemoteError(str(error.get("code", "remote_error")), str(error.get("message", "request rejected")))
+            path = error.get("path")
+            raise RuntimeRemoteError(
+                str(error.get("code", "remote_error")),
+                str(error.get("message", "request rejected")),
+                path=path if isinstance(path, str) else None,
+            )
         return response.get("result")
 
     def _connection_or_accept(self, timeout: float) -> socket.socket:
@@ -567,7 +591,12 @@ class RuntimeControlClient:
                         "result": result,
                     }
                 except RuntimeControlError as exc:
-                    response = self._error_response(request, exc.code, exc.message)
+                    response = self._error_response(
+                        request,
+                        exc.code,
+                        exc.message,
+                        path=exc.path,
+                    )
                 except RuntimeProtocolError as exc:
                     response = self._error_response(request, "protocol_error", str(exc))
                 except Exception as exc:  # pragma: no cover - defensive child boundary
@@ -588,11 +617,21 @@ class RuntimeControlClient:
             raise RuntimeProtocolError("runtime operation is invalid")
         return handler(operation, request.get("payload"))
 
-    def _error_response(self, request: Mapping[str, Any], code: str, message: str) -> dict[str, Any]:
-        return {
+    def _error_response(
+        self,
+        request: Mapping[str, Any],
+        code: str,
+        message: str,
+        *,
+        path: str | None = None,
+    ) -> dict[str, Any]:
+        response = {
             "protocol": PROTOCOL_VERSION,
             "request_id": request.get("request_id"),
             "run_id": self.endpoint.run_id,
             "ok": False,
             "error": {"code": _bounded_message(code, 64), "message": _bounded_message(message)},
         }
+        if path:
+            response["error"]["path"] = _bounded_message(path, 256)
+        return response

@@ -28,7 +28,6 @@ _PILLOW_BULK_INCOMPATIBLE_RUNTIME_PATHS = frozenset({
     "theme.next",
     "theme.previous",
     "visualizer.bars",
-    "visualizer.debug",
     "visualizer.full",
     "visualizer.gradient",
     "visualizer.overflow",
@@ -105,26 +104,33 @@ class PillowBulkBarsOutputPlan:
 
         return self._incompatible_runtime_paths
 
-    def draw(
+    def begin_frame(self) -> None:
+        """Clear the one reusable image before ordered layer painting."""
+
+        self._image.paste(_BLACK, self._full_frame_box)
+
+    def paint_bars(
         self,
-        canvas: Any,
         smoothed_bars: np.ndarray,
         peak_heights: Optional[np.ndarray] = None,
+        overflow_multiplier: Optional[float] = None,
     ) -> None:
-        """Populate and upload one complete qualification frame.
+        """Paint one qualified bars layer without clearing or uploading.
 
         ``peak_heights`` is intentionally unused because the candidate compiler
         rejects peak mode.  The argument keeps the same call shape as the accepted
         direct renderer without introducing an adapter or per-frame message.
+        ``overflow_multiplier`` lets each ordered layer paint with its own
+        compile-time multiplier; ``None`` uses the plan's compiled value.
         """
 
         del peak_heights
         image = self._image
-        image.paste(_BLACK, self._full_frame_box)
 
         height = self._height
         width = self._width
-        overflow_multiplier = self._overflow_multiplier
+        if overflow_multiplier is None:
+            overflow_multiplier = self._overflow_multiplier
         geometry_boxes = self._geometry_boxes
         overflow_colors = self._overflow_colors
 
@@ -143,13 +149,28 @@ class PillowBulkBarsOutputPlan:
             color = overflow_colors[min(top_layer, 2)][top_position_in_layer]
             image.paste(color, geometry_boxes[column][visible_pixels])
 
+    def end_frame(self, canvas: Any) -> None:
+        """Upload the completed shared image exactly once."""
+
         try:
-            canvas.SetImage(image)
+            canvas.SetImage(self._image)
         except Exception as exc:
             # No fallback or retry is allowed here: either would mix output paths and
             # invalidate the comparison.  Propagation follows the existing bounded
             # application cleanup/service-restart path.
             raise RuntimeError("bulk output upload failed") from exc
+
+    def draw(
+        self,
+        canvas: Any,
+        smoothed_bars: np.ndarray,
+        peak_heights: Optional[np.ndarray] = None,
+    ) -> None:
+        """Compatibility wrapper for the qualified one-layer path."""
+
+        self.begin_frame()
+        self.paint_bars(smoothed_bars, peak_heights)
+        self.end_frame(canvas)
 
 
 def compile_pillow_bulk_bars_output(
@@ -171,8 +192,8 @@ def compile_pillow_bulk_bars_output(
         raise ValueError("pillow-bulk output does not support shadow mode")
     if visualizer.settings.peak.enabled:
         raise ValueError("pillow-bulk output does not support peak mode")
-    if visualizer.full_mode or visualizer.debug_mode:
-        raise ValueError("pillow-bulk output does not support full or debug mode")
+    if visualizer.full_mode:
+        raise ValueError("pillow-bulk output does not support full mode")
     if not visualizer.overflow_mode:
         raise ValueError("pillow-bulk output requires overflow mode")
     if not visualizer.bars_enabled:

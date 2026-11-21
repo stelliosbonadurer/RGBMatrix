@@ -404,7 +404,6 @@ def _visualizer(width: int, height: int, settings: Settings):
     visualizer.gradient_mode = False
     visualizer.bars_enabled = True
     visualizer.full_mode = False
-    visualizer.debug_mode = False
     return visualizer
 
 
@@ -547,13 +546,15 @@ class LayerPlanHotPathTests(unittest.TestCase):
         source = MAIN_PATH.read_text(encoding="utf-8")
         setup, loop = source.split("            while True:", maxsplit=1)
 
-        self.assertIn("compile_current_bars_graph(", setup)
+        self.assertIn("current_bars_runtime_definition(", setup)
+        self.assertIn("compile_runtime_graph(", setup)
         self.assertIn("compile_current_bars_layer_plan(", setup)
         self.assertIn("ActiveLayerPlan(initial_layer_plan)", setup)
         self.assertIn("frame_plan.prepare_frame()", loop)
         self.assertIn("frame_plan.draw_frame(app.canvas)", loop)
         for forbidden in (
-            "compile_current_bars_graph(",
+            "current_bars_runtime_definition(",
+            "compile_runtime_graph(",
             "compile_current_bars_layer_plan(",
             "analyzer_registry.resolve(",
             "OUTPUT_PATH_ENVIRONMENT",

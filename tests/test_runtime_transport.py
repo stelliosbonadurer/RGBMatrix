@@ -52,6 +52,12 @@ class RuntimeTransportTests(unittest.TestCase):
                 return {"revision": 4, "layers": {"bass": {"visible": True}}}
             if operation == "command":
                 return {"revision": 5, "applied": payload}
+            if operation == "invalid":
+                raise RuntimeControlError(
+                    "invalid_reference",
+                    "unknown layer ID",
+                    path="args.operations[0].layer_id",
+                )
             raise RuntimeControlError("unsupported", "operation is not supported")
 
         self.client = RuntimeControlClient(self.server.endpoint)
@@ -81,7 +87,14 @@ class RuntimeTransportTests(unittest.TestCase):
         with self.assertRaises(RuntimeRemoteError) as context:
             self.server.request("unknown", {}, timeout=1)
         self.assertEqual(context.exception.code, "unsupported")
+        self.assertIsNone(context.exception.path)
         self.assertEqual(self.server.request("snapshot", {}, timeout=1)["revision"], 4)
+
+    def test_handler_error_field_path_reaches_supervisor(self) -> None:
+        with self.assertRaises(RuntimeRemoteError) as context:
+            self.server.request("invalid", {}, timeout=1)
+        self.assertEqual(context.exception.code, "invalid_reference")
+        self.assertEqual(context.exception.path, "args.operations[0].layer_id")
 
     def test_endpoint_identity_and_environment_are_per_run(self) -> None:
         endpoint = self.server.endpoint
@@ -176,6 +189,23 @@ class FrameBoundaryBridgeTests(unittest.TestCase):
         self.assertIsInstance(first_result["error"], RuntimeControlError)
         self.assertEqual(first_result["error"].code, "timeout")
         self.assertEqual(bridge.process_pending(lambda _operation, _payload: {}), 1)
+
+    def test_per_call_timeout_only_shortens_wait_and_cancels_item(self) -> None:
+        bridge = FrameBoundaryRuntimeBridge(response_timeout=1.0)
+        handled: list[str] = []
+        started = time.monotonic()
+        with self.assertRaises(RuntimeControlError) as caught:
+            bridge.handle("short", {}, timeout=0.02)
+        self.assertEqual(caught.exception.code, "timeout")
+        self.assertLess(time.monotonic() - started, 0.5)
+        # The expired item is skipped rather than applied late.
+        bridge.process_pending(lambda operation, _payload: handled.append(operation))
+        self.assertEqual(handled, [])
+
+        with self.assertRaises(RuntimeControlError) as expired:
+            bridge.handle("expired", {}, timeout=0)
+        self.assertEqual(expired.exception.code, "timeout")
+        self.assertEqual(bridge.process_pending(lambda _operation, _payload: {}), 0)
 
     @staticmethod
     def _capture(bridge: FrameBoundaryRuntimeBridge, operation: str) -> object:

@@ -22,7 +22,11 @@ from core.layer_plan import (
     OrderedLayerPlan,
     compile_current_bars_graph,
     compile_current_bars_layer_plan,
+    current_bars_runtime_capabilities,
+    current_bars_runtime_definition,
+    current_bars_settings_from_runtime,
 )
+from core.runtime_graph import compile_runtime_graph
 from core.output import (
     DIRECT_OUTPUT_PATH,
     OUTPUT_PATH_ENVIRONMENT,
@@ -56,6 +60,10 @@ __all__ = [
     'compile_standard_analyzer_plan',
     'compile_current_bars_graph',
     'compile_current_bars_layer_plan',
+    'compile_runtime_graph',
+    'current_bars_runtime_capabilities',
+    'current_bars_runtime_definition',
+    'current_bars_settings_from_runtime',
     'compile_pillow_bulk_bars_output',
     'MatrixApp',
 ]

@@ -93,7 +93,7 @@ Its active toggles are:
 - uniform bar color or per-pixel gradient;
 - clamped or overflow bars;
 - bars, shadows, and peaks;
-- full-screen crossfade and the static debug gradient.
+- full-screen crossfade.
 
 Here, an overflow *layer* means one additional vertical matrix-height band of a single
 bar. It is only color terminology inside one standard renderer; it is not the removed

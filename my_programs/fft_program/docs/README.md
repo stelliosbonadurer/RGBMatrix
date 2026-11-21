@@ -26,7 +26,6 @@ python main.py --list-themes
 | `o` | Toggle overflow mode (bars can exceed height) |
 | `b` | Toggle bars (OFF = peaks only) |
 | `f` | Toggle full mode (full screen with crossfade) |
-| `d` | Toggle debug mode (static gradient test) |
 | `s` | Toggle shadow mode |
 | `p` | Toggle peak mode |
 | `P` | Cycle peak color: white → bar → contrast → peak |

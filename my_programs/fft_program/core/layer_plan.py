@@ -8,7 +8,9 @@ resolve IDs, select a backend, or build commands while a frame is running.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+import copy
 from dataclasses import dataclass
+import math
 from typing import Any, TypeAlias
 
 import numpy as np  # type: ignore
@@ -33,14 +35,35 @@ from core.runtime_graph import (
     RuntimeCapabilities,
     RuntimeDefinition,
     compile_runtime_graph,
+    thaw_settings,
 )
 from core.scaling import ScalingProcessor
+from themes import get_theme, list_themes
+from visualizers.bars_unified import BarsUnifiedVisualizer
 from visualizers.peaks import draw_peaks
 
 
 CURRENT_BARS_LAYER_ID = "current-bars"
 CURRENT_BARS_LAYER_TYPE = "current-bars"
 _ORDERED_PLAN_CONSTRUCTION_TOKEN = object()
+CURRENT_BARS_SETTING_NAMES = frozenset({
+    "theme",
+    "gradient",
+    "overflow",
+    "overflow_multiplier",
+    "bars",
+    "full",
+    "shadow_enabled",
+    "peak_enabled",
+    "peak_color_mode",
+    "peak_fall_speed",
+    "peak_hold_frames",
+    "sensitivity_scalar",
+    "smoothing_rise",
+    "smoothing_fall",
+    "dynamic_cycle_speed",
+    "dynamic_frozen",
+})
 
 
 class LayerPlanCompilationError(ValueError):
@@ -107,6 +130,8 @@ class OrderedLayerPlan:
     __slots__ = (
         "_analyzer_groups",
         "_begin_draw",
+        "_blank_smoothed",
+        "_end_draw",
         "_incompatible_runtime_paths",
         "_layers",
         "_output_backend",
@@ -121,6 +146,7 @@ class OrderedLayerPlan:
         visible_layers: tuple[CompiledLayerRuntime, ...],
         analyzer_groups: tuple[_AnalyzerLayerGroup, ...],
         begin_draw: Callable[[Any], None],
+        end_draw: Callable[[Any], None],
         incompatible_runtime_paths: frozenset[str],
         _construction_token: object,
     ) -> None:
@@ -131,6 +157,8 @@ class OrderedLayerPlan:
         self._visible_layers = visible_layers
         self._analyzer_groups = analyzer_groups
         self._begin_draw = begin_draw
+        self._end_draw = end_draw
+        self._blank_smoothed = np.zeros(0, dtype=np.float32)
         self._incompatible_runtime_paths = incompatible_runtime_paths
 
     @property
@@ -159,7 +187,7 @@ class OrderedLayerPlan:
         """Update visible layer state from each newest complete analyzer result."""
 
         if not self._visible_layers:
-            raise RuntimeError("ordered layer plan has no visible layers")
+            return self._blank_smoothed
 
         for group in self._analyzer_groups:
             result = group.analyzer.get_fft_magnitudes()
@@ -179,6 +207,7 @@ class OrderedLayerPlan:
         self._begin_draw(canvas)
         for layer in self._visible_layers:
             layer.draw(canvas)
+        self._end_draw(canvas)
 
 
 class ActiveLayerPlan:
@@ -244,15 +273,16 @@ def compile_ordered_layer_plan(
     factories: Mapping[str, LayerRuntimeFactory],
     *,
     begin_draw: Callable[[Any], None],
+    end_draw: Callable[[Any], None] = lambda _canvas: None,
 ) -> OrderedLayerPlan:
     """Compile direct references, visible order, and analyzer sharing once."""
 
     if not isinstance(plan, CompiledRuntimePlan):
         raise LayerPlanCompilationError("plan must be a CompiledRuntimePlan")
-    if not plan.layers:
-        raise LayerPlanCompilationError("ordered layer plan requires at least one layer")
     if not callable(begin_draw):
         raise LayerPlanCompilationError("begin_draw must be callable")
+    if not callable(end_draw):
+        raise LayerPlanCompilationError("end_draw must be callable")
 
     layers: list[CompiledLayerRuntime] = []
     visible_layers: list[CompiledLayerRuntime] = []
@@ -282,11 +312,6 @@ def compile_ordered_layer_plan(
         if runtime.visible:
             visible_layers.append(runtime)
 
-    if not visible_layers:
-        raise LayerPlanCompilationError(
-            "Step 3 requires at least one visible layer in the active plan"
-        )
-
     # Group by physical runtime identity during compilation.  Frame execution keeps
     # only direct analyzer references and immutable consumer tuples.
     grouped: list[tuple[Any, list[CompiledLayerRuntime]]] = []
@@ -310,20 +335,68 @@ def compile_ordered_layer_plan(
         visible_layers=tuple(visible_layers),
         analyzer_groups=analyzer_groups,
         begin_draw=begin_draw,
+        end_draw=end_draw,
         incompatible_runtime_paths=frozenset(incompatible_runtime_paths),
         _construction_token=_ORDERED_PLAN_CONSTRUCTION_TOKEN,
     )
 
 
+class _LayerThemeCycler:
+    """Small per-layer theme selector used by the legacy target adapter."""
+
+    __slots__ = ("brightness_boost", "current_index", "themes")
+
+    def __init__(self, initial_theme: str, brightness_boost: float) -> None:
+        self.themes = list_themes()
+        self.brightness_boost = brightness_boost
+        self.current_index = (
+            self.themes.index(initial_theme)
+            if initial_theme in self.themes
+            else 0
+        )
+
+    @property
+    def current_theme_name(self) -> str:
+        return self.themes[self.current_index]
+
+    def next_theme(self) -> Any:
+        self.current_index = (self.current_index + 1) % len(self.themes)
+        return get_theme(
+            self.current_theme_name,
+            brightness_boost=self.brightness_boost,
+        )
+
+    def prev_theme(self) -> Any:
+        self.current_index = (self.current_index - 1) % len(self.themes)
+        return get_theme(
+            self.current_theme_name,
+            brightness_boost=self.brightness_boost,
+        )
+
+
 class _CurrentBarsPresentation:
     """Mutable scaling, peak, and visual state owned by the current bars layer."""
 
-    __slots__ = ("peaks", "scaler", "settings", "smoothed", "visualizer")
+    __slots__ = (
+        "peaks",
+        "scaler",
+        "settings",
+        "smoothed",
+        "theme_cycler",
+        "visualizer",
+    )
 
-    def __init__(self, scaler: ScalingProcessor, visualizer: Any, settings: Any) -> None:
+    def __init__(
+        self,
+        scaler: ScalingProcessor,
+        visualizer: Any,
+        settings: Any,
+        theme_cycler: Any,
+    ) -> None:
         self.scaler = scaler
         self.visualizer = visualizer
         self.settings = settings
+        self.theme_cycler = theme_cycler
         self.smoothed = scaler.smoothed_bars
         self.peaks = scaler.peak_heights
 
@@ -364,18 +437,177 @@ class _DirectBarsExecutor:
 class _PillowBulkBarsExecutor:
     """Existing reusable Pillow image and one SetImage upload per frame."""
 
-    __slots__ = ("_output", "_presentation")
+    __slots__ = ("_output", "_overflow_multiplier", "_presentation")
 
     def __init__(self, presentation: _CurrentBarsPresentation, output: Any) -> None:
         self._presentation = presentation
         self._output = output
+        # The live multiplier control is unavailable on pillow-bulk, so the
+        # layer's compile-time value stays authoritative for this plan.
+        self._overflow_multiplier = float(presentation.settings.overflow.multiplier)
 
     @property
     def incompatible_runtime_paths(self) -> frozenset[str]:
         return self._output.incompatible_runtime_paths
 
     def draw(self, canvas: Any) -> None:
-        self._output.draw(canvas, self._presentation.smoothed, None)
+        del canvas
+        self._output.paint_bars(
+            self._presentation.smoothed,
+            None,
+            self._overflow_multiplier,
+        )
+
+
+def current_bars_settings_from_runtime(
+    settings: Any,
+    visualizer: Any | None = None,
+) -> dict[str, object]:
+    """Capture the complete normalized presentation configuration."""
+
+    theme = getattr(visualizer, "theme", None)
+    theme_name = str(
+        getattr(theme, "name", getattr(settings.color, "theme", "ocean"))
+    )
+    return {
+        "theme": theme_name,
+        "gradient": bool(getattr(visualizer, "gradient_mode", False)),
+        "overflow": bool(
+            getattr(visualizer, "overflow_mode", settings.overflow.enabled)
+        ),
+        "overflow_multiplier": float(settings.overflow.multiplier),
+        "bars": bool(getattr(visualizer, "bars_enabled", True)),
+        "full": bool(getattr(visualizer, "full_mode", False)),
+        "shadow_enabled": bool(settings.shadow.enabled),
+        "peak_enabled": bool(settings.peak.enabled),
+        "peak_color_mode": str(settings.peak.color_mode),
+        "peak_fall_speed": float(settings.peak.fall_speed),
+        "peak_hold_frames": int(settings.peak.hold_frames),
+        "sensitivity_scalar": float(settings.scaling.sensitivity_scalar),
+        "smoothing_rise": float(settings.smoothing.rise),
+        "smoothing_fall": float(settings.smoothing.fall),
+        "dynamic_cycle_speed": float(getattr(theme, "cycle_speed", 0.06)),
+        "dynamic_frozen": bool(getattr(theme, "frozen", False)),
+    }
+
+
+def current_bars_settings_descriptor() -> dict[str, object]:
+    """Return the small project-owned descriptor rendered by future clients."""
+
+    return {
+        "fields": [
+            {"name": "theme", "type": "choice", "choices": list_themes(), "default": "ocean"},
+            {"name": "gradient", "type": "boolean", "default": False},
+            {"name": "overflow", "type": "boolean", "default": True},
+            {"name": "overflow_multiplier", "type": "number", "min": 0.1, "max": 10.0, "default": 1.5},
+            {"name": "bars", "type": "boolean", "default": True},
+            {"name": "full", "type": "boolean", "default": False},
+            {"name": "shadow_enabled", "type": "boolean", "default": False},
+            {"name": "peak_enabled", "type": "boolean", "default": False},
+            {"name": "peak_color_mode", "type": "choice", "choices": ["white", "bar", "contrast", "peak"], "default": "contrast"},
+            {"name": "peak_fall_speed", "type": "number", "min": 0.0, "max": 1.0, "default": 0.08},
+            {"name": "peak_hold_frames", "type": "integer", "min": 0, "max": 600, "default": 8},
+            {"name": "sensitivity_scalar", "type": "number", "min": 0.01, "max": 20.0, "default": 1.0},
+            {"name": "smoothing_rise", "type": "number", "min": 0.0, "max": 1.0, "default": 0.4},
+            {"name": "smoothing_fall", "type": "number", "min": 0.0, "max": 1.0, "default": 0.1},
+            {"name": "dynamic_cycle_speed", "type": "number", "min": 0.0, "max": 5.0, "default": 0.06},
+            {"name": "dynamic_frozen", "type": "boolean", "default": False},
+        ],
+        "backend_constraints": {
+            PILLOW_BULK_OUTPUT_PATH: {
+                "theme": "ocean",
+                "gradient": False,
+                "overflow": True,
+                "bars": True,
+                "full": False,
+                "shadow_enabled": False,
+                "peak_enabled": False,
+                "dynamic_cycle_speed": 0.06,
+                "dynamic_frozen": False,
+            }
+        },
+    }
+
+
+def _number(
+    settings: Mapping[str, object],
+    name: str,
+    minimum: float,
+    maximum: float,
+    *,
+    integer: bool = False,
+) -> int | float:
+    value = settings[name]
+    valid_type = isinstance(value, int) if integer else isinstance(value, (int, float))
+    number = math.nan
+    if valid_type and not isinstance(value, bool):
+        try:
+            number = float(value)
+        except OverflowError:
+            # A JSON integer too large for a float is out of range, not a
+            # handler failure.
+            number = math.nan
+    if not math.isfinite(number) or not minimum <= number <= maximum:
+        kind = "an integer" if integer else "a number"
+        raise ValueError(
+            f"{name} must be {kind} between {minimum:g} and {maximum:g}"
+        )
+    return int(value) if integer else number
+
+
+def normalize_current_bars_settings(
+    value: Mapping[str, object],
+    output_backend: str,
+) -> dict[str, object]:
+    """Validate one complete current-bars settings object."""
+
+    if not isinstance(value, Mapping):
+        raise ValueError("settings must be an object")
+    fields = set(value)
+    missing = CURRENT_BARS_SETTING_NAMES - fields
+    extra = fields - CURRENT_BARS_SETTING_NAMES
+    if missing or extra:
+        detail = []
+        if missing:
+            detail.append(f"missing {sorted(missing)!r}")
+        if extra:
+            detail.append(f"unknown {sorted(extra)!r}")
+        raise ValueError("settings fields are invalid: " + "; ".join(detail))
+
+    normalized = dict(value)
+    if not isinstance(normalized["theme"], str) or normalized["theme"] not in list_themes():
+        raise ValueError("theme is not registered")
+    for name in (
+        "gradient", "overflow", "bars", "full", "shadow_enabled",
+        "peak_enabled", "dynamic_frozen",
+    ):
+        if not isinstance(normalized[name], bool):
+            raise ValueError(f"{name} must be a boolean")
+    if (
+        not isinstance(normalized["peak_color_mode"], str)
+        or normalized["peak_color_mode"] not in {"white", "bar", "contrast", "peak"}
+    ):
+        raise ValueError("peak_color_mode is unsupported")
+    normalized["overflow_multiplier"] = _number(normalized, "overflow_multiplier", 0.1, 10.0)
+    normalized["peak_fall_speed"] = _number(normalized, "peak_fall_speed", 0.0, 1.0)
+    normalized["peak_hold_frames"] = _number(normalized, "peak_hold_frames", 0, 600, integer=True)
+    normalized["sensitivity_scalar"] = _number(normalized, "sensitivity_scalar", 0.01, 20.0)
+    normalized["smoothing_rise"] = _number(normalized, "smoothing_rise", 0.0, 1.0)
+    normalized["smoothing_fall"] = _number(normalized, "smoothing_fall", 0.0, 1.0)
+    normalized["dynamic_cycle_speed"] = _number(normalized, "dynamic_cycle_speed", 0.0, 5.0)
+
+    if output_backend == PILLOW_BULK_OUTPUT_PATH:
+        fixed = current_bars_settings_descriptor()["backend_constraints"][PILLOW_BULK_OUTPUT_PATH]  # type: ignore[index]
+        for name, expected in fixed.items():  # type: ignore[union-attr]
+            if normalized[name] != expected:
+                raise ValueError(
+                    f"{name} must be {expected!r} for pillow-bulk"
+                )
+    return normalized
+
+
+def _validate_current_bars_settings(settings: Any, output_backend: str) -> None:
+    normalize_current_bars_settings(thaw_settings(settings), output_backend)
 
 
 def current_bars_runtime_capabilities() -> RuntimeCapabilities:
@@ -392,8 +624,43 @@ def current_bars_runtime_capabilities() -> RuntimeCapabilities:
                     DIRECT_OUTPUT_PATH,
                     PILLOW_BULK_OUTPUT_PATH,
                 }),
+                settings_validator=_validate_current_bars_settings,
+                settings_descriptor=current_bars_settings_descriptor(),
             ),
         ),
+    )
+
+
+def current_bars_runtime_definition(
+    *,
+    audio_settings: Any,
+    frequency_settings: Any,
+    sensitivity_settings: Any,
+    num_bins: int,
+    output_backend: str,
+    layer_settings: Mapping[str, object],
+) -> RuntimeDefinition:
+    """Build the complete declarative default graph before compilation."""
+
+    analyzer = standard_analyzer_definition(
+        STANDARD_ANALYZER_ID,
+        audio_settings=audio_settings,
+        frequency_settings=frequency_settings,
+        sensitivity_settings=sensitivity_settings,
+        num_bins=num_bins,
+    )
+    normalized = normalize_current_bars_settings(layer_settings, output_backend)
+    return RuntimeDefinition(
+        analyzers=(analyzer,),
+        layers=(
+            LayerDefinition(
+                layer_id=CURRENT_BARS_LAYER_ID,
+                layer_type=CURRENT_BARS_LAYER_TYPE,
+                analyzer_id=STANDARD_ANALYZER_ID,
+                settings=normalized,
+            ),
+        ),
+        output_backend=output_backend,
     )
 
 
@@ -404,30 +671,80 @@ def compile_current_bars_graph(
     sensitivity_settings: Any,
     num_bins: int,
     output_backend: str,
+    layer_settings: Mapping[str, object] | None = None,
+    settings: Any | None = None,
 ) -> CompiledRuntimePlan:
     """Compile the complete one-analyzer, one-bars-layer current scene."""
 
-    analyzer = standard_analyzer_definition(
-        STANDARD_ANALYZER_ID,
-        audio_settings=audio_settings,
-        frequency_settings=frequency_settings,
-        sensitivity_settings=sensitivity_settings,
-        num_bins=num_bins,
-    )
+    if layer_settings is None:
+        if settings is None:
+            from config.settings import Settings
+
+            settings = Settings()
+        layer_settings = current_bars_settings_from_runtime(settings)
     return compile_runtime_graph(
-        RuntimeDefinition(
-            analyzers=(analyzer,),
-            layers=(
-                LayerDefinition(
-                    layer_id=CURRENT_BARS_LAYER_ID,
-                    layer_type=CURRENT_BARS_LAYER_TYPE,
-                    analyzer_id=STANDARD_ANALYZER_ID,
-                ),
-            ),
+        current_bars_runtime_definition(
+            audio_settings=audio_settings,
+            frequency_settings=frequency_settings,
+            sensitivity_settings=sensitivity_settings,
+            num_bins=num_bins,
             output_backend=output_backend,
+            layer_settings=layer_settings,
         ),
         current_bars_runtime_capabilities(),
     )
+
+
+def _settings_for_layer(
+    base_settings: Any,
+    normalized: Mapping[str, object],
+) -> Any:
+    settings = copy.deepcopy(base_settings)
+    # These objects remain analyzer-owned. Every presentation runtime observes the
+    # one live analyzer control state instead of receiving a structural copy.
+    settings.audio = base_settings.audio
+    settings.frequency = base_settings.frequency
+    settings.sensitivity = base_settings.sensitivity
+    settings.color.theme = normalized["theme"]
+    settings.overflow.enabled = normalized["overflow"]
+    settings.overflow.multiplier = normalized["overflow_multiplier"]
+    settings.shadow.enabled = normalized["shadow_enabled"]
+    settings.peak.enabled = normalized["peak_enabled"]
+    settings.peak.color_mode = normalized["peak_color_mode"]
+    settings.peak.fall_speed = normalized["peak_fall_speed"]
+    settings.peak.hold_frames = normalized["peak_hold_frames"]
+    settings.scaling.sensitivity_scalar = normalized["sensitivity_scalar"]
+    settings.smoothing.rise = normalized["smoothing_rise"]
+    settings.smoothing.fall = normalized["smoothing_fall"]
+    return settings
+
+
+def _presentation_objects(
+    normalized: Mapping[str, object],
+    base_settings: Any,
+    width: int,
+    height: int,
+) -> tuple[Any, Any, Any]:
+    settings = _settings_for_layer(base_settings, normalized)
+    visualizer = BarsUnifiedVisualizer(width, height, settings)
+    visualizer.gradient_mode = normalized["gradient"]
+    visualizer.overflow_mode = normalized["overflow"]
+    visualizer.bars_enabled = normalized["bars"]
+    visualizer.full_mode = normalized["full"]
+    theme = get_theme(
+        str(normalized["theme"]),
+        brightness_boost=settings.color.brightness_boost,
+    )
+    if hasattr(theme, "cycle_speed"):
+        theme.cycle_speed = normalized["dynamic_cycle_speed"]
+        if bool(getattr(theme, "frozen", False)) != normalized["dynamic_frozen"]:
+            theme.toggle_frozen()
+    visualizer.set_theme(theme)
+    theme_cycler = _LayerThemeCycler(
+        str(normalized["theme"]),
+        settings.color.brightness_boost,
+    )
+    return settings, visualizer, theme_cycler
 
 
 def compile_current_bars_layer_plan(
@@ -438,37 +755,79 @@ def compile_current_bars_layer_plan(
     settings: Any,
     width: int,
     height: int,
+    theme_cycler: Any | None = None,
 ) -> OrderedLayerPlan:
     """Compile current presentation state and the manually selected executor."""
 
-    if len(graph.layers) != 1 or graph.layers[0].layer_type != CURRENT_BARS_LAYER_TYPE:
-        raise LayerPlanCompilationError(
-            "current bars compiler requires exactly one current-bars layer"
+    if any(layer.layer_type != CURRENT_BARS_LAYER_TYPE for layer in graph.layers):
+        raise LayerPlanCompilationError("current bars compiler received another layer type")
+
+    use_initial_objects = len(graph.layers) == 1 and visualizer is not None
+    shared_output = None
+    if graph.output_backend == PILLOW_BULK_OUTPUT_PATH:
+        if graph.layers:
+            prototype_settings = normalize_current_bars_settings(
+                thaw_settings(graph.layers[0].settings),
+                graph.output_backend,
+            )
+        else:
+            prototype_settings = current_bars_settings_from_runtime(settings)
+            prototype_settings.update(
+                current_bars_settings_descriptor()["backend_constraints"][  # type: ignore[index]
+                    PILLOW_BULK_OUTPUT_PATH
+                ]
+            )
+        _prototype_settings, prototype, _prototype_cycler = _presentation_objects(
+            prototype_settings,
+            settings,
+            width,
+            height,
         )
+        shared_output = compile_pillow_bulk_bars_output(prototype, width, height)
 
     def bars_factory(
-        _definition: CompiledLayerDefinition,
+        definition: CompiledLayerDefinition,
         _analyzer: Any,
         output_backend: str,
     ) -> LayerRuntimeComponents:
+        normalized = normalize_current_bars_settings(
+            thaw_settings(definition.settings),
+            output_backend,
+        )
+        if use_initial_objects and definition.layer_id == CURRENT_BARS_LAYER_ID:
+            layer_settings = settings
+            layer_visualizer = visualizer
+            layer_theme_cycler = theme_cycler or _LayerThemeCycler(
+                str(normalized["theme"]),
+                settings.color.brightness_boost,
+            )
+        else:
+            layer_settings, layer_visualizer, layer_theme_cycler = _presentation_objects(
+                normalized,
+                settings,
+                width,
+                height,
+            )
         presentation = _CurrentBarsPresentation(
             ScalingProcessor(
-                scaling_settings=settings.scaling,
-                sensitivity_settings=settings.sensitivity,
-                smoothing_settings=settings.smoothing,
+                scaling_settings=layer_settings.scaling,
+                sensitivity_settings=layer_settings.sensitivity,
+                smoothing_settings=layer_settings.smoothing,
                 num_bins=width,
-                frame_rate=1.0 / settings.audio.sleep_delay,
+                frame_rate=1.0 / layer_settings.audio.sleep_delay,
             ),
-            visualizer,
-            settings,
+            layer_visualizer,
+            layer_settings,
+            layer_theme_cycler,
         )
         if output_backend == DIRECT_OUTPUT_PATH:
             executor = _DirectBarsExecutor(presentation, height)
             incompatible_runtime_paths = frozenset()
         elif output_backend == PILLOW_BULK_OUTPUT_PATH:
+            assert shared_output is not None
             executor = _PillowBulkBarsExecutor(
                 presentation,
-                compile_pillow_bulk_bars_output(visualizer, width, height),
+                shared_output,
             )
             incompatible_runtime_paths = executor.incompatible_runtime_paths
         else:
@@ -485,17 +844,18 @@ def compile_current_bars_layer_plan(
 
     if graph.output_backend == DIRECT_OUTPUT_PATH:
         begin_draw = lambda canvas: canvas.Clear()
+        end_draw = lambda _canvas: None
     else:
-        # The existing bulk executor clears its reusable Pillow image before its
-        # single SetImage submission.  Clearing the native canvas here would mix
-        # output paths and change the qualified implementation.
-        begin_draw = lambda _canvas: None
+        assert shared_output is not None
+        begin_draw = lambda _canvas: shared_output.begin_frame()
+        end_draw = shared_output.end_frame
 
     return compile_ordered_layer_plan(
         graph,
         analyzer_registry,
         {CURRENT_BARS_LAYER_TYPE: bars_factory},
         begin_draw=begin_draw,
+        end_draw=end_draw,
     )
 
 
@@ -503,6 +863,7 @@ __all__ = [
     "ActiveLayerPlan",
     "CURRENT_BARS_LAYER_ID",
     "CURRENT_BARS_LAYER_TYPE",
+    "CURRENT_BARS_SETTING_NAMES",
     "CompiledLayerRuntime",
     "LayerPlanCompilationError",
     "LayerRuntimeComponents",
@@ -510,5 +871,9 @@ __all__ = [
     "compile_current_bars_graph",
     "compile_current_bars_layer_plan",
     "compile_ordered_layer_plan",
+    "current_bars_runtime_definition",
     "current_bars_runtime_capabilities",
+    "current_bars_settings_descriptor",
+    "current_bars_settings_from_runtime",
+    "normalize_current_bars_settings",
 ]

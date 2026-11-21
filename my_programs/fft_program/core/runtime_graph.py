@@ -14,6 +14,7 @@ from typing import TypeAlias
 
 
 RUNTIME_GRAPH_SCHEMA_VERSION = 1
+MAX_RUNTIME_LAYERS = 8
 DIRECT_OUTPUT_BACKEND = "direct"
 PILLOW_BULK_OUTPUT_BACKEND = "pillow-bulk"
 SUPPORTED_OUTPUT_BACKENDS = frozenset({
@@ -83,6 +84,11 @@ class AnalyzerCapability:
         compare=False,
         repr=False,
     )
+    settings_descriptor: Mapping[str, object] = field(
+        default_factory=dict,
+        compare=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +100,11 @@ class LayerCapability:
     output_backends: frozenset[str]
     settings_validator: LayerSettingsValidator | None = field(
         default=None,
+        compare=False,
+        repr=False,
+    )
+    settings_descriptor: Mapping[str, object] = field(
+        default_factory=dict,
         compare=False,
         repr=False,
     )
@@ -259,6 +270,96 @@ def _freeze_settings(name: str, settings: object) -> FrozenSettings:
         active_container_ids=set(),
     )
     return FrozenSettings(items=frozen[1])  # type: ignore[arg-type]
+
+
+def _thaw_value(value: CanonicalValue) -> object:
+    value_type, payload = value
+    if value_type in {"null", "bool", "int", "string"}:
+        return payload
+    if value_type == "float":
+        return float.fromhex(payload)  # type: ignore[arg-type]
+    if value_type == "mapping":
+        return {
+            key: _thaw_value(item)
+            for key, item in payload  # type: ignore[union-attr]
+        }
+    if value_type == "sequence":
+        return [
+            _thaw_value(item)
+            for item in payload  # type: ignore[union-attr]
+        ]
+    raise RuntimeGraphValidationError(f"unsupported frozen value type {value_type!r}")
+
+
+def thaw_settings(settings: FrozenSettings) -> dict[str, object]:
+    """Return a detached JSON-shaped copy of immutable compiled settings."""
+
+    if not isinstance(settings, FrozenSettings):
+        raise TypeError("settings must be FrozenSettings")
+    return {key: _thaw_value(value) for key, value in settings.items}
+
+
+def runtime_definition_to_dict(definition: RuntimeDefinition) -> dict[str, object]:
+    """Serialize only the declarative public runtime graph."""
+
+    if not isinstance(definition, RuntimeDefinition):
+        raise TypeError("definition must be RuntimeDefinition")
+    return {
+        "schema_version": definition.schema_version,
+        "output_backend": definition.output_backend,
+        "analyzers": [
+            {
+                "schema_version": analyzer.schema_version,
+                "analyzer_id": analyzer.analyzer_id,
+                "analyzer_type": analyzer.analyzer_type,
+                "result_shape": list(analyzer.result_shape),
+                "result_dtype": analyzer.result_dtype,
+                "settings": dict(analyzer.settings),
+            }
+            for analyzer in definition.analyzers
+        ],
+        "layers": [
+            {
+                "schema_version": layer.schema_version,
+                "layer_id": layer.layer_id,
+                "layer_type": layer.layer_type,
+                "analyzer_id": layer.analyzer_id,
+                "visible": layer.visible,
+                "settings": dict(layer.settings),
+            }
+            for layer in definition.layers
+        ],
+    }
+
+
+def runtime_capabilities_to_dict(
+    capabilities: RuntimeCapabilities,
+) -> dict[str, object]:
+    """Serialize the closed trusted catalog without exposing callables."""
+
+    analyzer_capabilities, layer_capabilities = _compile_capabilities(capabilities)
+    return {
+        "analyzer_types": [
+            {
+                "analyzer_type": capability.analyzer_type,
+                "result_dtypes": sorted(capability.result_dtypes),
+                "result_ranks": sorted(capability.result_ranks),
+                "settings": dict(capability.settings_descriptor),
+            }
+            for capability in analyzer_capabilities.values()
+        ],
+        "layer_types": [
+            {
+                "layer_type": capability.layer_type,
+                "analyzer_types": sorted(capability.analyzer_types),
+                "output_backends": sorted(capability.output_backends),
+                "settings": dict(capability.settings_descriptor),
+            }
+            for capability in layer_capabilities.values()
+        ],
+        "output_backends": sorted(SUPPORTED_OUTPUT_BACKENDS),
+        "limits": {"max_layers": MAX_RUNTIME_LAYERS},
+    }
 
 
 def _compile_capabilities(
@@ -485,6 +586,10 @@ def compile_runtime_graph(
         raise RuntimeGraphValidationError(
             "layer definitions must be an ordered bottom-to-top list or tuple"
         )
+    if len(definition.layers) > MAX_RUNTIME_LAYERS:
+        raise RuntimeGraphValidationError(
+            f"runtime graph supports at most {MAX_RUNTIME_LAYERS} layers"
+        )
 
     analyzer_capabilities, layer_capabilities = _compile_capabilities(capabilities)
     analyzers: list[CompiledAnalyzerDefinition] = []
@@ -601,6 +706,7 @@ __all__ = [
     "FrozenSettings",
     "LayerCapability",
     "LayerDefinition",
+    "MAX_RUNTIME_LAYERS",
     "PILLOW_BULK_OUTPUT_BACKEND",
     "RUNTIME_GRAPH_SCHEMA_VERSION",
     "RuntimeCapabilities",
@@ -608,4 +714,7 @@ __all__ = [
     "RuntimeGraphValidationError",
     "SUPPORTED_OUTPUT_BACKENDS",
     "compile_runtime_graph",
+    "runtime_capabilities_to_dict",
+    "runtime_definition_to_dict",
+    "thaw_settings",
 ]
