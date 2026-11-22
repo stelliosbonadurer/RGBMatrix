@@ -44,6 +44,11 @@ Pi). From the phone, select `raspberrypi` and accept the same confirmation on bo
 sides. The explicit `default-agent` is required because the desktop panel may own
 the prior default agent even when no monitor is attached.
 
+When `bluetoothctl` prints `Request confirmation`, type `yes`. It may then move the
+prompt from `[bluetooth]#` into a device submenu. The following commands belong to
+the main menu: type `back` first if the prompt is in a device submenu. The console's
+`menu <submenu>` command enters a submenu and `back` returns to the main menu.
+
 Still inside `bluetoothctl`, use the address shown by that interactive pairing only:
 
 ```text
