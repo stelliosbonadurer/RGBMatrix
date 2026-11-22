@@ -17,6 +17,23 @@ python main.py --list-themes
 
 ## Runtime Controls
 
+The managed service exposes live presentation controls plus a declarative
+`structure` snapshot. Authenticated clients can use the revision-checked
+`structure.apply` action to add, remove, reorder, hide, or reconfigure up to eight
+layers and to select `direct` or `pillow-bulk`. The normal startup remains one
+`current-bars` layer using `direct`.
+
+For a reusable client of that same web-facing contract, run from the repository
+root:
+
+```bash
+python3 tools/fft_layers.py --layers 4 --dry-run
+python3 tools/fft_layers.py --layers 8 --backend pillow-bulk
+```
+
+Applying a generated structure resets layer-owned presentation history. See the
+tool's `--help` for controller URL and token-file options.
+
 ### Basic Controls
 
 | Key | Action |
@@ -83,6 +100,10 @@ fft_program/
 └── docs/                # Documentation
 ```
 
-The removed legacy layered mode is not part of this pipeline. Future multi-view
-rendering is planned as multiple instances of the standard analyzer/scaler/drawing
-path, added modularly and measured one instance at a time.
+The modular runtime supports multiple ordered instances of the standard bars layer.
+Every layer's complete settings include `min_freq`, `max_freq`, `noise_floor`,
+`low_freq_weight`, and `high_freq_weight`. Equivalent settings share one projected
+result; different ranges are projected from the same microphone block and the same
+full FFT instead of opening another capture stream. Every layer retains independent
+presentation state. Layer structure is runtime-only; restarting the visualization
+rebuilds the one-layer direct-output default.

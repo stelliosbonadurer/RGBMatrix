@@ -33,15 +33,6 @@ class FFTData:
     num_bins: int                 # Number of frequency bins
 
 
-@dataclass(frozen=True, slots=True)
-class _WorkerAnalysisState:
-    """One complete control-plane snapshot consumed by the analysis worker."""
-
-    plan: StandardAnalysisPlan
-    noise_floor: float
-    epoch: int
-
-
 class _LatestAnalysisTransport:
     """Fixed two-slot, latest-value transport for standard analysis."""
 
@@ -129,6 +120,109 @@ class _LatestAnalysisTransport:
             self._leased_index = None
 
 
+@dataclass(slots=True)
+class _ProjectionRecord:
+    """Mutable control-plane owner for one fixed projection transport."""
+
+    candidate: StandardAnalysisCandidate
+    noise_floor: float
+    transport: _LatestAnalysisTransport
+    plan: Optional[StandardAnalysisPlan] = None
+    epoch: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkerProjectionState:
+    """One immutable projection snapshot consumed by the worker."""
+
+    token: object
+    plan: StandardAnalysisPlan
+    noise_floor: float
+    transport: _LatestAnalysisTransport
+    epoch: int
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkerAnalysisState:
+    """One transform plus all projections for a sample generation."""
+
+    fft_size: int
+    window: np.ndarray
+    projections: tuple[_WorkerProjectionState, ...]
+
+    @property
+    def plan(self) -> StandardAnalysisPlan:
+        """Compatibility view of the primary projection plan."""
+        return self.projections[0].plan
+
+    @property
+    def noise_floor(self) -> float:
+        """Compatibility view of the primary projection noise floor."""
+        return self.projections[0].noise_floor
+
+    @property
+    def epoch(self) -> int:
+        """Compatibility view of the primary projection epoch."""
+        return self.projections[0].epoch
+
+
+class AudioProjection:
+    """A lightweight 64-bin view backed by one shared capture/FFT owner."""
+
+    def __init__(self, owner: "AudioProcessor", token: object) -> None:
+        self._owner = owner
+        self._token = token
+
+    def setup(self) -> int:
+        return self._owner.sample_rate
+
+    def start(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+    def get_fft_magnitudes(self) -> Optional[np.ndarray]:
+        self._owner._raise_worker_failure()
+        record = self._owner._projection_record(self._token)
+        if record.plan is None:
+            raise RuntimeError("Call setup() before get_fft_magnitudes()")
+        return record.transport.acquire_latest(record.epoch)
+
+    def release_fft_magnitudes(self) -> None:
+        self._owner._projection_record(self._token).transport.release_latest()
+
+    @property
+    def analysis_sequence(self) -> int:
+        return self._owner._projection_record(
+            self._token
+        ).transport.published_sequence
+
+    @property
+    def transport_drop_count(self) -> int:
+        return self._owner._projection_record(
+            self._token
+        ).transport.transport_drop_count
+
+    @property
+    def latest_analysis_publish_time_ns(self) -> int:
+        return self._owner._projection_record(
+            self._token
+        ).transport.published_time_ns
+
+    @property
+    def last_acquired_analysis_sequence(self) -> int:
+        return self._owner._projection_record(
+            self._token
+        ).transport.last_acquired_sequence
+
+    @property
+    def last_acquired_analysis_publish_time_ns(self) -> int:
+        return self._owner._projection_record(
+            self._token
+        ).transport.last_acquired_time_ns
+
+
 class AudioProcessor:
     """
     Handles audio capture and FFT processing.
@@ -177,7 +271,6 @@ class AudioProcessor:
         self._analysis_thread: Optional[threading.Thread] = None
         self._worker_failure: Optional[BaseException] = None
         self._worker_state: Optional[_WorkerAnalysisState] = None
-        self._analysis_transport = _LatestAnalysisTransport(num_bins)
         
         # The standard projection is validated now and compiled after setup learns
         # the device sample rate.  The hot path reads only ``active_plan``.
@@ -188,9 +281,74 @@ class AudioProcessor:
             num_bins,
         )
         self.active_plan: Optional[StandardAnalysisPlan] = None
+        self._primary_projection_token = object()
+        self._projection_records: dict[object, _ProjectionRecord] = {
+            self._primary_projection_token: _ProjectionRecord(
+                candidate=self.analysis_candidate,
+                noise_floor=float(sensitivity_settings.noise_floor),
+                transport=_LatestAnalysisTransport(num_bins),
+            )
+        }
+        # Kept as a compatibility alias for focused diagnostics and telemetry.
+        self._analysis_transport = self._projection_records[
+            self._primary_projection_token
+        ].transport
 
         # Stream (initialized in start())
         self._stream: Optional[sd.InputStream] = None
+
+    @staticmethod
+    def _transform_key(candidate: StandardAnalysisCandidate) -> tuple[int, int]:
+        """Identify FFT math independently from projection-only settings."""
+        return (candidate.block_size, candidate.fft_size)
+
+    def _projection_record(self, token: object) -> _ProjectionRecord:
+        try:
+            return self._projection_records[token]
+        except KeyError as exc:
+            raise RuntimeError("projection is no longer active") from exc
+
+    def create_projection(
+        self,
+        candidate: StandardAnalysisCandidate,
+        noise_floor: float,
+    ) -> AudioProjection:
+        """Create one projection without opening another capture stream."""
+        if self._transform_key(candidate) != self._transform_key(
+            self.analysis_candidate
+        ):
+            raise ValueError(
+                "separate FFT transforms are not active yet; projection must share "
+                "block_size and fft_size"
+            )
+        token = object()
+        record = _ProjectionRecord(
+            candidate=candidate,
+            noise_floor=float(noise_floor),
+            transport=_LatestAnalysisTransport(candidate.num_bins),
+        )
+        self._projection_records[token] = record
+        try:
+            if self.sample_rate > 0:
+                record.plan = self.compile_analysis_candidate(candidate)
+                self._publish_worker_state({token})
+        except BaseException:
+            self._projection_records.pop(token, None)
+            raise
+        return AudioProjection(self, token)
+
+    def remove_projection(self, projection: AudioProjection) -> None:
+        """Retire a view after no active layer plan can reference it."""
+        if not isinstance(projection, AudioProjection) or projection._owner is not self:
+            raise ValueError("projection is not owned by this audio processor")
+        if projection._token == self._primary_projection_token:
+            raise ValueError("the primary projection cannot be removed")
+        record = self._projection_records.pop(projection._token, None)
+        if record is None:
+            return
+        record.transport.activate_epoch(record.epoch + 1)
+        if self.sample_rate > 0:
+            self._publish_worker_state(set())
     
     def setup(self) -> int:
         """
@@ -231,7 +389,18 @@ class AudioProcessor:
         # Initialize FFT parameters
         self.latest_samples = np.zeros(self.audio_settings.block_size, dtype=np.float32)
         plan = self.compile_analysis_candidate(candidate)
-        self.activate_analysis_plan(candidate, plan)
+        primary = self._projection_record(self._primary_projection_token)
+        primary.candidate = candidate
+        primary.noise_floor = float(self.sensitivity_settings.noise_floor)
+        primary.plan = plan
+        self.active_plan = plan
+        changed_tokens = {self._primary_projection_token}
+        for token, record in self._projection_records.items():
+            if token == self._primary_projection_token:
+                continue
+            record.plan = self.compile_analysis_candidate(record.candidate)
+            changed_tokens.add(token)
+        self._publish_worker_state(changed_tokens)
         
         # Check bin coverage
         empty_count = sum(len(indices) == 0 for indices in plan.bin_indices)
@@ -278,6 +447,10 @@ class AudioProcessor:
         """Publish one complete standard-analysis plan between frames."""
         self.analysis_candidate = candidate
         self.active_plan = plan
+        primary = self._projection_record(self._primary_projection_token)
+        primary.candidate = candidate
+        primary.plan = plan
+        primary.noise_floor = float(self.sensitivity_settings.noise_floor)
         self.activate_analysis_inputs()
 
     def activate_analysis_inputs(self) -> None:
@@ -285,18 +458,48 @@ class AudioProcessor:
         plan = self.active_plan
         if plan is None:
             raise RuntimeError("Call setup() before activating analysis inputs")
-        prior_state = self._worker_state
-        epoch = 1 if prior_state is None else prior_state.epoch + 1
-        state = _WorkerAnalysisState(
-            plan=plan,
-            noise_floor=float(self.sensitivity_settings.noise_floor),
-            epoch=epoch,
+        primary = self._projection_record(self._primary_projection_token)
+        primary.plan = plan
+        primary.noise_floor = float(self.sensitivity_settings.noise_floor)
+        self._publish_worker_state({self._primary_projection_token})
+
+    def _publish_worker_state(self, changed_tokens: set[object]) -> None:
+        """Atomically expose one transform and every compiled projection."""
+        projections: list[_WorkerProjectionState] = []
+        transform_key: Optional[tuple[int, int]] = None
+        window: Optional[np.ndarray] = None
+        fft_size = 0
+        for token, record in self._projection_records.items():
+            plan = record.plan
+            if plan is None:
+                continue
+            candidate_key = self._transform_key(record.candidate)
+            if transform_key is None:
+                transform_key = candidate_key
+                window = plan.window
+                fft_size = plan.fft_size
+            elif candidate_key != transform_key:
+                raise RuntimeError("worker projections do not share one FFT transform")
+            if token in changed_tokens:
+                record.epoch += 1
+                record.transport.activate_epoch(record.epoch)
+            projections.append(
+                _WorkerProjectionState(
+                    token=token,
+                    plan=plan,
+                    noise_floor=record.noise_floor,
+                    transport=record.transport,
+                    epoch=record.epoch,
+                )
+            )
+        if not projections or window is None:
+            self._worker_state = None
+            return
+        self._worker_state = _WorkerAnalysisState(
+            fft_size=fft_size,
+            window=window,
+            projections=tuple(projections),
         )
-        # Reject any later publication from the old state before exposing the new
-        # one. The last frame that was already complete stays readable until the new
-        # epoch publishes, keeping render cadence independent from Apply.
-        self._analysis_transport.activate_epoch(epoch)
-        self._worker_state = state
         self._analysis_wake.set()
     
     @staticmethod
@@ -310,6 +513,22 @@ class AudioProcessor:
         x = samples * plan.window
         X = np.fft.rfft(x, n=plan.fft_size)
         magnitudes = np.abs(X)
+
+        AudioProcessor._project_into(
+            magnitudes,
+            plan,
+            noise_floor,
+            destination,
+        )
+
+    @staticmethod
+    def _project_into(
+        magnitudes: np.ndarray,
+        plan: StandardAnalysisPlan,
+        noise_floor: float,
+        destination: np.ndarray,
+    ) -> None:
+        """Map one shared full spectrum into one configured 64-bin view."""
 
         destination.fill(0)
         for index, bin_indices in enumerate(plan.bin_indices):
@@ -336,24 +555,47 @@ class AudioProcessor:
         )
         self._last_seen_generation = generation
 
-        destination = self._analysis_transport.claim_write()
-        if destination is None:
+        claimed: list[tuple[_WorkerProjectionState, np.ndarray]] = []
+        for projection in state.projections:
+            destination = projection.transport.claim_write()
+            if destination is None:
+                continue
+            claimed.append((projection, destination))
+        if not claimed:
             self.skipped_generation_count += 1
             return False
 
         try:
-            self._analyze_into(
-                samples,
-                state.plan,
-                state.noise_floor,
-                destination,
-            )
+            if len(claimed) == 1:
+                projection, destination = claimed[0]
+                self._analyze_into(
+                    samples,
+                    projection.plan,
+                    projection.noise_floor,
+                    destination,
+                )
+            else:
+                x = samples * state.window
+                spectrum = np.abs(np.fft.rfft(x, n=state.fft_size))
+                for projection, destination in claimed:
+                    self._project_into(
+                        spectrum,
+                        projection.plan,
+                        projection.noise_floor,
+                        destination,
+                    )
         except BaseException:
-            self._analysis_transport.abort_claimed()
+            for projection, _destination in claimed:
+                projection.transport.abort_claimed()
             raise
 
         self.last_analyzed_generation = generation
-        return self._analysis_transport.publish_claimed(state.epoch)
+        published = False
+        for projection, _destination in claimed:
+            published = projection.transport.publish_claimed(
+                projection.epoch
+            ) or published
+        return published
 
     def _analysis_worker(self) -> None:
         """Consume only the newest callback generation and publish latest results."""
@@ -463,10 +705,10 @@ class AudioProcessor:
     def get_fft_magnitudes(self) -> Optional[np.ndarray]:
         """Lease the latest complete standard result for direct NumPy access."""
         self._raise_worker_failure()
-        state = self._worker_state
-        if state is None:
+        record = self._projection_record(self._primary_projection_token)
+        if record.plan is None:
             raise RuntimeError("Call setup() before get_fft_magnitudes()")
-        return self._analysis_transport.acquire_latest(state.epoch)
+        return record.transport.acquire_latest(record.epoch)
 
     def release_fft_magnitudes(self) -> None:
         """Release the standard result after render-thread scaling consumes it."""
@@ -480,7 +722,10 @@ class AudioProcessor:
     @property
     def transport_drop_count(self) -> int:
         """Number of stale-epoch or no-writable-slot results dropped."""
-        return self._analysis_transport.transport_drop_count
+        return sum(
+            record.transport.transport_drop_count
+            for record in self._projection_records.values()
+        )
 
     @property
     def latest_analysis_publish_time_ns(self) -> int:

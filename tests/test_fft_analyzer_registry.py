@@ -115,6 +115,7 @@ class RecordingRuntime:
         self.stop_calls = 0
         self.result = np.zeros(64, dtype=np.float32)
         self.leased = False
+        self.projections = []
 
     def setup(self) -> int:
         self.setup_calls += 1
@@ -142,6 +143,16 @@ class RecordingRuntime:
         if not self.leased:
             raise RuntimeError("no result lease")
         self.leased = False
+
+    def create_projection(self, candidate, noise_floor):
+        projection = RecordingRuntime()
+        projection.candidate = candidate
+        projection.noise_floor = noise_floor
+        self.projections.append(projection)
+        return projection
+
+    def remove_projection(self, projection):
+        self.projections.remove(projection)
 
 
 class AnalyzerRegistryCompilationTests(unittest.TestCase):
@@ -187,7 +198,7 @@ class AnalyzerRegistryCompilationTests(unittest.TestCase):
             top.get_fft_magnitudes()
         bottom.release_fft_magnitudes()
 
-    def test_non_equivalent_definitions_are_rejected_before_factory_execution(self) -> None:
+    def test_non_equivalent_fft_analyzers_are_deferred_before_factory_execution(self) -> None:
         audio, frequency, sensitivity = _settings()
         first = standard_analyzer_definition(
             "first",
@@ -212,10 +223,10 @@ class AnalyzerRegistryCompilationTests(unittest.TestCase):
             standard_analyzer_capabilities(),
         )
         factory = mock.Mock(return_value=RecordingRuntime())
-
-        with self.assertRaisesRegex(AnalyzerRegistryError, "exactly one canonical"):
+        with self.assertRaisesRegex(
+            AnalyzerRegistryError, "exactly one canonical FFT transform"
+        ):
             AnalyzerRegistry(plan, {STANDARD_ANALYZER_TYPE: factory})
-
         factory.assert_not_called()
 
     def test_missing_factory_fails_before_lifecycle(self) -> None:
@@ -383,6 +394,138 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "analysis worker failed"):
             analyzer.get_fft_magnitudes()
+
+    def test_distinct_layer_ranges_run_one_rfft_and_share_equivalent_views(self) -> None:
+        audio, frequency, sensitivity = _settings()
+        processor = AudioProcessor(audio, frequency, sensitivity, 64)
+        plan = compile_standard_analyzer_plan(
+            audio_settings=audio,
+            frequency_settings=frequency,
+            sensitivity_settings=sensitivity,
+            num_bins=64,
+            output_backend=DIRECT_OUTPUT_BACKEND,
+        )
+        registry = AnalyzerRegistry(
+            plan,
+            {STANDARD_ANALYZER_TYPE: lambda _definition: processor},
+        )
+        registry.setup()
+        low_settings = {
+            "min_freq": 80.0,
+            "max_freq": 1950.0,
+            "noise_floor": 0.0,
+            "low_freq_weight": 0.45,
+            "high_freq_weight": 10.0,
+        }
+        high_settings = {
+            **low_settings,
+            "min_freq": 2000.0,
+            "max_freq": 6300.0,
+        }
+        low = registry.resolve_projection(plan.analyzers[0], low_settings)
+        low_alias = registry.resolve_projection(plan.analyzers[0], low_settings)
+        high = registry.resolve_projection(plan.analyzers[0], high_settings)
+        self.assertIs(low, low_alias)
+        self.assertIsNot(low, high)
+
+        positions = np.arange(512, dtype=np.float32)
+        samples = (
+            np.sin(2 * np.pi * 300 * positions / 44_100)
+            + 0.5 * np.sin(2 * np.pi * 4000 * positions / 44_100)
+        ).astype(np.float32)
+        with mock.patch("numpy.fft.rfft", wraps=np.fft.rfft) as rfft:
+            processor._audio_callback(samples.reshape(-1, 1), 512, None, None)
+            self.assertTrue(processor._process_latest_samples_once())
+        self.assertEqual(rfft.call_count, 1)
+
+        low_result = low.get_fft_magnitudes().copy()
+        low.release_fft_magnitudes()
+        high_result = high.get_fft_magnitudes().copy()
+        high.release_fft_magnitudes()
+        self.assertFalse(np.array_equal(low_result, high_result))
+        registry.stop()
+
+    def test_multiple_projection_views_open_one_input_stream(self) -> None:
+        audio, frequency, sensitivity = _settings()
+        processor = AudioProcessor(audio, frequency, sensitivity, 64)
+        plan = compile_standard_analyzer_plan(
+            audio_settings=audio,
+            frequency_settings=frequency,
+            sensitivity_settings=sensitivity,
+            num_bins=64,
+            output_backend=DIRECT_OUTPUT_BACKEND,
+        )
+        registry = AnalyzerRegistry(
+            plan,
+            {STANDARD_ANALYZER_TYPE: lambda _definition: processor},
+        )
+        registry.setup()
+        registry.resolve_projection(
+            plan.analyzers[0],
+            {
+                "min_freq": 80.0,
+                "max_freq": 1950.0,
+                "noise_floor": 0.0,
+                "low_freq_weight": 0.45,
+                "high_freq_weight": 10.0,
+            },
+        )
+
+        class Stream:
+            def __init__(self):
+                self.start_calls = 0
+                self.stop_calls = 0
+                self.close_calls = 0
+
+            def start(self): self.start_calls += 1
+            def stop(self): self.stop_calls += 1
+            def close(self): self.close_calls += 1
+
+        stream = Stream()
+        with mock.patch("core.audio.sd.InputStream", return_value=stream) as opened:
+            registry.start()
+            registry.stop()
+        opened.assert_called_once()
+        self.assertEqual(
+            (stream.start_calls, stream.stop_calls, stream.close_calls),
+            (1, 1, 1),
+        )
+
+    def test_projection_prepare_rolls_back_and_retires_after_commit(self) -> None:
+        audio, frequency, sensitivity = _settings()
+        processor = AudioProcessor(audio, frequency, sensitivity, 64)
+        plan = compile_standard_analyzer_plan(
+            audio_settings=audio,
+            frequency_settings=frequency,
+            sensitivity_settings=sensitivity,
+            num_bins=64,
+            output_backend=DIRECT_OUTPUT_BACKEND,
+        )
+        registry = AnalyzerRegistry(
+            plan,
+            {STANDARD_ANALYZER_TYPE: lambda _definition: processor},
+        )
+        low = {
+            "min_freq": 80.0, "max_freq": 1950.0, "noise_floor": 0.3,
+            "low_freq_weight": 0.45, "high_freq_weight": 10.0,
+        }
+        high = {**low, "min_freq": 2000.0, "max_freq": 6300.0}
+
+        rolled_back = registry.begin_projection_prepare()
+        registry.resolve_projection(plan.analyzers[0], low)
+        self.assertEqual(len(processor._projection_records), 2)
+        rolled_back.rollback()
+        self.assertEqual(len(processor._projection_records), 1)
+
+        accepted = registry.begin_projection_prepare()
+        registry.resolve_projection(plan.analyzers[0], low)
+        accepted.commit()
+        self.assertEqual(len(processor._projection_records), 2)
+
+        replacement = registry.begin_projection_prepare()
+        registry.resolve_projection(plan.analyzers[0], high)
+        replacement.commit()
+        self.assertEqual(len(processor._projection_records), 2)
 
     def test_layer_plan_resolves_registry_once_outside_the_frame_loop(self) -> None:
         source = MAIN_PATH.read_text(encoding="utf-8")

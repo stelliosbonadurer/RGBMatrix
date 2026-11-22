@@ -91,6 +91,15 @@ PRESENTATION_COMMAND_PATHS = frozenset({
     "dynamic.reseed",
 })
 
+ANALYSIS_PROJECTION_COMMAND_PATHS = frozenset({
+    "settings.noise_floor",
+    "settings.low_freq_weight",
+    "settings.high_freq_weight",
+    "settings.zoom_preset_index",
+    "zoom.next",
+    "zoom.previous",
+})
+
 
 class RuntimeControlError(ValueError):
     """A bounded, machine-readable error returned to a control client."""
