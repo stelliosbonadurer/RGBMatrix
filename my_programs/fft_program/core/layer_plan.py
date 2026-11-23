@@ -15,6 +15,17 @@ from typing import Any, TypeAlias
 
 import numpy as np  # type: ignore
 
+from core.analysis_plan import (
+    DEFAULT_WEIGHT_POINTS,
+    MAX_WEIGHT_POINTS,
+    MIN_WEIGHT_POINTS,
+    WEIGHT_MAX,
+    WEIGHT_MIN,
+    WEIGHT_POSITION_MAX,
+    WEIGHT_POSITION_MIN,
+    WeightPointsError,
+    weight_points_document,
+)
 from core.analyzer_registry import (
     AnalyzerRegistry,
     STANDARD_ANALYZER_ID,
@@ -66,8 +77,7 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "min_freq",
     "max_freq",
     "noise_floor",
-    "low_freq_weight",
-    "high_freq_weight",
+    "weight_points",
 })
 
 
@@ -459,8 +469,7 @@ def current_bars_settings_from_runtime(
         "min_freq": float(settings.frequency.active_min_freq),
         "max_freq": float(settings.frequency.active_max_freq),
         "noise_floor": float(settings.sensitivity.noise_floor),
-        "low_freq_weight": float(settings.sensitivity.low_freq_weight),
-        "high_freq_weight": float(settings.sensitivity.high_freq_weight),
+        "weight_points": weight_points_document(settings.sensitivity.weight_points),
     }
 
 
@@ -469,27 +478,58 @@ def current_bars_settings_descriptor() -> dict[str, object]:
 
     return {
         "fields": [
-            {"name": "theme", "type": "choice", "choices": list_themes(), "default": "ocean"},
-            {"name": "gradient", "type": "boolean", "default": False},
-            {"name": "overflow", "type": "boolean", "default": True},
-            {"name": "overflow_multiplier", "type": "number", "min": 0.1, "max": 10.0, "default": 1.5},
-            {"name": "bars", "type": "boolean", "default": True},
-            {"name": "full", "type": "boolean", "default": False},
-            {"name": "shadow_enabled", "type": "boolean", "default": False},
-            {"name": "peak_enabled", "type": "boolean", "default": False},
-            {"name": "peak_color_mode", "type": "choice", "choices": ["white", "bar", "contrast", "peak"], "default": "contrast"},
-            {"name": "peak_fall_speed", "type": "number", "min": 0.0, "max": 1.0, "default": 0.08},
-            {"name": "peak_hold_frames", "type": "integer", "min": 0, "max": 600, "default": 8},
-            {"name": "sensitivity_scalar", "type": "number", "min": 0.01, "max": 20.0, "default": 1.0},
-            {"name": "smoothing_rise", "type": "number", "min": 0.0, "max": 1.0, "default": 0.4},
-            {"name": "smoothing_fall", "type": "number", "min": 0.0, "max": 1.0, "default": 0.1},
-            {"name": "dynamic_cycle_speed", "type": "number", "min": 0.0, "max": 5.0, "default": 0.06},
-            {"name": "dynamic_frozen", "type": "boolean", "default": False},
-            {"name": "min_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 100.0},
-            {"name": "max_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 6300.0},
-            {"name": "noise_floor", "type": "number", "min": 0.0, "max": 100.0, "default": 0.3},
-            {"name": "low_freq_weight", "type": "number", "min": 0.0, "max": 100.0, "default": 0.45},
-            {"name": "high_freq_weight", "type": "number", "min": 0.0, "max": 100.0, "default": 10.0},
+            {"name": "theme", "type": "choice", "choices": list_themes(), "default": "ocean",
+             "help": "Color theme for this layer's bars."},
+            {"name": "gradient", "type": "boolean", "default": False,
+             "help": "On: each pixel gets its own color along the bar. Off: one color per bar."},
+            {"name": "overflow", "type": "boolean", "default": True,
+             "help": "On: loud bars wrap past the top in layered colors. Off: bars stop at the top."},
+            {"name": "overflow_multiplier", "type": "number", "min": 0.1, "max": 10.0, "default": 1.5,
+             "help": "How readily bars overflow; higher means more overflow."},
+            {"name": "bars", "type": "boolean", "default": True,
+             "help": "Draw the bars. Turn off to show only the peak markers."},
+            {"name": "full", "type": "boolean", "default": False,
+             "help": "Light the whole column, crossfading at the bar height."},
+            {"name": "shadow_enabled", "type": "boolean", "default": False,
+             "help": "Let pixels fade out over a few frames instead of switching off."},
+            {"name": "peak_enabled", "type": "boolean", "default": False,
+             "help": "Show a marker that holds at each bar's recent peak."},
+            {"name": "peak_color_mode", "type": "choice", "choices": ["white", "bar", "contrast", "peak"], "default": "contrast",
+             "help": "Peak marker color: white, the bar's color, a contrasting color, or the theme's peak color."},
+            {"name": "peak_fall_speed", "type": "number", "min": 0.0, "max": 1.0, "default": 0.08,
+             "help": "How fast a peak marker drops after its hold ends."},
+            {"name": "peak_hold_frames", "type": "integer", "min": 0, "max": 600, "default": 8,
+             "help": "Frames a peak marker stays put before falling."},
+            {"name": "sensitivity_scalar", "type": "number", "min": 0.01, "max": 20.0, "default": 1.0,
+             "help": "Overall gain on top of automatic scaling; higher makes bars taller."},
+            {"name": "smoothing_rise", "type": "number", "min": 0.0, "max": 1.0, "default": 0.4,
+             "help": "How fast bars rise toward a louder value (1 is instant)."},
+            {"name": "smoothing_fall", "type": "number", "min": 0.0, "max": 1.0, "default": 0.1,
+             "help": "How fast bars fall toward a quieter value (1 is instant)."},
+            {"name": "dynamic_cycle_speed", "type": "number", "min": 0.0, "max": 5.0, "default": 0.06,
+             "help": "Color cycling speed for the dynamic themes; ignored by other themes."},
+            {"name": "dynamic_frozen", "type": "boolean", "default": False,
+             "help": "Pause color cycling for the dynamic themes."},
+            {"name": "min_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 100.0,
+             "help": "Lowest frequency in Hz shown by the leftmost bar."},
+            {"name": "max_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 6300.0,
+             "help": "Highest frequency in Hz shown by the rightmost bar; at most half the sample rate."},
+            {"name": "noise_floor", "type": "number", "min": 0.0, "max": 100.0, "default": 0.3,
+             "help": "Subtracted from every weighted bar; raise it if bars move with no audio."},
+            {"name": "weight_points", "type": "points",
+             "min_items": MIN_WEIGHT_POINTS, "max_items": MAX_WEIGHT_POINTS,
+             "item_fields": [
+                 {"name": "position", "type": "number",
+                  "min": WEIGHT_POSITION_MIN, "max": WEIGHT_POSITION_MAX,
+                  "help": "Place along the layer's range: 0 is min_freq, 1 is max_freq, log-spaced."},
+                 {"name": "weight", "type": "number", "min": WEIGHT_MIN, "max": WEIGHT_MAX,
+                  "help": "Multiplier for the bars at this position."},
+             ],
+             "default": [
+                 {"position": position, "weight": weight}
+                 for position, weight in DEFAULT_WEIGHT_POINTS
+             ],
+             "help": "Frequency weighting curve: linear between points, flat beyond the first and last. Points are sorted by position, and two points can't share one."},
         ],
         "backend_constraints": {
             PILLOW_BULK_OUTPUT_PATH: {
@@ -585,8 +625,12 @@ def normalize_current_bars_settings(
             "max_freq must be greater than min_freq", field="max_freq"
         )
     normalized["noise_floor"] = _number(normalized, "noise_floor", 0.0, 100.0)
-    normalized["low_freq_weight"] = _number(normalized, "low_freq_weight", 0.0, 100.0)
-    normalized["high_freq_weight"] = _number(normalized, "high_freq_weight", 0.0, 100.0)
+    try:
+        normalized["weight_points"] = weight_points_document(
+            normalized["weight_points"]
+        )
+    except WeightPointsError as exc:
+        raise LayerSettingsError(str(exc), field=exc.field) from exc
 
     if output_backend == PILLOW_BULK_OUTPUT_PATH:
         fixed = current_bars_settings_descriptor()["backend_constraints"][PILLOW_BULK_OUTPUT_PATH]  # type: ignore[index]
@@ -837,8 +881,7 @@ def compile_current_bars_layer_plan(
                         "min_freq",
                         "max_freq",
                         "noise_floor",
-                        "low_freq_weight",
-                        "high_freq_weight",
+                        "weight_points",
                     )
                 },
             )

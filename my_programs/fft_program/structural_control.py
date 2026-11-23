@@ -150,6 +150,36 @@ def _settings(
         raise StructuralValidationError("invalid_value", str(exc), path=path) from exc
 
 
+BIN_LAYOUT_RULES = {
+    # The named rules of core.analysis_plan.projection_layout (D-023). The bin
+    # graph recomputes a draft layer's bars from these and the layer's own
+    # min_freq, max_freq, and weight_points.
+    "spacing": "log",
+    "bar_center": "arithmetic-midpoint",
+    "bar_bins": "half-open",
+    "weight_curve": "piecewise-linear-position",
+}
+
+
+def bin_layout_snapshot(definition: RuntimeDefinition) -> dict[str, object] | None:
+    """Describe the inputs each layer's bars are computed from.
+
+    Every layer reads the one standard analyzer, so its sample rate, FFT size,
+    and bar count apply to every layer. ``None`` when there is no analyzer.
+    """
+
+    if not definition.analyzers:
+        return None
+    analyzer = definition.analyzers[0]
+    return {
+        "analyzer_id": analyzer.analyzer_id,
+        "sample_rate": analyzer.settings.get("sample_rate"),
+        "fft_size": analyzer.settings.get("fft_size"),
+        "num_bars": analyzer.result_shape[0],
+        **BIN_LAYOUT_RULES,
+    }
+
+
 def structure_document_to_definition(
     base: RuntimeDefinition,
     document: object,
@@ -289,6 +319,7 @@ class StructuralRuntimeCoordinator:
         public["available_analyzer_ids"] = [
             analyzer.analyzer_id for analyzer in self._active_definition.analyzers
         ]
+        public["bin_layout"] = bin_layout_snapshot(self._active_definition)
         public["capabilities"] = self._capability_data
         if self._launch_error is not None:
             public["launch_error"] = dict(self._launch_error)

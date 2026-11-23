@@ -243,6 +243,9 @@ class StructureDocumentTests(unittest.TestCase):
         settings = self.layer_settings
         missing_theme = dict(settings)
         missing_theme.pop("theme")
+        retired_pair = dict(settings)
+        retired_pair.pop("weight_points")
+        retired_pair.update(low_freq_weight=0.45, high_freq_weight=10.0)
 
         def one(**overrides):
             return _document([_layer(settings, **overrides)])
@@ -277,6 +280,13 @@ class StructureDocumentTests(unittest.TestCase):
             (one(settings={**settings, "sensitivity_scalar": 10**400}), "invalid_value", "structure.layers[0].settings.sensitivity_scalar"),
             (one(settings={**settings, "peak_hold_frames": 10**400}), "invalid_value", "structure.layers[0].settings.peak_hold_frames"),
             (one(settings={**settings, "max_freq": 50.0}), "invalid_value", "structure.layers[0].settings.max_freq"),
+            (one(settings={**settings, "weight_points": []}), "invalid_value", "structure.layers[0].settings.weight_points"),
+            (one(settings={**settings, "weight_points": {"position": 0, "weight": 1}}), "invalid_value", "structure.layers[0].settings.weight_points"),
+            (one(settings={**settings, "weight_points": [{"position": 0, "weight": 1}, {"position": 1, "weight": 101}]}), "invalid_value", "structure.layers[0].settings.weight_points[1].weight"),
+            (one(settings={**settings, "weight_points": [{"position": 0.5, "weight": 1}, {"position": 0.5, "weight": 2}]}), "invalid_value", "structure.layers[0].settings.weight_points[1].position"),
+            (one(settings={**settings, "weight_points": [{"position": 0.5}]}), "invalid_value", "structure.layers[0].settings.weight_points[0]"),
+            (one(settings={**settings, "low_freq_weight": 0.45, "high_freq_weight": 10.0}), "invalid_value", "structure.layers[0].settings"),
+            (one(settings=retired_pair), "invalid_value", "structure.layers[0].settings"),
         )
         for document, code, path in cases:
             with self.subTest(code=code, path=path), self.assertRaises(
@@ -665,9 +675,57 @@ class StructuralCoordinatorTests(unittest.TestCase):
         self.assertIn("fft_size", analyzer_settings)
         self.assertNotIn("launch_error", structure)
         self.assertEqual(structure["layers"], document["layers"])
+        self.assertEqual(
+            structure["bin_layout"],
+            {
+                "analyzer_id": "main-audio",
+                "sample_rate": analyzer_settings["sample_rate"],
+                "fft_size": analyzer_settings["fft_size"],
+                "num_bars": self.runtime_width,
+                "spacing": "log",
+                "bar_center": "arithmetic-midpoint",
+                "bar_bins": "half-open",
+                "weight_curve": "piecewise-linear-position",
+            },
+        )
         self.assertEqual(len(self.owner.active.layers), 2)
         self.assertEqual(self.registry.projection_count, 2)
         json.dumps(snapshot)
+
+    def test_weight_points_are_sorted_in_the_snapshot_and_round_trip(self) -> None:
+        coordinator = self._coordinator()
+        unsorted = [
+            {"position": 1, "weight": 4},
+            {"position": 0.0, "weight": 0.5},
+            {"position": 0.4, "weight": 2.5},
+        ]
+        document = _document([
+            _layer({**self.base, "weight_points": unsorted}),
+            _layer(
+                {**self.base, "weight_points": [{"position": 0.5, "weight": 1.0}]},
+                layer_id="flat",
+            ),
+        ])
+        result = self._exchange(coordinator, _payload(document))
+        self.assertNotIn("error", result)
+        layers = result["value"]["structure"]["layers"]
+        self.assertEqual(
+            layers[0]["settings"]["weight_points"],
+            [
+                {"position": 0.0, "weight": 0.5},
+                {"position": 0.4, "weight": 2.5},
+                {"position": 1.0, "weight": 4.0},
+            ],
+        )
+        # Only the points differ from the launch layer, so each needs its own view.
+        self.assertEqual(self.registry.projection_count, 3)
+
+        again = self._exchange(
+            coordinator,
+            _payload(_document(layers), revision=result["value"]["revision"]),
+        )
+        self.assertNotIn("error", again)
+        self.assertEqual(again["value"]["structure"]["layers"], layers)
 
     def test_retired_structure_apply_and_patches_are_rejected(self) -> None:
         coordinator = self._coordinator()

@@ -7,6 +7,8 @@ layer structure (``structure.set``) is the only configuration path (D-001, D-015
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 from pathlib import Path
 import sys
@@ -21,7 +23,9 @@ if str(FFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FFT_ROOT))
 
 from config import Settings  # noqa: E402
-from config.settings import SensitivitySettings  # noqa: E402
+from config.presets import get_preset  # noqa: E402
+from config.settings import SensitivitySettings, load_settings  # noqa: E402
+from config.weighting import WeightPointsError, legacy_weight_points  # noqa: E402
 from runtime_control import FftRuntimeController  # noqa: E402
 from matrix_controller.runtime_transport import (  # noqa: E402
     FrameBoundaryRuntimeBridge,
@@ -206,6 +210,67 @@ class FftRuntimeControllerTests(unittest.TestCase):
             bridge.close()
             server.close()
             listener.join(1)
+
+
+class SettingsFileTests(unittest.TestCase):
+    """Retired sensitivity keys in a --settings file convert (D-022)."""
+
+    def _load(self, sensitivity):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.json"
+            path.write_text(json.dumps({"sensitivity": sensitivity}))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                settings = load_settings(str(path))
+        return settings, output.getvalue()
+
+    def test_retired_weight_pair_converts_to_points_with_a_note(self) -> None:
+        settings, output = self._load(
+            {"noise_floor": 0.2, "low_freq_weight": 0.6, "high_freq_weight": 8.0}
+        )
+        self.assertEqual(settings.sensitivity.noise_floor, 0.2)
+        self.assertEqual(
+            settings.sensitivity.weight_points, legacy_weight_points(0.6, 8.0)
+        )
+        self.assertIn("converted retired high_freq_weight, low_freq_weight", output)
+
+        settings, _output = self._load({"high_freq_weight": 4.0})
+        self.assertEqual(
+            settings.sensitivity.weight_points, legacy_weight_points(0.45, 4.0)
+        )
+
+    def test_silence_threshold_is_dropped_with_a_note(self) -> None:
+        settings, output = self._load({"silence_threshold": 0.1, "noise_floor": 0.4})
+        self.assertEqual(settings.sensitivity.noise_floor, 0.4)
+        self.assertEqual(settings.sensitivity.weight_points, legacy_weight_points())
+        self.assertIn("ignored retired sensitivity.silence_threshold", output)
+
+    def test_weight_points_win_over_retired_keys_and_are_validated(self) -> None:
+        settings, output = self._load({
+            "low_freq_weight": 0.6,
+            "weight_points": [
+                {"position": 1, "weight": 3},
+                {"position": 0, "weight": 1},
+            ],
+        })
+        self.assertEqual(
+            settings.sensitivity.weight_points,
+            [{"position": 0.0, "weight": 1.0}, {"position": 1.0, "weight": 3.0}],
+        )
+        self.assertIn("low_freq_weight key(s) were ignored", output)
+        with self.assertRaises(WeightPointsError):
+            self._load({"weight_points": []})
+
+    def test_built_in_presets_use_points(self) -> None:
+        # Only "default" constructs today: the others set the read-only
+        # zoom_min_freq property (pre-existing, parked in the M2 log).
+        self.assertEqual(
+            get_preset("default").sensitivity.weight_points, legacy_weight_points()
+        )
+        source = (FFT_ROOT / "config" / "presets.py").read_text()
+        self.assertNotIn(".low_freq_weight", source)
+        self.assertNotIn(".high_freq_weight", source)
+        self.assertEqual(source.count("weight_points = legacy_weight_points("), 4)
 
 
 if __name__ == "__main__":

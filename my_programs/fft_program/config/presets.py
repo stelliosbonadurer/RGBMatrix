@@ -3,6 +3,8 @@ Preset configurations for FFT visualizer.
 
 Named presets for different use cases.
 """
+from .weighting import legacy_weight_points
+
 from .settings import Settings, AudioSettings, FrequencySettings, ColorSettings, SensitivitySettings
 
 
@@ -55,8 +57,7 @@ def _bluegrass_preset() -> Settings:
     settings.color.brightness_boost = 1.0
     
     # Balanced sensitivity for acoustic dynamics
-    settings.sensitivity.low_freq_weight = 0.6
-    settings.sensitivity.high_freq_weight = 8.0
+    settings.sensitivity.weight_points = legacy_weight_points(0.6, 8.0)
     settings.sensitivity.noise_floor = 0.25
     
     # Punchy but not too reactive
@@ -81,8 +82,7 @@ def _edm_preset() -> Settings:
     settings.color.brightness_boost = 1.2
     
     # Heavy bass emphasis
-    settings.sensitivity.low_freq_weight = 0.8
-    settings.sensitivity.high_freq_weight = 6.0
+    settings.sensitivity.weight_points = legacy_weight_points(0.8, 6.0)
     settings.sensitivity.noise_floor = 0.2
     
     # Very punchy and reactive
@@ -115,8 +115,7 @@ def _classical_preset() -> Settings:
     settings.color.brightness_boost = 0.9
     
     # Balanced frequency response
-    settings.sensitivity.low_freq_weight = 0.7
-    settings.sensitivity.high_freq_weight = 5.0
+    settings.sensitivity.weight_points = legacy_weight_points(0.7, 5.0)
     settings.sensitivity.noise_floor = 0.15
     
     # Slower adaptation for dynamics
@@ -148,8 +147,7 @@ def _podcast_preset() -> Settings:
     settings.color.brightness_boost = 1.0
     
     # Focus on voice frequencies
-    settings.sensitivity.low_freq_weight = 0.4
-    settings.sensitivity.high_freq_weight = 3.0
+    settings.sensitivity.weight_points = legacy_weight_points(0.4, 3.0)
     settings.sensitivity.noise_floor = 0.35
     
     # Stable scaling

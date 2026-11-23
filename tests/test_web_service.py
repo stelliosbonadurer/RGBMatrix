@@ -10,6 +10,7 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 
+from matrix_controller.runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
 from matrix_controller.web_service import _is_loopback_address, build_handler
 from matrix_controller.pairing import PairingManager
 
@@ -347,6 +348,62 @@ class WebServiceTests(unittest.TestCase):
                 for layer_id in ("top", "current-bars")
             ],
         }
+
+    @staticmethod
+    def _largest_structure_document() -> dict:
+        """8 layers with 64-character IDs, every setting, and 16 weight points."""
+        settings = {
+            "theme": "dynamic_lateral_gradient", "gradient": False, "overflow": True,
+            "overflow_multiplier": 1.523456789012345, "bars": True, "full": False,
+            "shadow_enabled": False, "peak_enabled": False,
+            "peak_color_mode": "contrast", "peak_fall_speed": 0.08123456789012345,
+            "peak_hold_frames": 600, "sensitivity_scalar": 1.0123456789012345,
+            "smoothing_rise": 0.4123456789012345, "smoothing_fall": 0.1123456789012345,
+            "dynamic_cycle_speed": 0.06123456789012345, "dynamic_frozen": False,
+            "min_freq": 100.12345678901234, "max_freq": 6300.123456789012,
+            "noise_floor": 0.3123456789012345,
+            "weight_points": [
+                {"position": index / 15 + 1e-13, "weight": 99.12345678901234}
+                for index in range(15)
+            ] + [{"position": 1.0, "weight": 0.123456789012345}],
+        }
+        return {
+            "output_backend": "pillow-bulk",
+            "layers": [
+                {
+                    "layer_id": f"{index}".ljust(64, "x"), "layer_type": "current-bars",
+                    "analyzer_id": "main-audio", "visible": True,
+                    "settings": dict(settings),
+                }
+                for index in range(8)
+            ],
+        }
+
+    def test_largest_weighted_structure_fits_the_web_and_launch_bounds(self) -> None:
+        # web-control-refactor M2 AC 8: weight_points[k].weight sits at depth 6
+        # of _bounded_runtime_value's 8, and 16 points stay under the 32-item cap.
+        document = self._largest_structure_document()
+        encoded = json.dumps(document, separators=(",", ":"), allow_nan=False)
+        self.assertLessEqual(len(encoded.encode("utf-8")), MAX_LAUNCH_STRUCTURE_BYTES)
+
+        status, _body = self.request(
+            "/api/v1/run",
+            payload={"visualization_id": "fft", "parameters": {}, "structure": document},
+            token="secret-token",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.supervisor.start_kwargs[-1], {"structure": document})
+
+        status, _body = self.request(
+            "/api/v1/runtime/actions",
+            payload={
+                "run_id": 1, "expected_revision": 4,
+                "action": "structure.set", "args": document,
+            },
+            token="secret-token",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.supervisor.runtime_commands[-1]["args"], document)
 
     def test_runtime_structure_batch_passes_existing_action_bounds(self) -> None:
         status, _body = self.request(

@@ -34,6 +34,7 @@ try:
         FrequencySettings,
         SensitivitySettings,
     )
+    from config.weighting import legacy_weight_points  # noqa: E402
     from core.analyzer_registry import (  # noqa: E402
         AnalyzerRegistry,
         AnalyzerRegistryError,
@@ -414,8 +415,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
             "min_freq": 80.0,
             "max_freq": 1950.0,
             "noise_floor": 0.0,
-            "low_freq_weight": 0.45,
-            "high_freq_weight": 10.0,
+            "weight_points": legacy_weight_points(),
         }
         high_settings = {
             **low_settings,
@@ -427,6 +427,26 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
         high = registry.resolve_projection(plan.analyzers[0], high_settings)
         self.assertIs(low, low_alias)
         self.assertIsNot(low, high)
+        reweighted = registry.resolve_projection(
+            plan.analyzers[0],
+            {**low_settings, "weight_points": [{"position": 0.5, "weight": 2.0}]},
+        )
+        reordered = registry.resolve_projection(
+            plan.analyzers[0],
+            {**low_settings, "weight_points": list(reversed(legacy_weight_points()))},
+        )
+        self.assertIsNot(low, reweighted)
+        self.assertIs(low, reordered)
+        primary_alias = registry.resolve_projection(
+            plan.analyzers[0],
+            {
+                "min_freq": frequency.active_min_freq,
+                "max_freq": frequency.active_max_freq,
+                "noise_floor": sensitivity.noise_floor,
+                "weight_points": legacy_weight_points(),
+            },
+        )
+        self.assertIs(primary_alias, processor)
 
         positions = np.arange(512, dtype=np.float32)
         samples = (
@@ -466,8 +486,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
                 "min_freq": 80.0,
                 "max_freq": 1950.0,
                 "noise_floor": 0.0,
-                "low_freq_weight": 0.45,
-                "high_freq_weight": 10.0,
+                "weight_points": legacy_weight_points(),
             },
         )
 
@@ -507,7 +526,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
         )
         low = {
             "min_freq": 80.0, "max_freq": 1950.0, "noise_floor": 0.3,
-            "low_freq_weight": 0.45, "high_freq_weight": 10.0,
+            "weight_points": legacy_weight_points(),
         }
         high = {**low, "min_freq": 2000.0, "max_freq": 6300.0}
 

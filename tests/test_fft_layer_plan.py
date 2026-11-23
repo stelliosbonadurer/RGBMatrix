@@ -43,6 +43,9 @@ try:
         compile_current_bars_graph,
         compile_current_bars_layer_plan,
         compile_ordered_layer_plan,
+        current_bars_settings_descriptor,
+        current_bars_settings_from_runtime,
+        normalize_current_bars_settings,
     )
     from core.output import (  # noqa: E402
         DIRECT_OUTPUT_PATH,
@@ -580,6 +583,41 @@ class LayerPlanHotPathTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, prepare_source)
             self.assertNotIn(forbidden, draw_source)
+
+
+class CurrentBarsDescriptorTests(unittest.TestCase):
+    def test_every_field_has_help_and_the_defaults_normalize(self) -> None:
+        descriptor = current_bars_settings_descriptor()
+        fields = descriptor["fields"]
+        for field in fields:
+            with self.subTest(field=field["name"]):
+                self.assertIsInstance(field.get("help"), str)
+                self.assertTrue(field["help"].strip())
+        defaults = {field["name"]: field["default"] for field in fields}
+        self.assertEqual(normalize_current_bars_settings(defaults, DIRECT_OUTPUT_PATH), defaults)
+        self.assertEqual(defaults, current_bars_settings_from_runtime(Settings()))
+
+    def test_weight_points_field_describes_its_items(self) -> None:
+        fields = {
+            field["name"]: field
+            for field in current_bars_settings_descriptor()["fields"]
+        }
+        self.assertNotIn("low_freq_weight", fields)
+        self.assertNotIn("high_freq_weight", fields)
+        points = fields["weight_points"]
+        self.assertEqual(points["type"], "points")
+        self.assertEqual((points["min_items"], points["max_items"]), (1, 16))
+        self.assertEqual(
+            [
+                (item["name"], item["min"], item["max"], bool(item["help"]))
+                for item in points["item_fields"]
+            ],
+            [("position", 0.0, 1.0, True), ("weight", 0.0, 100.0, True)],
+        )
+        self.assertEqual(
+            [point["position"] for point in points["default"]],
+            [0.0, 0.1, 0.3, 0.6, 1.0],
+        )
 
 
 if __name__ == "__main__":

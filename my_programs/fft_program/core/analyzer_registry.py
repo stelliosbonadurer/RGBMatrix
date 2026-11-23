@@ -12,7 +12,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeAlias
 
-from core.analysis_plan import StandardAnalysisCandidate
+from core.analysis_plan import (
+    StandardAnalysisCandidate,
+    canonical_weight_points,
+    weight_points_document,
+)
 from core.runtime_graph import (
     AnalyzerCapability,
     AnalyzerDefinition,
@@ -65,8 +69,7 @@ _PROJECTION_SETTING_NAMES = (
     "min_freq",
     "max_freq",
     "noise_floor",
-    "low_freq_weight",
-    "high_freq_weight",
+    "weight_points",
 )
 
 
@@ -104,8 +107,7 @@ def _projection_candidate(
             num_bins=definition.result_shape[0],
             min_freq=settings["min_freq"],  # type: ignore[arg-type]
             max_freq=settings["max_freq"],  # type: ignore[arg-type]
-            low_freq_weight=settings["low_freq_weight"],  # type: ignore[arg-type]
-            high_freq_weight=settings["high_freq_weight"],  # type: ignore[arg-type]
+            weight_points=canonical_weight_points(settings["weight_points"]),
         ),
         float(settings["noise_floor"]),
     )
@@ -161,8 +163,9 @@ def standard_analyzer_definition(
             "min_freq": frequency_settings.active_min_freq,
             "max_freq": frequency_settings.active_max_freq,
             "noise_floor": sensitivity_settings.noise_floor,
-            "low_freq_weight": sensitivity_settings.low_freq_weight,
-            "high_freq_weight": sensitivity_settings.high_freq_weight,
+            "weight_points": weight_points_document(
+                sensitivity_settings.weight_points
+            ),
         },
     )
 
@@ -264,7 +267,12 @@ class AnalyzerRegistry:
             definition.result_dtype,
             settings["block_size"],
             settings["fft_size"],
-            *(settings[name] for name in _PROJECTION_SETTING_NAMES),
+            settings["min_freq"],
+            settings["max_freq"],
+            settings["noise_floor"],
+            # Lists are unhashable; the canonical tuple also makes key equality
+            # independent of the order points arrived in.
+            canonical_weight_points(settings["weight_points"]),
         )
 
     def _validate_shared_pipeline(
