@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Configure one through eight FFT layers through the public runtime API.
 
-The tool deliberately uses the same snapshot and ``structure.apply`` action a web
+The tool deliberately uses the same snapshot and ``structure.set`` action a web
 client uses. It does not import FFT internals or add a startup-only configuration
 path. By default it plans a direct-output structure; pass ``--backend
 pillow-bulk`` to exercise the reusable Pillow/SetImage path.
@@ -11,8 +11,8 @@ Examples, run where the controller token is available::
     python3 tools/fft_layers.py --layers 4 --dry-run
     python3 tools/fft_layers.py --layers 8 --backend pillow-bulk
 
-Applying a plan replaces the complete layer list and therefore resets layer-owned
-presentation history. The analyzer runtime remains shared by every generated
+Applying a document replaces the complete layer list and therefore resets
+layer-owned presentation history. The analyzer runtime remains shared by every generated
 layer. The API token is read from a file and is never printed.
 """
 
@@ -128,12 +128,12 @@ def _layer_settings(
     return settings
 
 
-def build_layer_operations(
+def build_structure_document(
     snapshot: Mapping[str, Any],
     layer_count: int,
     backend: str = DIRECT_BACKEND,
-) -> list[dict[str, Any]]:
-    """Build one bounded full-layer replacement from a public runtime snapshot."""
+) -> dict[str, Any]:
+    """Build one complete ``structure.set`` document from a public snapshot."""
 
     if type(layer_count) is not int or not 1 <= layer_count <= 8:
         raise LayerToolError("layer count must be an integer from 1 through 8")
@@ -146,9 +146,6 @@ def build_layer_operations(
     capabilities = _mapping(structure.get("capabilities"), "structure.capabilities")
     limits = _mapping(capabilities.get("limits"), "structure.capabilities.limits")
     max_layers = _non_negative_int(limits.get("max_layers"), "max_layers")
-    max_operations = _non_negative_int(
-        limits.get("max_operations"), "max_operations"
-    )
     if layer_count > max_layers:
         raise LayerToolError(
             f"runtime supports at most {max_layers} layers, not {layer_count}"
@@ -199,30 +196,21 @@ def build_layer_operations(
 
     analyzer_id = preferred_analyzer or analyzer_ids[0]
     settings = _layer_settings(structure, capability, backend)
-    operations: list[dict[str, Any]] = [
-        {"op": "remove_layer", "layer_id": layer_id}
-        for layer_id in existing_ids
-    ]
-    for index in range(layer_count):
-        layer_id = CURRENT_BARS_LAYER_ID if index == 0 else f"layer-{index + 1}"
-        operations.append({
-            "op": "add_layer",
-            "layer": {
-                "layer_id": layer_id,
+    return {
+        "output_backend": backend,
+        "layers": [
+            {
+                "layer_id": (
+                    CURRENT_BARS_LAYER_ID if index == 0 else f"layer-{index + 1}"
+                ),
                 "layer_type": CURRENT_BARS_LAYER_TYPE,
                 "analyzer_id": analyzer_id,
                 "visible": True,
                 "settings": dict(settings),
-            },
-        })
-    operations.append({"op": "set_output_backend", "output_backend": backend})
-
-    if len(operations) > max_operations:
-        raise LayerToolError(
-            f"replacement needs {len(operations)} operations but runtime allows "
-            f"{max_operations}"
-        )
-    return operations
+            }
+            for index in range(layer_count)
+        ],
+    }
 
 
 def build_structure_action(
@@ -239,10 +227,8 @@ def build_structure_action(
     return {
         "run_id": run_id,
         "expected_revision": revision,
-        "action": "structure.apply",
-        "args": {
-            "operations": build_layer_operations(snapshot, layer_count, backend),
-        },
+        "action": "structure.set",
+        "args": build_structure_document(snapshot, layer_count, backend),
     }
 
 

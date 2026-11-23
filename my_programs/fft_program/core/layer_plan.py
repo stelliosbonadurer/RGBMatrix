@@ -38,7 +38,6 @@ from core.runtime_graph import (
     thaw_settings,
 )
 from core.scaling import ScalingProcessor
-from runtime_control import ANALYSIS_PROJECTION_COMMAND_PATHS
 from themes import get_theme, list_themes
 from visualizers.bars_unified import BarsUnifiedVisualizer
 from visualizers.peaks import draw_peaks
@@ -73,7 +72,22 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
 
 
 class LayerPlanCompilationError(ValueError):
-    """Raised before an incomplete executable plan can be staged."""
+    """Raised before an incomplete executable plan can be staged.
+
+    ``layer_id`` names the layer whose compilation failed, when one did.
+    """
+
+    def __init__(self, message: str, *, layer_id: str | None = None) -> None:
+        super().__init__(message)
+        self.layer_id = layer_id
+
+
+class LayerSettingsError(ValueError):
+    """One invalid layer setting; ``field`` is None for whole-object errors."""
+
+    def __init__(self, message: str, *, field: str | None = None) -> None:
+        super().__init__(message)
+        self.field = field
 
 
 PrepareLayer: TypeAlias = Callable[[Any], None]
@@ -93,7 +107,6 @@ class LayerRuntimeComponents:
     prepare: PrepareLayer
     draw: DrawLayer
     smoothed_bars: SmoothedBars
-    incompatible_runtime_paths: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +119,6 @@ class CompiledLayerRuntime:
     prepare: PrepareLayer
     draw: DrawLayer
     smoothed_bars: SmoothedBars
-    incompatible_runtime_paths: frozenset[str]
 
     @property
     def layer_id(self) -> str:
@@ -138,7 +150,6 @@ class OrderedLayerPlan:
         "_begin_draw",
         "_blank_smoothed",
         "_end_draw",
-        "_incompatible_runtime_paths",
         "_layers",
         "_output_backend",
         "_visible_layers",
@@ -153,7 +164,6 @@ class OrderedLayerPlan:
         analyzer_groups: tuple[_AnalyzerLayerGroup, ...],
         begin_draw: Callable[[Any], None],
         end_draw: Callable[[Any], None],
-        incompatible_runtime_paths: frozenset[str],
         _construction_token: object,
     ) -> None:
         if _construction_token is not _ORDERED_PLAN_CONSTRUCTION_TOKEN:
@@ -165,7 +175,6 @@ class OrderedLayerPlan:
         self._begin_draw = begin_draw
         self._end_draw = end_draw
         self._blank_smoothed = np.zeros(0, dtype=np.float32)
-        self._incompatible_runtime_paths = incompatible_runtime_paths
 
     @property
     def output_backend(self) -> str:
@@ -178,10 +187,6 @@ class OrderedLayerPlan:
     @property
     def visible_layers(self) -> tuple[CompiledLayerRuntime, ...]:
         return self._visible_layers
-
-    @property
-    def incompatible_runtime_paths(self) -> frozenset[str]:
-        return self._incompatible_runtime_paths
 
     @property
     def primary_analyzer(self) -> Any:
@@ -266,10 +271,6 @@ def _validate_components(
             raise LayerPlanCompilationError(
                 f"factory for layer {definition.layer_id!r} returned invalid {name}"
             )
-    if not isinstance(components.incompatible_runtime_paths, frozenset):
-        raise LayerPlanCompilationError(
-            f"layer {definition.layer_id!r} incompatible paths must be a frozenset"
-        )
     return components
 
 
@@ -293,7 +294,6 @@ def compile_ordered_layer_plan(
 
     layers: list[CompiledLayerRuntime] = []
     visible_layers: list[CompiledLayerRuntime] = []
-    incompatible_runtime_paths: set[str] = set()
     for definition in plan.layers:
         factory = factories.get(definition.layer_type)
         if factory is None:
@@ -316,10 +316,8 @@ def compile_ordered_layer_plan(
             prepare=components.prepare,
             draw=components.draw,
             smoothed_bars=components.smoothed_bars,
-            incompatible_runtime_paths=components.incompatible_runtime_paths,
         )
         layers.append(runtime)
-        incompatible_runtime_paths.update(components.incompatible_runtime_paths)
         if runtime.visible:
             visible_layers.append(runtime)
 
@@ -347,42 +345,8 @@ def compile_ordered_layer_plan(
         analyzer_groups=analyzer_groups,
         begin_draw=begin_draw,
         end_draw=end_draw,
-        incompatible_runtime_paths=frozenset(incompatible_runtime_paths),
         _construction_token=_ORDERED_PLAN_CONSTRUCTION_TOKEN,
     )
-
-
-class _LayerThemeCycler:
-    """Small per-layer theme selector used by the legacy target adapter."""
-
-    __slots__ = ("brightness_boost", "current_index", "themes")
-
-    def __init__(self, initial_theme: str, brightness_boost: float) -> None:
-        self.themes = list_themes()
-        self.brightness_boost = brightness_boost
-        self.current_index = (
-            self.themes.index(initial_theme)
-            if initial_theme in self.themes
-            else 0
-        )
-
-    @property
-    def current_theme_name(self) -> str:
-        return self.themes[self.current_index]
-
-    def next_theme(self) -> Any:
-        self.current_index = (self.current_index + 1) % len(self.themes)
-        return get_theme(
-            self.current_theme_name,
-            brightness_boost=self.brightness_boost,
-        )
-
-    def prev_theme(self) -> Any:
-        self.current_index = (self.current_index - 1) % len(self.themes)
-        return get_theme(
-            self.current_theme_name,
-            brightness_boost=self.brightness_boost,
-        )
 
 
 class _CurrentBarsPresentation:
@@ -393,7 +357,6 @@ class _CurrentBarsPresentation:
         "scaler",
         "settings",
         "smoothed",
-        "theme_cycler",
         "visualizer",
     )
 
@@ -402,12 +365,10 @@ class _CurrentBarsPresentation:
         scaler: ScalingProcessor,
         visualizer: Any,
         settings: Any,
-        theme_cycler: Any,
     ) -> None:
         self.scaler = scaler
         self.visualizer = visualizer
         self.settings = settings
-        self.theme_cycler = theme_cycler
         self.smoothed = scaler.smoothed_bars
         self.peaks = scaler.peak_heights
 
@@ -453,13 +414,9 @@ class _PillowBulkBarsExecutor:
     def __init__(self, presentation: _CurrentBarsPresentation, output: Any) -> None:
         self._presentation = presentation
         self._output = output
-        # The live multiplier control is unavailable on pillow-bulk, so the
-        # layer's compile-time value stays authoritative for this plan.
+        # Layer settings change only by recompiling the plan, so the
+        # compile-time multiplier stays authoritative for this plan.
         self._overflow_multiplier = float(presentation.settings.overflow.multiplier)
-
-    @property
-    def incompatible_runtime_paths(self) -> frozenset[str]:
-        return self._output.incompatible_runtime_paths
 
     def draw(self, canvas: Any) -> None:
         del canvas
@@ -570,8 +527,9 @@ def _number(
             number = math.nan
     if not math.isfinite(number) or not minimum <= number <= maximum:
         kind = "an integer" if integer else "a number"
-        raise ValueError(
-            f"{name} must be {kind} between {minimum:g} and {maximum:g}"
+        raise LayerSettingsError(
+            f"{name} must be {kind} between {minimum:g} and {maximum:g}",
+            field=name,
         )
     return int(value) if integer else number
 
@@ -583,7 +541,7 @@ def normalize_current_bars_settings(
     """Validate one complete current-bars settings object."""
 
     if not isinstance(value, Mapping):
-        raise ValueError("settings must be an object")
+        raise LayerSettingsError("settings must be an object")
     fields = set(value)
     missing = CURRENT_BARS_SETTING_NAMES - fields
     extra = fields - CURRENT_BARS_SETTING_NAMES
@@ -593,22 +551,26 @@ def normalize_current_bars_settings(
             detail.append(f"missing {sorted(missing)!r}")
         if extra:
             detail.append(f"unknown {sorted(extra)!r}")
-        raise ValueError("settings fields are invalid: " + "; ".join(detail))
+        raise LayerSettingsError(
+            "settings fields are invalid: " + "; ".join(detail)
+        )
 
     normalized = dict(value)
     if not isinstance(normalized["theme"], str) or normalized["theme"] not in list_themes():
-        raise ValueError("theme is not registered")
+        raise LayerSettingsError("theme is not registered", field="theme")
     for name in (
         "gradient", "overflow", "bars", "full", "shadow_enabled",
         "peak_enabled", "dynamic_frozen",
     ):
         if not isinstance(normalized[name], bool):
-            raise ValueError(f"{name} must be a boolean")
+            raise LayerSettingsError(f"{name} must be a boolean", field=name)
     if (
         not isinstance(normalized["peak_color_mode"], str)
         or normalized["peak_color_mode"] not in {"white", "bar", "contrast", "peak"}
     ):
-        raise ValueError("peak_color_mode is unsupported")
+        raise LayerSettingsError(
+            "peak_color_mode is unsupported", field="peak_color_mode"
+        )
     normalized["overflow_multiplier"] = _number(normalized, "overflow_multiplier", 0.1, 10.0)
     normalized["peak_fall_speed"] = _number(normalized, "peak_fall_speed", 0.0, 1.0)
     normalized["peak_hold_frames"] = _number(normalized, "peak_hold_frames", 0, 600, integer=True)
@@ -619,7 +581,9 @@ def normalize_current_bars_settings(
     normalized["min_freq"] = _number(normalized, "min_freq", 1.0, 24000.0)
     normalized["max_freq"] = _number(normalized, "max_freq", 1.0, 24000.0)
     if normalized["max_freq"] <= normalized["min_freq"]:
-        raise ValueError("max_freq must be greater than min_freq")
+        raise LayerSettingsError(
+            "max_freq must be greater than min_freq", field="max_freq"
+        )
     normalized["noise_floor"] = _number(normalized, "noise_floor", 0.0, 100.0)
     normalized["low_freq_weight"] = _number(normalized, "low_freq_weight", 0.0, 100.0)
     normalized["high_freq_weight"] = _number(normalized, "high_freq_weight", 0.0, 100.0)
@@ -628,8 +592,9 @@ def normalize_current_bars_settings(
         fixed = current_bars_settings_descriptor()["backend_constraints"][PILLOW_BULK_OUTPUT_PATH]  # type: ignore[index]
         for name, expected in fixed.items():  # type: ignore[union-attr]
             if normalized[name] != expected:
-                raise ValueError(
-                    f"{name} must be {expected!r} for pillow-bulk"
+                raise LayerSettingsError(
+                    f"{name} must be {expected!r} for pillow-bulk",
+                    field=name,
                 )
     return normalized
 
@@ -728,8 +693,8 @@ def _settings_for_layer(
     normalized: Mapping[str, object],
 ) -> Any:
     settings = copy.deepcopy(base_settings)
-    # These objects remain analyzer-owned. Every presentation runtime observes the
-    # one live analyzer control state instead of receiving a structural copy.
+    # Analyzer-owned launch settings are shared read-only; layer projections come
+    # from the layer definition, never from these objects.
     settings.audio = base_settings.audio
     settings.frequency = base_settings.frequency
     settings.sensitivity = base_settings.sensitivity
@@ -752,7 +717,7 @@ def _presentation_objects(
     base_settings: Any,
     width: int,
     height: int,
-) -> tuple[Any, Any, Any]:
+) -> tuple[Any, Any]:
     settings = _settings_for_layer(base_settings, normalized)
     visualizer = BarsUnifiedVisualizer(width, height, settings)
     visualizer.gradient_mode = normalized["gradient"]
@@ -768,29 +733,22 @@ def _presentation_objects(
         if bool(getattr(theme, "frozen", False)) != normalized["dynamic_frozen"]:
             theme.toggle_frozen()
     visualizer.set_theme(theme)
-    theme_cycler = _LayerThemeCycler(
-        str(normalized["theme"]),
-        settings.color.brightness_boost,
-    )
-    return settings, visualizer, theme_cycler
+    return settings, visualizer
 
 
 def compile_current_bars_layer_plan(
     graph: CompiledRuntimePlan,
     analyzer_registry: AnalyzerRegistry,
     *,
-    visualizer: Any,
     settings: Any,
     width: int,
     height: int,
-    theme_cycler: Any | None = None,
 ) -> OrderedLayerPlan:
-    """Compile current presentation state and the manually selected executor."""
+    """Compile every layer's presentation objects and the selected executor."""
 
     if any(layer.layer_type != CURRENT_BARS_LAYER_TYPE for layer in graph.layers):
         raise LayerPlanCompilationError("current bars compiler received another layer type")
 
-    use_initial_objects = len(graph.layers) == 1 and visualizer is not None
     shared_output = None
     if graph.output_backend == PILLOW_BULK_OUTPUT_PATH:
         if graph.layers:
@@ -805,7 +763,7 @@ def compile_current_bars_layer_plan(
                     PILLOW_BULK_OUTPUT_PATH
                 ]
             )
-        _prototype_settings, prototype, _prototype_cycler = _presentation_objects(
+        _prototype_settings, prototype = _presentation_objects(
             prototype_settings,
             settings,
             width,
@@ -822,68 +780,30 @@ def compile_current_bars_layer_plan(
             thaw_settings(definition.settings),
             output_backend,
         )
-        analyzer_settings = thaw_settings(definition.analyzer.settings)
-        custom_projection = any(
-            normalized[name] != analyzer_settings[name]
-            for name in (
-                "min_freq",
-                "max_freq",
-                "noise_floor",
-                "low_freq_weight",
-                "high_freq_weight",
-            )
+        layer_settings, layer_visualizer = _presentation_objects(
+            normalized,
+            settings,
+            width,
+            height,
         )
-        if use_initial_objects and definition.layer_id == CURRENT_BARS_LAYER_ID:
-            layer_settings = settings
-            layer_visualizer = visualizer
-            layer_theme_cycler = theme_cycler or _LayerThemeCycler(
-                str(normalized["theme"]),
-                settings.color.brightness_boost,
-            )
-        else:
-            layer_settings, layer_visualizer, layer_theme_cycler = _presentation_objects(
-                normalized,
-                settings,
-                width,
-                height,
-            )
         presentation = _CurrentBarsPresentation(
             ScalingProcessor(
                 scaling_settings=layer_settings.scaling,
-                sensitivity_settings=layer_settings.sensitivity,
                 smoothing_settings=layer_settings.smoothing,
                 num_bins=width,
                 frame_rate=1.0 / layer_settings.audio.sleep_delay,
             ),
             layer_visualizer,
             layer_settings,
-            layer_theme_cycler,
         )
         if output_backend == DIRECT_OUTPUT_PATH:
             executor = _DirectBarsExecutor(presentation, height)
-            incompatible_runtime_paths = (
-                ANALYSIS_PROJECTION_COMMAND_PATHS
-                if (
-                    definition.layer_id == CURRENT_BARS_LAYER_ID
-                    and custom_projection
-                )
-                else frozenset()
-            )
         elif output_backend == PILLOW_BULK_OUTPUT_PATH:
             assert shared_output is not None
             executor = _PillowBulkBarsExecutor(
                 presentation,
                 shared_output,
             )
-            incompatible_runtime_paths = executor.incompatible_runtime_paths
-            if (
-                definition.layer_id == CURRENT_BARS_LAYER_ID
-                and custom_projection
-            ):
-                incompatible_runtime_paths = (
-                    incompatible_runtime_paths
-                    | ANALYSIS_PROJECTION_COMMAND_PATHS
-                )
         else:
             raise LayerPlanCompilationError(
                 f"unsupported current bars backend {output_backend!r}"
@@ -893,7 +813,6 @@ def compile_current_bars_layer_plan(
             prepare=presentation.prepare,
             draw=executor.draw,
             smoothed_bars=presentation.smoothed_bars,
-            incompatible_runtime_paths=incompatible_runtime_paths,
         )
 
     if graph.output_backend == DIRECT_OUTPUT_PATH:
@@ -909,19 +828,25 @@ def compile_current_bars_layer_plan(
             thaw_settings(definition.settings),
             graph.output_backend,
         )
-        return analyzer_registry.resolve_projection(
-            definition.analyzer,
-            {
-                name: normalized[name]
-                for name in (
-                    "min_freq",
-                    "max_freq",
-                    "noise_floor",
-                    "low_freq_weight",
-                    "high_freq_weight",
-                )
-            },
-        )
+        try:
+            return analyzer_registry.resolve_projection(
+                definition.analyzer,
+                {
+                    name: normalized[name]
+                    for name in (
+                        "min_freq",
+                        "max_freq",
+                        "noise_floor",
+                        "low_freq_weight",
+                        "high_freq_weight",
+                    )
+                },
+            )
+        except ValueError as exc:
+            # Sample-rate checks such as Nyquist only fail here; name the layer.
+            raise LayerPlanCompilationError(
+                str(exc), layer_id=definition.layer_id
+            ) from exc
 
     return compile_ordered_layer_plan(
         graph,
@@ -941,6 +866,7 @@ __all__ = [
     "CompiledLayerRuntime",
     "LayerPlanCompilationError",
     "LayerRuntimeComponents",
+    "LayerSettingsError",
     "OrderedLayerPlan",
     "compile_current_bars_graph",
     "compile_current_bars_layer_plan",

@@ -561,7 +561,7 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
         self.assertEqual(processor.last_analyzed_generation, 4)
         self.assertEqual(processor.skipped_generation_count, 1)
 
-    def test_failed_recompile_leaves_the_active_plan_unchanged(self) -> None:
+    def test_failed_projection_compile_leaves_the_active_plan_unchanged(self) -> None:
         processor = _processor()
         processor.setup()
         active_plan = processor.active_plan
@@ -576,16 +576,14 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
         published_sequence = processor._analysis_transport.published_sequence
         published = processor.get_fft_magnitudes()
         processor.release_fft_magnitudes()
-        processor.freq_settings.zoom_presets.append((100, 22_051))
-        processor.freq_settings.zoom_preset_index = len(
-            processor.freq_settings.zoom_presets
-        ) - 1
+        candidate = replace(processor.analysis_candidate, max_freq=22_051)
 
         with self.assertRaisesRegex(ValueError, "Nyquist"):
-            processor.update_frequency_range()
+            processor.create_projection(candidate, 0.3)
 
         self.assertIs(processor.active_plan, active_plan)
         self.assertIs(processor._worker_state, worker_state)
+        self.assertEqual(len(processor._projection_records), 1)
         self.assertEqual(
             processor._analysis_transport.published_sequence,
             published_sequence,
@@ -593,68 +591,15 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
         self.assertIs(processor.get_fft_magnitudes(), published)
         processor.release_fft_magnitudes()
 
-    def test_candidate_compiles_off_to_the_side_then_activates_once(self) -> None:
-        processor = _processor()
-        processor.setup()
-        original_plan = processor.active_plan
-        original_worker_state = processor._worker_state
-        candidate = replace(
-            processor.analysis_candidate,
-            low_freq_weight=1.25,
-            high_freq_weight=9.5,
-        )
-
-        prepared_plan = processor.compile_analysis_candidate(candidate)
-
-        self.assertIs(processor.active_plan, original_plan)
-        self.assertIsNot(prepared_plan, original_plan)
-        processor.activate_analysis_plan(candidate, prepared_plan)
-        self.assertIs(processor.analysis_candidate, candidate)
-        self.assertIs(processor.active_plan, prepared_plan)
-        self.assertIs(processor._worker_state.plan, prepared_plan)
-        self.assertEqual(
-            processor._worker_state.epoch,
-            original_worker_state.epoch + 1,
-        )
-
-    def test_inflight_old_plan_result_cannot_publish_after_apply(self) -> None:
-        processor = _processor()
-        processor.setup()
-        samples = np.linspace(-1, 1, 512, dtype=np.float32)
-        old_state = processor._worker_state
-        destination = processor._analysis_transport.claim_write()
-        processor._analyze_into(
-            samples,
-            old_state.plan,
-            old_state.noise_floor,
-            destination,
-        )
-
-        candidate = replace(
-            processor.analysis_candidate,
-            min_freq=80,
-            max_freq=1950,
-        )
-        new_plan = processor.compile_analysis_candidate(candidate)
-        processor.activate_analysis_plan(candidate, new_plan)
-
-        self.assertFalse(
-            processor._analysis_transport.publish_claimed(old_state.epoch)
-        )
-        self.assertIsNone(processor.get_fft_magnitudes())
-
-        processor._audio_callback(samples.reshape(-1, 1), 512, None, None)
-        self.assertTrue(processor._process_latest_samples_once())
-        actual = processor.get_fft_magnitudes()
-        expected = np.empty(64, dtype=np.float32)
-        processor._analyze_into(
-            samples,
-            new_plan,
-            processor.sensitivity_settings.noise_floor,
-            expected,
-        )
-        np.testing.assert_array_equal(actual, expected)
-        processor.release_fft_magnitudes()
+    def test_primary_projection_has_no_in_place_mutators(self) -> None:
+        # web-control-refactor DoD 5: ranges, weights, and noise floors change
+        # only through per-layer projections, never by mutating the primary.
+        for name in (
+            "update_frequency_range",
+            "activate_analysis_plan",
+            "activate_analysis_inputs",
+        ):
+            self.assertFalse(hasattr(AudioProcessor, name), name)
 
 
 class PipelineProtocolTests(unittest.TestCase):
@@ -668,7 +613,6 @@ class PipelineProtocolTests(unittest.TestCase):
                 "__exit__": ["self", "exc_type", "exc_val", "exc_tb"],
             },
             MagnitudeAnalyzer: {
-                "update_frequency_range": ["self"],
                 "get_fft_magnitudes": ["self"],
                 "release_fft_magnitudes": ["self"],
             },
@@ -698,7 +642,6 @@ class PipelineProtocolTests(unittest.TestCase):
             MagnitudeAnalyzer: (
                 AudioProcessor,
                 (
-                    "update_frequency_range",
                     "get_fft_magnitudes",
                     "release_fft_magnitudes",
                 ),

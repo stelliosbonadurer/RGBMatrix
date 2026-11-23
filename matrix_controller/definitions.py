@@ -154,13 +154,6 @@ FFT_PARAMETERS: tuple[ParameterSpec, ...] = (
         "Allow FFT bars to wrap above the matrix height.",
         negative_cli_flag="--no-overflow",
     ),
-    ParameterSpec(
-        "non_interactive",
-        "--non-interactive",
-        "bool",
-        True,
-        "Disable terminal keyboard input for service execution.",
-    ),
 )
 
 

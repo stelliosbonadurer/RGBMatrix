@@ -17,11 +17,31 @@ python main.py --list-themes
 
 ## Runtime Controls
 
-The managed service exposes live presentation controls plus a declarative
-`structure` snapshot. Authenticated clients can use the revision-checked
-`structure.apply` action to add, remove, reorder, hide, or reconfigure up to eight
-layers and to select `direct` or `pillow-bulk`. The normal startup remains one
-`current-bars` layer using `direct`.
+The layer structure is the only runtime configuration. There are no keyboard
+controls and no per-setting live controls, and nothing is saved between runs.
+
+The managed service publishes the current `structure` in its runtime snapshot:
+the output backend, the ordered layers with all of their settings, the analyzer's
+launch settings, and a capability catalog of every setting's type, bounds, and
+default. To change anything, an authenticated client sends the whole desired
+structure with the revision-checked `structure.set` action:
+
+```json
+{"output_backend": "direct",
+ "layers": [{"layer_id": "bass", "layer_type": "current-bars",
+             "analyzer_id": "main-audio", "visible": true,
+             "settings": {"theme": "ocean", "min_freq": 40.0, "...": "..."}}]}
+```
+
+The child validates the whole document. It then activates it between two frames
+or rejects it whole, with a path such as `structure.layers[2].settings.max_freq`.
+Up to eight layers are allowed. Each submit resets every layer's smoothing and
+peak history. A launch through `POST /api/v1/run` may carry the same document as
+`structure`. If that document is invalid, the program runs the default single
+`current-bars` layer and reports the reason as `structure.launch_error` in the
+snapshot. Without a launch structure, startup is one `current-bars` layer using
+`direct`, built from the settings file and the `--theme`, `--gradient`, and
+`--overflow` options.
 
 For a reusable client of that same web-facing contract, run from the repository
 root:
@@ -31,23 +51,8 @@ python3 tools/fft_layers.py --layers 4 --dry-run
 python3 tools/fft_layers.py --layers 8 --backend pillow-bulk
 ```
 
-Applying a generated structure resets layer-owned presentation history. See the
-tool's `--help` for controller URL and token-file options.
-
-### Basic Controls
-
-| Key | Action |
-| --- | ------ |
-| `t` / `T` | Cycle themes forward / backward |
-| `g` | Toggle gradient mode (per-pixel vs uniform color) |
-| `o` | Toggle overflow mode (bars can exceed height) |
-| `b` | Toggle bars (OFF = peaks only) |
-| `f` | Toggle full mode (full screen with crossfade) |
-| `s` | Toggle shadow mode |
-| `p` | Toggle peak mode |
-| `P` | Cycle peak color: white → bar → contrast → peak |
-| `r` / `R` | Cycle zoom presets (frequency range) |
-| `Ctrl+C` | Quit |
+See the tool's `--help` for controller URL and token-file options. Press `Ctrl+C`
+to quit a direct run.
 
 ## Documentation
 
@@ -86,7 +91,7 @@ tool's `--help` for controller URL and token-file options.
 
 ```text
 fft_program/
-├── main.py              # Entry point and key handling
+├── main.py              # Entry point, launch structure, and render loop
 ├── config/              # Settings and presets
 │   └── settings.py      # Typed application settings
 ├── core/                # Audio processing, scaling, matrix control

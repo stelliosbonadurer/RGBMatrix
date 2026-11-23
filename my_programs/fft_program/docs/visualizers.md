@@ -4,14 +4,15 @@ The visualizer renders the standard 64-bin FFT result directly to the LED matrix
 
 ## Display Modes
 
-The unified `bars` visualizer supports these toggleable modes:
+The unified `bars` visualizer supports these modes. Each is a per-layer setting in the
+layer structure (set with `structure.set`); there are no keyboard toggles.
 
-| Key | Mode | Description |
-| --- | ---- | ----------- |
-| `g` | Gradient | ON = per-pixel color gradient, OFF = uniform color per bar |
-| `o` | Overflow | ON = bars can exceed height with layered colors, OFF = clamped to height |
-| `b` | Bars | ON = show bars, OFF = show only peaks |
-| `f` | Full | ON = entire screen lit with crossfade at bar height |
+| Layer setting | Mode | Description |
+| ------------- | ---- | ----------- |
+| `gradient` | Gradient | ON = per-pixel color gradient, OFF = uniform color per bar |
+| `overflow` | Overflow | ON = bars can exceed height with layered colors, OFF = clamped to height |
+| `bars` | Bars | ON = show bars, OFF = show only peaks |
+| `full` | Full | ON = entire screen lit with crossfade at bar height |
 
 ## Mode Combinations
 

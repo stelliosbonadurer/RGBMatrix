@@ -33,10 +33,6 @@ class AudioCapture(Protocol):
 class MagnitudeAnalyzer(Protocol):
     """Contract for the current NumPy FFT and magnitude projection path."""
 
-    def update_frequency_range(self) -> None:
-        """Rebuild frequency bins after a frequency-setting change."""
-        ...
-
     def get_fft_magnitudes(self) -> Optional[np.ndarray]:
         """Lease the latest complete single-layer magnitude array, if available."""
         ...

@@ -68,8 +68,12 @@ zoom_max_freq: int = 6300   # Zoom maximum Hz
 noise_floor: float = 0.3       # Subtract from signal (0=sensitive, 0.5=cut noise)
 low_freq_weight: float = 0.55  # Bass multiplier (<1=quieter, >1=louder)
 high_freq_weight: float = 10.0 # Treble multiplier
-silence_threshold: float = 0.0 # Fade to black below this
 ```
+
+These are the startup values for the default layer and the analyzer. At runtime each
+layer carries its own `noise_floor`, `low_freq_weight`, and `high_freq_weight` in its
+structure settings. The old `silence_threshold` setting has been removed; a settings
+file that still contains it fails to load.
 
 **Tips:**
 

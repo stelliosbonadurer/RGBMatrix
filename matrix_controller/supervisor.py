@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -13,6 +14,8 @@ from typing import Any, Callable, Mapping, Protocol
 
 from .registry import Registry
 from .runtime_transport import (
+    LAUNCH_STRUCTURE_ENVIRONMENT,
+    MAX_LAUNCH_STRUCTURE_BYTES,
     RuntimeControlServer,
     RuntimeRunMismatch,
     RuntimeUnavailable,
@@ -103,16 +106,41 @@ class VisualizationSupervisor:
         self,
         visualization_id: str,
         parameters: Mapping[str, Any] | None = None,
+        *,
+        structure: Mapping[str, Any] | None = None,
     ) -> LaunchResult:
         """Stop the current child, validate the new request, and launch it.
 
         Validation occurs before stopping the active visualization. A malformed
         switch request therefore cannot blank a working display. Once validation
         succeeds, teardown and launch remain inside one lock-protected transaction.
+
+        ``structure`` is an optional initial layer structure for a visualization
+        with live control (web-control-refactor D-016). Only its size and JSON
+        shape are checked here; the child validates its contents and reports a
+        rejection in its runtime snapshot.
         """
 
         spec = self.registry.get(visualization_id)
         normalized = spec.validate_parameters(parameters)
+        encoded_structure: str | None = None
+        if structure is not None:
+            if not spec.supports_live_control:
+                raise ValidationError(
+                    f"{visualization_id} does not accept a launch structure"
+                )
+            if not isinstance(structure, Mapping):
+                raise ValidationError("structure must be a JSON object")
+            try:
+                encoded_structure = json.dumps(
+                    structure, separators=(",", ":"), allow_nan=False
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("structure must be plain JSON") from exc
+            if len(encoded_structure.encode("utf-8")) > MAX_LAUNCH_STRUCTURE_BYTES:
+                raise ValidationError(
+                    f"structure must be at most {MAX_LAUNCH_STRUCTURE_BYTES} bytes"
+                )
         argv = spec.build_argv(
             self.python_executable,
             normalized,
@@ -147,6 +175,11 @@ class VisualizationSupervisor:
 
             try:
                 child_environment = os.environ.copy()
+                # Never inherit a launch structure from the service's own
+                # environment; only this request may supply one.
+                child_environment.pop(LAUNCH_STRUCTURE_ENVIRONMENT, None)
+                if encoded_structure is not None:
+                    child_environment[LAUNCH_STRUCTURE_ENVIRONMENT] = encoded_structure
                 if runtime_control is not None:
                     child_environment.update(runtime_control.endpoint.environment())
                 # stdin is closed so a missed non-interactive adapter fails instead of

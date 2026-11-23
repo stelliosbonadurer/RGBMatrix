@@ -1,16 +1,29 @@
-"""Bounded off-frame structural compilation and frame-boundary activation."""
+"""Whole-structure validation, off-frame compilation, and frame-boundary activation.
+
+The FFT's only configuration path is one declarative structure document
+(web-control-refactor D-015)::
+
+    {"output_backend": "direct",
+     "layers": [{"layer_id": "bass", "layer_type": "current-bars",
+                 "analyzer_id": "main-audio", "visible": true,
+                 "settings": {...every current-bars setting...}}]}
+
+It arrives either as the ``structure.set`` action's ``args`` or, at launch, through
+``RGB_MATRIX_LAUNCH_STRUCTURE`` (D-016). Both use the same validator and compiler.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
+import json
 import threading
 import time
 from typing import Any
 
 from core.layer_plan import (
-    CURRENT_BARS_LAYER_ID,
-    CURRENT_BARS_LAYER_TYPE,
+    LayerPlanCompilationError,
+    LayerSettingsError,
     OrderedLayerPlan,
     normalize_current_bars_settings,
 )
@@ -24,22 +37,18 @@ from core.runtime_graph import (
     runtime_definition_to_dict,
 )
 from matrix_controller.runtime_transport import (
+    MAX_LAUNCH_STRUCTURE_BYTES,
     FrameBoundaryRuntimeBridge,
     RuntimeControlError,
+    RuntimeOperationTimeout,
 )
-from runtime_control import PRESENTATION_COMMAND_PATHS
 
 
-MAX_STRUCTURAL_OPERATIONS = 32
-STRUCTURAL_OPERATION_NAMES = (
-    "add_layer",
-    "remove_layer",
-    "set_layer_visibility",
-    "set_layer_order",
-    "set_layer_analyzer",
-    "set_layer_settings",
-    "set_output_backend",
-)
+STRUCTURE_SET_ACTION = "structure.set"
+STRUCTURE_DOCUMENT_FIELDS = frozenset({"output_backend", "layers"})
+LAYER_DOCUMENT_FIELDS = frozenset({
+    "layer_id", "layer_type", "analyzer_id", "visible", "settings"
+})
 
 
 class StructuralValidationError(ValueError):
@@ -62,10 +71,13 @@ class _ActivationEnvelope:
     definition: RuntimeDefinition
     plan: OrderedLayerPlan
     base_revision: int
-    legacy_presentation: Any | None
-    unavailable_paths: frozenset[str]
     commit: Callable[[], None]
     rollback: Callable[[], None]
+    # Set by the render thread when it begins activating; from then on it alone
+    # owns rollback (D-018).
+    claimed: threading.Event = field(default_factory=threading.Event)
+    # Set by the render thread once it has committed or rolled back.
+    finished: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,23 +89,28 @@ class PreparedStructuralPlan:
     rollback: Callable[[], None]
 
 
-def _object(
+def _exact_object(
     value: object,
     *,
-    required: frozenset[str],
+    fields: frozenset[str],
     path: str,
 ) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise StructuralValidationError(
-            "invalid_structure",
-            "value must be an object",
-            path=path,
+            "invalid_structure", "value must be an object", path=path
         )
-    fields = set(value)
-    if fields != required:
+    present = set(value)
+    if present != fields:
+        detail = []
+        missing = sorted(fields - present)
+        unknown = sorted(str(name) for name in present - fields)
+        if missing:
+            detail.append(f"missing {missing!r}")
+        if unknown:
+            detail.append(f"unknown {unknown!r}")
         raise StructuralValidationError(
             "invalid_structure",
-            "object contains missing or unknown fields",
+            "object fields are invalid: " + "; ".join(detail),
             path=path,
         )
     return value
@@ -103,12 +120,13 @@ def _name(value: object, *, path: str) -> str:
     if (
         not isinstance(value, str)
         or not value
+        or len(value) > 64
         or value != value.strip()
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise StructuralValidationError(
             "invalid_value",
-            "value must be a non-empty trimmed string",
+            "value must be a non-empty trimmed string of at most 64 characters",
             path=path,
         )
     return value
@@ -120,244 +138,104 @@ def _settings(
     output_backend: str,
     path: str,
 ) -> dict[str, object]:
-    if not isinstance(value, Mapping):
-        raise StructuralValidationError(
-            "invalid_value",
-            "settings must be an object",
-            path=path,
-        )
     try:
-        return normalize_current_bars_settings(value, output_backend)
-    except ValueError as exc:
+        return normalize_current_bars_settings(value, output_backend)  # type: ignore[arg-type]
+    except LayerSettingsError as exc:
         raise StructuralValidationError(
             "invalid_value",
             str(exc),
-            path=path,
+            path=f"{path}.{exc.field}" if exc.field else path,
         ) from exc
+    except ValueError as exc:
+        raise StructuralValidationError("invalid_value", str(exc), path=path) from exc
 
 
-def apply_structural_operations(
-    definition: RuntimeDefinition,
-    operations: object,
+def structure_document_to_definition(
+    base: RuntimeDefinition,
+    document: object,
     capabilities: RuntimeCapabilities,
 ) -> RuntimeDefinition:
-    """Apply one strictly shaped batch to a private declarative candidate."""
+    """Validate one complete structure document against the base's analyzers.
 
-    if (
-        not isinstance(operations, list)
-        or not operations
-        or len(operations) > MAX_STRUCTURAL_OPERATIONS
-    ):
-        raise StructuralValidationError(
-            "invalid_structure",
-            f"operations must contain between 1 and {MAX_STRUCTURAL_OPERATIONS} items",
-            path="args.operations",
-        )
+    The result replaces every layer and the output backend of ``base``. Analyzers
+    are launch-owned and never change here.
+    """
 
-    analyzer_ids = {analyzer.analyzer_id for analyzer in definition.analyzers}
-    layer_types = {capability.layer_type for capability in capabilities.layers}
-    layers = list(definition.layers)
-    output_backend = definition.output_backend
-
-    def find_layer(layer_id: str, path: str) -> int:
-        for index, layer in enumerate(layers):
-            if layer.layer_id == layer_id:
-                return index
-        raise StructuralValidationError(
-            "invalid_reference",
-            f"unknown layer ID {layer_id!r}",
-            path=path,
-        )
-
-    for index, raw_operation in enumerate(operations):
-        path = f"args.operations[{index}]"
-        if not isinstance(raw_operation, Mapping):
-            raise StructuralValidationError(
-                "invalid_structure", "operation must be an object", path=path
-            )
-        operation_name = raw_operation.get("op")
-        if operation_name not in STRUCTURAL_OPERATION_NAMES:
-            raise StructuralValidationError(
-                "invalid_operation",
-                "unknown structural operation",
-                path=f"{path}.op",
-            )
-
-        if operation_name == "add_layer":
-            operation = _object(
-                raw_operation,
-                required=frozenset({"op", "layer"}),
-                path=path,
-            )
-            raw_layer = _object(
-                operation["layer"],
-                required=frozenset({
-                    "layer_id", "layer_type", "analyzer_id", "visible", "settings"
-                }),
-                path=f"{path}.layer",
-            )
-            layer_id = _name(raw_layer["layer_id"], path=f"{path}.layer.layer_id")
-            if any(layer.layer_id == layer_id for layer in layers):
-                raise StructuralValidationError(
-                    "invalid_value",
-                    f"duplicate layer ID {layer_id!r}",
-                    path=f"{path}.layer.layer_id",
-                )
-            if len(layers) >= MAX_RUNTIME_LAYERS:
-                raise StructuralValidationError(
-                    "limit_exceeded",
-                    f"runtime supports at most {MAX_RUNTIME_LAYERS} layers",
-                    path=f"{path}.layer",
-                )
-            layer_type = _name(
-                raw_layer["layer_type"], path=f"{path}.layer.layer_type"
-            )
-            if layer_type not in layer_types:
-                raise StructuralValidationError(
-                    "invalid_reference",
-                    f"unknown layer type {layer_type!r}",
-                    path=f"{path}.layer.layer_type",
-                )
-            analyzer_id = _name(
-                raw_layer["analyzer_id"], path=f"{path}.layer.analyzer_id"
-            )
-            if analyzer_id not in analyzer_ids:
-                raise StructuralValidationError(
-                    "invalid_reference",
-                    f"unknown analyzer ID {analyzer_id!r}",
-                    path=f"{path}.layer.analyzer_id",
-                )
-            visible = raw_layer["visible"]
-            if not isinstance(visible, bool):
-                raise StructuralValidationError(
-                    "invalid_value",
-                    "visibility must be a boolean",
-                    path=f"{path}.layer.visible",
-                )
-            settings = _settings(
-                raw_layer["settings"],
-                output_backend=output_backend,
-                path=f"{path}.layer.settings",
-            )
-            layers.append(
-                LayerDefinition(
-                    layer_id=layer_id,
-                    layer_type=layer_type,
-                    analyzer_id=analyzer_id,
-                    visible=visible,
-                    settings=settings,
-                )
-            )
-            continue
-
-        if operation_name == "set_output_backend":
-            operation = _object(
-                raw_operation,
-                required=frozenset({"op", "output_backend"}),
-                path=path,
-            )
-            output_backend = _name(
-                operation["output_backend"], path=f"{path}.output_backend"
-            )
-            if output_backend not in SUPPORTED_OUTPUT_BACKENDS:
-                raise StructuralValidationError(
-                    "invalid_value",
-                    f"unsupported output backend {output_backend!r}",
-                    path=f"{path}.output_backend",
-                )
-            continue
-
-        if operation_name == "set_layer_order":
-            operation = _object(
-                raw_operation,
-                required=frozenset({"op", "layer_ids"}),
-                path=path,
-            )
-            raw_ids = operation["layer_ids"]
-            if not isinstance(raw_ids, list):
-                raise StructuralValidationError(
-                    "invalid_value",
-                    "layer_ids must be a list",
-                    path=f"{path}.layer_ids",
-                )
-            layer_ids = [
-                _name(value, path=f"{path}.layer_ids[{item_index}]")
-                for item_index, value in enumerate(raw_ids)
-            ]
-            current_ids = [layer.layer_id for layer in layers]
-            if len(layer_ids) != len(set(layer_ids)) or set(layer_ids) != set(current_ids):
-                raise StructuralValidationError(
-                    "invalid_value",
-                    "layer_ids must name every candidate layer exactly once",
-                    path=f"{path}.layer_ids",
-                )
-            by_id = {layer.layer_id: layer for layer in layers}
-            layers = [by_id[layer_id] for layer_id in layer_ids]
-            continue
-
-        required = {
-            "remove_layer": frozenset({"op", "layer_id"}),
-            "set_layer_visibility": frozenset({"op", "layer_id", "visible"}),
-            "set_layer_analyzer": frozenset({"op", "layer_id", "analyzer_id"}),
-            "set_layer_settings": frozenset({"op", "layer_id", "settings"}),
-        }[operation_name]
-        operation = _object(raw_operation, required=required, path=path)
-        layer_id = _name(operation["layer_id"], path=f"{path}.layer_id")
-        layer_index = find_layer(layer_id, f"{path}.layer_id")
-
-        if operation_name == "remove_layer":
-            layers.pop(layer_index)
-        elif operation_name == "set_layer_visibility":
-            visible = operation["visible"]
-            if not isinstance(visible, bool):
-                raise StructuralValidationError(
-                    "invalid_value",
-                    "visibility must be a boolean",
-                    path=f"{path}.visible",
-                )
-            layers[layer_index] = replace(layers[layer_index], visible=visible)
-        elif operation_name == "set_layer_analyzer":
-            analyzer_id = _name(
-                operation["analyzer_id"], path=f"{path}.analyzer_id"
-            )
-            if analyzer_id not in analyzer_ids:
-                raise StructuralValidationError(
-                    "invalid_reference",
-                    f"unknown analyzer ID {analyzer_id!r}",
-                    path=f"{path}.analyzer_id",
-                )
-            layers[layer_index] = replace(
-                layers[layer_index], analyzer_id=analyzer_id
-            )
-        else:
-            settings = _settings(
-                operation["settings"],
-                output_backend=output_backend,
-                path=f"{path}.settings",
-            )
-            layers[layer_index] = replace(layers[layer_index], settings=settings)
-
-    normalized_layers = []
-    for layer_index, layer in enumerate(layers):
-        if layer.layer_type == CURRENT_BARS_LAYER_TYPE:
-            normalized_layers.append(
-                replace(
-                    layer,
-                    settings=_settings(
-                        layer.settings,
-                        output_backend=output_backend,
-                        path=f"structure.layers[{layer_index}].settings",
-                    ),
-                )
-            )
-        else:
-            normalized_layers.append(layer)
-
-    return replace(
-        definition,
-        layers=tuple(normalized_layers),
-        output_backend=output_backend,
+    document = _exact_object(
+        document, fields=STRUCTURE_DOCUMENT_FIELDS, path="structure"
     )
+    output_backend = _name(
+        document["output_backend"], path="structure.output_backend"
+    )
+    if output_backend not in SUPPORTED_OUTPUT_BACKENDS:
+        raise StructuralValidationError(
+            "invalid_value",
+            f"unsupported output backend {output_backend!r}",
+            path="structure.output_backend",
+        )
+    raw_layers = document["layers"]
+    if not isinstance(raw_layers, list):
+        raise StructuralValidationError(
+            "invalid_structure", "layers must be a list", path="structure.layers"
+        )
+    if len(raw_layers) > MAX_RUNTIME_LAYERS:
+        raise StructuralValidationError(
+            "limit_exceeded",
+            f"runtime supports at most {MAX_RUNTIME_LAYERS} layers",
+            path="structure.layers",
+        )
+
+    analyzer_ids = {analyzer.analyzer_id for analyzer in base.analyzers}
+    layer_types = {capability.layer_type for capability in capabilities.layers}
+    layers: list[LayerDefinition] = []
+    seen_ids: set[str] = set()
+    for index, raw_layer in enumerate(raw_layers):
+        path = f"structure.layers[{index}]"
+        layer = _exact_object(raw_layer, fields=LAYER_DOCUMENT_FIELDS, path=path)
+        layer_id = _name(layer["layer_id"], path=f"{path}.layer_id")
+        if layer_id in seen_ids:
+            raise StructuralValidationError(
+                "invalid_value",
+                f"duplicate layer ID {layer_id!r}",
+                path=f"{path}.layer_id",
+            )
+        seen_ids.add(layer_id)
+        layer_type = _name(layer["layer_type"], path=f"{path}.layer_type")
+        if layer_type not in layer_types:
+            raise StructuralValidationError(
+                "invalid_reference",
+                f"unknown layer type {layer_type!r}",
+                path=f"{path}.layer_type",
+            )
+        analyzer_id = _name(layer["analyzer_id"], path=f"{path}.analyzer_id")
+        if analyzer_id not in analyzer_ids:
+            raise StructuralValidationError(
+                "invalid_reference",
+                f"unknown analyzer ID {analyzer_id!r}",
+                path=f"{path}.analyzer_id",
+            )
+        visible = layer["visible"]
+        if not isinstance(visible, bool):
+            raise StructuralValidationError(
+                "invalid_value",
+                "visibility must be a boolean",
+                path=f"{path}.visible",
+            )
+        layers.append(
+            LayerDefinition(
+                layer_id=layer_id,
+                layer_type=layer_type,
+                analyzer_id=analyzer_id,
+                visible=visible,
+                settings=_settings(
+                    layer["settings"],
+                    output_backend=output_backend,
+                    path=f"{path}.settings",
+                ),
+            )
+        )
+
+    return replace(base, layers=tuple(layers), output_backend=output_backend)
 
 
 class StructuralRuntimeCoordinator:
@@ -386,67 +264,106 @@ class StructuralRuntimeCoordinator:
         if not self._deadline_seconds > 0:
             raise ValueError("structural deadline must be greater than zero")
         self._transaction_lock = threading.Lock()
+        # An activation the render thread started but had not finished when the
+        # listener gave up. The next transaction waits for it (as busy) instead
+        # of opening a second projection transaction.
+        self._unfinished_activation: _ActivationEnvelope | None = None
+        self._launch_error: dict[str, str] | None = None
         # The trusted catalog is immutable, so validate and describe it once
         # instead of on every render-thread snapshot. controller.snapshot()
         # copies it through _json_safe; callers must not mutate it.
         capability_data = runtime_capabilities_to_dict(capabilities)
-        capability_data["operations"] = list(STRUCTURAL_OPERATION_NAMES)
-        capability_data["limits"]["max_operations"] = MAX_STRUCTURAL_OPERATIONS  # type: ignore[index]
+        capability_data["actions"] = [STRUCTURE_SET_ACTION]
         self._capability_data = capability_data
         controller.bind_structure_snapshot(self.structure_snapshot)
 
-    def _fold_live_presentation(self) -> RuntimeDefinition:
-        live_settings = self._controller.current_presentation_settings()
-        analyzers = {
-            analyzer.analyzer_id: analyzer
-            for analyzer in self._active_definition.analyzers
-        }
-        projection_names = (
-            "min_freq",
-            "max_freq",
-            "noise_floor",
-            "low_freq_weight",
-            "high_freq_weight",
-        )
-
-        def folded_settings(layer: Any) -> Mapping[str, object]:
-            if layer.layer_id != CURRENT_BARS_LAYER_ID:
-                return layer.settings
-            merged = dict(live_settings)
-            analyzer = analyzers.get(layer.analyzer_id)
-            if analyzer is None:
-                return merged
-            # Legacy controls still own the default projection. Once the web
-            # surface gives this layer an explicit non-default projection, keep it
-            # layer-owned across later structural transactions.
-            if any(
-                layer.settings[name] != analyzer.settings[name]
-                for name in projection_names
-            ):
-                for name in projection_names:
-                    merged[name] = layer.settings[name]
-            return merged
-
-        layers = tuple(
-            replace(layer, settings=folded_settings(layer))
-            for layer in self._active_definition.layers
-        )
-        return replace(self._active_definition, layers=layers)
-
+    # ------------------------------------------------------------------
+    # Snapshot and launch
+    # ------------------------------------------------------------------
     def structure_snapshot(self) -> dict[str, object]:
-        definition = self._fold_live_presentation()
-        public = runtime_definition_to_dict(definition)
-        # Analyzer settings in the definition are assembly-time values; live
-        # noise, weight, and zoom controls own the current ones (see "state" and
-        # "controls"). Publish analyzer identity only so clients can't read stale
-        # analysis settings here.
-        for analyzer in public["analyzers"]:  # type: ignore[union-attr]
-            analyzer.pop("settings", None)
+        public = runtime_definition_to_dict(self._active_definition)
+        # Layers are published exactly in structure.set document shape, so a
+        # client can send them back unchanged (D-015).
+        for layer in public["layers"]:  # type: ignore[union-attr]
+            layer.pop("schema_version", None)
         public["available_analyzer_ids"] = [
-            analyzer.analyzer_id for analyzer in definition.analyzers
+            analyzer.analyzer_id for analyzer in self._active_definition.analyzers
         ]
         public["capabilities"] = self._capability_data
+        if self._launch_error is not None:
+            public["launch_error"] = dict(self._launch_error)
         return public
+
+    def apply_launch_structure(self, raw: str) -> bool:
+        """Activate the launch document, or keep the default and record why not.
+
+        Call on the render thread after audio setup and before the control
+        listener starts, so no transaction can be in flight. Returns whether the
+        launch document is now active.
+        """
+
+        try:
+            if len(raw.encode("utf-8")) > MAX_LAUNCH_STRUCTURE_BYTES:
+                raise StructuralValidationError(
+                    "invalid_structure",
+                    "launch structure is too large",
+                    path="structure",
+                )
+            try:
+                document = json.loads(raw)
+            except (ValueError, RecursionError) as exc:
+                raise StructuralValidationError(
+                    "invalid_structure",
+                    "launch structure is not valid JSON",
+                    path="structure",
+                ) from exc
+            candidate = structure_document_to_definition(
+                self._active_definition, document, self._capabilities
+            )
+            plan, commit, _rollback = self._prepare(candidate)
+        except RuntimeControlError as exc:
+            self._launch_error = {
+                "code": exc.code,
+                "message": exc.message,
+                "path": exc.path or "structure",
+            }
+            return False
+        except StructuralValidationError as exc:
+            self._launch_error = {
+                "code": exc.code, "message": str(exc), "path": exc.path
+            }
+            return False
+        self._active_plan.stage(plan)
+        self._active_plan.begin_frame()
+        commit()
+        self._active_definition = candidate
+        return True
+
+    # ------------------------------------------------------------------
+    # Listener thread
+    # ------------------------------------------------------------------
+    def _prepare(
+        self,
+        candidate: RuntimeDefinition,
+    ) -> tuple[OrderedLayerPlan, Callable[[], None], Callable[[], None]]:
+        """Compile off the frame path; map compile errors to client errors."""
+
+        try:
+            compiled = self._compile_definition(candidate)
+        except LayerPlanCompilationError as exc:
+            path = "structure.layers"
+            for index, layer in enumerate(candidate.layers):
+                if layer.layer_id == exc.layer_id:
+                    path = f"structure.layers[{index}].settings"
+                    break
+            raise RuntimeControlError("invalid_value", str(exc), path=path) from exc
+        except ValueError as exc:
+            raise RuntimeControlError(
+                "invalid_structure", str(exc), path="structure"
+            ) from exc
+        if isinstance(compiled, PreparedStructuralPlan):
+            return compiled.plan, compiled.commit, compiled.rollback
+        return compiled, (lambda: None), (lambda: None)
 
     def handle_runtime_operation(self, operation: str, payload: Any) -> Any:
         """Run structural compilation here; bridge ordinary work to rendering."""
@@ -457,7 +374,7 @@ class StructuralRuntimeCoordinator:
         if (
             not isinstance(command, Mapping)
             or command.get("operation") != "action"
-            or command.get("action") != "structure.apply"
+            or command.get("action") != STRUCTURE_SET_ACTION
         ):
             return self._bridge.handle(operation, payload)
 
@@ -466,6 +383,14 @@ class StructuralRuntimeCoordinator:
                 "busy", "another structural request is already in flight"
             )
         try:
+            unfinished = self._unfinished_activation
+            if unfinished is not None:
+                if not unfinished.finished.is_set():
+                    raise RuntimeControlError(
+                        "busy", "the previous structure is still being activated"
+                    )
+                self._unfinished_activation = None
+
             expected_revision = payload.get("expected_revision")
             if (
                 isinstance(expected_revision, bool)
@@ -477,17 +402,10 @@ class StructuralRuntimeCoordinator:
                     "expected_revision must be a non-negative integer",
                     path="expected_revision",
                 )
-            args = command.get("args")
-            if not isinstance(args, Mapping) or set(args) != {"operations"}:
-                raise RuntimeControlError(
-                    "invalid_structure",
-                    "structure.apply args must contain operations only",
-                    path="args",
-                )
+            document = command.get("args")
 
             # One deadline bounds capture, compilation, and activation together so
-            # the transaction finishes before the supervisor's request timeout. An
-            # expired wait cancels its queued item; the render thread skips it.
+            # the transaction finishes before the supervisor's request timeout.
             deadline = time.monotonic() + self._deadline_seconds
 
             def remaining() -> float:
@@ -504,71 +422,52 @@ class StructuralRuntimeCoordinator:
                 timeout=remaining(),
             )
             try:
-                candidate_definition = apply_structural_operations(
-                    base.definition,
-                    args["operations"],
-                    self._capabilities,
+                candidate = structure_document_to_definition(
+                    base.definition, document, self._capabilities
                 )
-                compiled = self._compile_definition(candidate_definition)
-                if isinstance(compiled, PreparedStructuralPlan):
-                    candidate_plan = compiled.plan
-                    commit = compiled.commit
-                    rollback = compiled.rollback
-                else:
-                    candidate_plan = compiled
-                    commit = lambda: None
-                    rollback = lambda: None
             except StructuralValidationError as exc:
-                raise RuntimeControlError(
-                    exc.code, str(exc), path=exc.path
-                ) from exc
-            except ValueError as exc:
-                raise RuntimeControlError(
-                    "invalid_structure", str(exc), path="args.operations"
-                ) from exc
+                raise RuntimeControlError(exc.code, str(exc), path=exc.path) from exc
+            plan, commit, rollback = self._prepare(candidate)
 
-            # Never submit an already timed-out compile result.
-            try:
-                remaining()
-            except BaseException:
-                rollback()
-                raise
-
-            legacy = next(
-                (
-                    layer.presentation_state
-                    for layer in candidate_plan.layers
-                    if layer.layer_id == CURRENT_BARS_LAYER_ID
-                ),
-                None,
-            )
-            unavailable = candidate_plan.incompatible_runtime_paths
-            if legacy is None:
-                unavailable = unavailable | PRESENTATION_COMMAND_PATHS
             envelope = _ActivationEnvelope(
-                definition=candidate_definition,
-                plan=candidate_plan,
+                definition=candidate,
+                plan=plan,
                 base_revision=base.revision,
-                legacy_presentation=legacy,
-                unavailable_paths=unavailable,
                 commit=commit,
                 rollback=rollback,
             )
+            # Rollback ownership is exclusive (D-018): this thread rolls back only
+            # an activation the render thread never started. Once started, the
+            # render thread commits or rolls back itself.
             try:
                 self._bridge.handle(
                     "structure.activate",
                     envelope,
                     timeout=remaining(),
                 )
-            except BaseException:
-                rollback()
+            except RuntimeOperationTimeout as exc:
+                if exc.started:
+                    self._unfinished_activation = envelope
+                else:
+                    rollback()
                 raise
-            # The render owner only swaps prepared references and signals this
-            # listener. Build the JSON-shaped response off the frame path.
+            except BaseException:
+                # Roll back only if the render thread never claimed it (never
+                # queued, queue full, bridge closed). A claimed activation's
+                # failure was handled there, possibly after the plan was swapped
+                # in, when rolling back would free projections it reads.
+                if not envelope.claimed.is_set():
+                    rollback()
+                raise
+            # The render owner only swaps prepared references. Build the
+            # JSON-shaped response off the frame path.
             return self._controller.snapshot()
         finally:
             self._transaction_lock.release()
 
+    # ------------------------------------------------------------------
+    # Render thread
+    # ------------------------------------------------------------------
     def process_pending(self, *, max_items: int = 4) -> int:
         """Process bounded control work at the beginning of a render frame."""
 
@@ -586,37 +485,50 @@ class StructuralRuntimeCoordinator:
                     "runtime state changed since this request was read",
                 )
             return _StructuralBase(
-                definition=self._fold_live_presentation(),
+                definition=self._active_definition,
                 revision=self._controller.revision,
             )
         if operation == "structure.activate":
-            envelope = payload
-            if envelope.base_revision != self._controller.revision:
-                raise RuntimeControlError(
-                    "revision_conflict",
-                    "runtime state changed during structural compilation",
-                )
-            self._active_plan.stage(envelope.plan)
+            return self._activate(payload)
+        return self._controller.handle_runtime_operation(operation, payload)
+
+    def _activate(self, envelope: _ActivationEnvelope) -> int:
+        envelope.claimed.set()
+        try:
+            try:
+                if envelope.base_revision != self._controller.revision:
+                    raise RuntimeControlError(
+                        "revision_conflict",
+                        "runtime state changed during structural compilation",
+                    )
+                self._active_plan.stage(envelope.plan)
+            except BaseException:
+                # Not swapped in yet: the candidate's projections are unused.
+                envelope.rollback()
+                raise
+            # Nothing reads projections between frames, so the swap and the
+            # commit (which drops views only the old plan used) are one step
+            # here. Once swapped in, the candidate's projections are live and are
+            # never rolled back.
             self._active_plan.begin_frame()
             envelope.commit()
             self._active_definition = envelope.definition
-            self._controller.rebind_presentation(
-                envelope.legacy_presentation,
-                unavailable_command_paths=envelope.unavailable_paths,
-            )
+            self._launch_error = None
             self._controller.revision += 1
             return self._controller.revision
-        return self._controller.handle_runtime_operation(operation, payload)
+        finally:
+            envelope.finished.set()
 
     def close(self) -> None:
         self._bridge.close()
 
 
 __all__ = [
-    "MAX_STRUCTURAL_OPERATIONS",
-    "STRUCTURAL_OPERATION_NAMES",
+    "LAYER_DOCUMENT_FIELDS",
+    "PreparedStructuralPlan",
+    "STRUCTURE_DOCUMENT_FIELDS",
+    "STRUCTURE_SET_ACTION",
     "StructuralRuntimeCoordinator",
     "StructuralValidationError",
-    "PreparedStructuralPlan",
-    "apply_structural_operations",
+    "structure_document_to_definition",
 ]

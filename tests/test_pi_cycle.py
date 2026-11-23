@@ -45,7 +45,7 @@ HEAD = "a" * 40
 OTHER = "b" * 40
 PYTHON = "/venv/bin/python3"
 BASE_ARGV = ["sudo", "-n", "-E", PYTHON, "/checkout/my_programs/fft_program/main.py",
-             "--led-rows", "64", "--audio-source", "usb-mic", "--non-interactive"]
+             "--led-rows", "64", "--audio-source", "usb-mic"]
 
 
 def passing_summary(**overrides):
@@ -809,7 +809,8 @@ class RealHostTests(unittest.TestCase):
             self.assertEqual(launch["argv"][:3], ["sudo", "-n", "-E"])
         self.assertTrue(launch["argv"][4 if config["runtime"].get("use_sudo") else 1]
                         .endswith("my_programs/fft_program/main.py"))
-        self.assertIn("--non-interactive", launch["argv"])
+        self.assertIn("--audio-source", launch["argv"])
+        self.assertNotIn("--non-interactive", launch["argv"])
         self.assertTrue(launch["cwd"].endswith("my_programs/fft_program"))
 
 

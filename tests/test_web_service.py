@@ -17,6 +17,7 @@ from matrix_controller.pairing import PairingManager
 class FakeSupervisor:
     def __init__(self):
         self.started: list[tuple[str, dict]] = []
+        self.start_kwargs: list[dict] = []
         self.stop_count = 0
         self.runtime_commands: list[dict] = []
         self.runtime = {
@@ -52,8 +53,9 @@ class FakeSupervisor:
     def status(self):
         return {"state": "idle", "visualization_id": None}
 
-    def start(self, visualization_id, parameters):
+    def start(self, visualization_id, parameters, **kwargs):
         self.started.append((visualization_id, parameters))
+        self.start_kwargs.append(kwargs)
         return SimpleNamespace(
             visualization_id=visualization_id,
             parameters=parameters,
@@ -218,6 +220,49 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(body["pid"], 42)
         self.assertEqual(self.supervisor.started, [("fft", {"theme": "warm"})])
 
+    def test_run_forwards_a_bounded_launch_structure(self) -> None:
+        document = self._structure_document()
+        status, _body = self.request(
+            "/api/v1/run",
+            payload={
+                "visualization_id": "fft",
+                "parameters": {},
+                "structure": document,
+            },
+            token="secret-token",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.supervisor.start_kwargs[-1], {"structure": document})
+
+        # Without a structure the supervisor sees the original call shape.
+        self.request(
+            "/api/v1/run",
+            payload={"visualization_id": "fft", "parameters": {}},
+            token="secret-token",
+        )
+        self.assertEqual(self.supervisor.start_kwargs[-1], {})
+
+    def test_run_rejects_bad_structure_shape_before_supervisor(self) -> None:
+        too_many = {"layers": [{} for _ in range(33)]}
+        too_deep: dict = {}
+        node = too_deep
+        for _ in range(10):
+            node["x"] = {}
+            node = node["x"]
+        for payload in (
+            {"visualization_id": "fft", "structure": ["layers"]},
+            {"visualization_id": "fft", "structure": too_many},
+            {"visualization_id": "fft", "structure": too_deep},
+            {"visualization_id": "fft", "structur": {}},
+        ):
+            with self.subTest(payload=str(payload)[:40]), self.assertRaises(
+                urllib.error.HTTPError
+            ) as caught:
+                self.request("/api/v1/run", payload=payload, token="secret-token")
+            self.assertEqual(caught.exception.code, 400)
+            caught.exception.close()
+        self.assertEqual(self.supervisor.started, [])
+
     def test_runtime_snapshot_requires_control_authentication(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request("/api/v1/runtime")
@@ -284,15 +329,23 @@ class WebServiceTests(unittest.TestCase):
         return {
             "run_id": 1,
             "expected_revision": 4,
-            "action": "structure.apply",
-            "args": {"operations": [
-                {"op": "add_layer", "layer": {
-                    "layer_id": "top", "layer_type": "current-bars",
+            "action": "structure.set",
+            "args": self._structure_document(settings),
+        }
+
+    @staticmethod
+    def _structure_document(settings: dict | None = None) -> dict:
+        settings = settings or {"theme": "ocean", "peak_hold_frames": 8}
+        return {
+            "output_backend": "direct",
+            "layers": [
+                {
+                    "layer_id": layer_id, "layer_type": "current-bars",
                     "analyzer_id": "main-audio", "visible": True,
                     "settings": settings,
-                }},
-                {"op": "set_layer_order", "layer_ids": ["top", "current-bars"]},
-            ]},
+                }
+                for layer_id in ("top", "current-bars")
+            ],
         }
 
     def test_runtime_structure_batch_passes_existing_action_bounds(self) -> None:
@@ -303,9 +356,9 @@ class WebServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         command = self.supervisor.runtime_commands[-1]
-        self.assertEqual(command["action"], "structure.apply")
+        self.assertEqual(command["action"], "structure.set")
         self.assertEqual(
-            command["args"]["operations"][0]["layer"]["settings"]["peak_hold_frames"],
+            command["args"]["layers"][0]["settings"]["peak_hold_frames"],
             8,
         )
 
@@ -316,7 +369,7 @@ class WebServiceTests(unittest.TestCase):
             (RuntimeRemoteError(
                 "invalid_reference",
                 "unknown layer ID",
-                path="args.operations[1].layer_ids",
+                path="structure.layers[1].settings.max_freq",
             ), 400),
             (RuntimeRemoteError("revision_conflict", "runtime state changed"), 409),
             (RuntimeRemoteError("busy", "structural request in flight"), 503),

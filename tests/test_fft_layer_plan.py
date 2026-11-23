@@ -410,7 +410,6 @@ def _visualizer(width: int, height: int, settings: Settings):
 def _scaler(settings: Settings, width: int) -> ScalingProcessor:
     return ScalingProcessor(
         settings.scaling,
-        settings.sensitivity,
         settings.smoothing,
         width,
         frame_rate=1.0 / settings.audio.sleep_delay,
@@ -419,7 +418,6 @@ def _scaler(settings: Settings, width: int) -> ScalingProcessor:
 
 def _current_plan(
     settings: Settings,
-    visualizer,
     analyzer: RecordingAnalyzer,
     backend: str,
     width: int,
@@ -431,6 +429,9 @@ def _current_plan(
         sensitivity_settings=settings.sensitivity,
         num_bins=width,
         output_backend=backend,
+        # The layer definition is authoritative for presentation, so it must be
+        # built from the same settings the legacy reference pipeline uses.
+        settings=settings,
     )
     registry = AnalyzerRegistry(
         graph,
@@ -439,7 +440,6 @@ def _current_plan(
     return compile_current_bars_layer_plan(
         graph,
         registry,
-        visualizer=visualizer,
         settings=settings,
         width=width,
         height=height,
@@ -452,7 +452,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         legacy_settings = _direct_settings()
         planned_settings = copy.deepcopy(legacy_settings)
         legacy_visualizer = _visualizer(width, height, legacy_settings)
-        planned_visualizer = _visualizer(width, height, planned_settings)
         legacy_scaler = _scaler(legacy_settings, width)
         raw_frames = (
             np.linspace(0.0, 0.7, width, dtype=np.float32),
@@ -461,7 +460,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         analyzer = RecordingAnalyzer(raw_frames[0])
         plan = _current_plan(
             planned_settings,
-            planned_visualizer,
             analyzer,
             DIRECT_OUTPUT_PATH,
             width,
@@ -495,8 +493,9 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         self.assertEqual(planned_canvas.clear_calls, len(raw_frames))
         self.assertEqual(analyzer.get_calls, len(raw_frames))
         self.assertEqual(analyzer.release_calls, len(raw_frames))
+        # The compiler builds every layer's own presentation objects.
         presentation = plan.layers[0].presentation_state
-        self.assertIs(presentation.visualizer, planned_visualizer)
+        self.assertIsNot(presentation.visualizer, legacy_visualizer)
         self.assertIsNot(presentation.scaler, legacy_scaler)
 
     @unittest.skipUnless(_PillowImage is not None, "requires Pillow")
@@ -505,7 +504,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         legacy_settings = _bulk_settings()
         planned_settings = copy.deepcopy(legacy_settings)
         legacy_visualizer = _visualizer(width, height, legacy_settings)
-        planned_visualizer = _visualizer(width, height, planned_settings)
         legacy_scaler = _scaler(legacy_settings, width)
         legacy_output = compile_pillow_bulk_bars_output(
             legacy_visualizer, width, height
@@ -514,7 +512,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         analyzer = RecordingAnalyzer(raw)
         plan = _current_plan(
             planned_settings,
-            planned_visualizer,
             analyzer,
             PILLOW_BULK_OUTPUT_PATH,
             width,
@@ -535,10 +532,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         np.testing.assert_array_equal(planned_canvas.pixels, legacy_canvas.pixels)
         self.assertEqual(planned_canvas.set_image_calls, 1)
         self.assertEqual(len(planned_canvas.images), 1)
-        self.assertEqual(
-            plan.incompatible_runtime_paths,
-            legacy_output.incompatible_runtime_paths,
-        )
 
 
 class LayerPlanHotPathTests(unittest.TestCase):
@@ -552,6 +545,12 @@ class LayerPlanHotPathTests(unittest.TestCase):
         self.assertIn("ActiveLayerPlan(initial_layer_plan)", setup)
         self.assertIn("frame_plan.prepare_frame()", loop)
         self.assertIn("frame_plan.draw_frame(app.canvas)", loop)
+        # D-016: the launch structure is applied after audio setup, before the
+        # control listener can start a transaction and before the first frame.
+        launch = setup.index("apply_launch_structure(")
+        self.assertLess(setup.index("with ShutdownSignalHandler(), capture:"), launch)
+        self.assertLess(launch, setup.index("runtime_thread.start()"))
+        self.assertNotIn("apply_launch_structure(", loop)
         for forbidden in (
             "current_bars_runtime_definition(",
             "compile_runtime_graph(",

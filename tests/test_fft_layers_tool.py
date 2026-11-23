@@ -63,7 +63,7 @@ def snapshot(*, layers: list[dict] | None = None) -> dict:
             "available_analyzer_ids": ["main-audio"],
             "capabilities": {
                 "output_backends": ["direct", "pillow-bulk"],
-                "limits": {"max_layers": 8, "max_operations": 32},
+                "limits": {"max_layers": 8},
                 "layer_types": [{
                     "layer_type": "current-bars",
                     "output_backends": ["direct", "pillow-bulk"],
@@ -89,14 +89,11 @@ class LayerPlanTests(unittest.TestCase):
                     )
                     self.assertEqual(action["run_id"], 7)
                     self.assertEqual(action["expected_revision"], 3)
-                    self.assertEqual(action["action"], "structure.apply")
-                    operations = action["args"]["operations"]
-                    self.assertLessEqual(len(operations), 32)
-                    added = [
-                        operation["layer"]
-                        for operation in operations
-                        if operation["op"] == "add_layer"
-                    ]
+                    self.assertEqual(action["action"], "structure.set")
+                    document = action["args"]
+                    self.assertEqual(set(document), {"output_backend", "layers"})
+                    self.assertEqual(document["output_backend"], backend)
+                    added = document["layers"]
                     self.assertEqual(
                         [layer["layer_id"] for layer in added],
                         ["current-bars", *(f"layer-{index}" for index in range(2, count + 1))],
@@ -105,10 +102,11 @@ class LayerPlanTests(unittest.TestCase):
                         {layer["analyzer_id"] for layer in added},
                         {"main-audio"},
                     )
-                    self.assertEqual(
-                        operations[-1],
-                        {"op": "set_output_backend", "output_backend": backend},
-                    )
+                    for layer in added:
+                        self.assertEqual(
+                            set(layer),
+                            {"layer_id", "layer_type", "analyzer_id", "visible", "settings"},
+                        )
                     if backend == "pillow-bulk":
                         for layer in added:
                             for name, value in PILLOW_CONSTRAINTS.items():
@@ -121,11 +119,7 @@ class LayerPlanTests(unittest.TestCase):
         action = fft_layers.build_structure_action(
             snapshot(layers=[]), 2, "direct"
         )
-        added = [
-            operation["layer"]
-            for operation in action["args"]["operations"]
-            if operation["op"] == "add_layer"
-        ]
+        added = action["args"]["layers"]
         self.assertEqual(added[0]["settings"]["theme"], "ocean")
         self.assertFalse(added[0]["settings"]["gradient"])
 
@@ -137,9 +131,6 @@ class LayerPlanTests(unittest.TestCase):
         no_backend = snapshot()
         no_backend["structure"]["capabilities"]["output_backends"] = ["direct"]
         cases.append((no_backend, 1, "pillow-bulk", "does not advertise"))
-        too_few_ops = snapshot()
-        too_few_ops["structure"]["capabilities"]["limits"]["max_operations"] = 2
-        cases.append((too_few_ops, 2, "direct", "needs 4 operations"))
         for value, count, backend, message in cases:
             with self.subTest(message=message), self.assertRaisesRegex(
                 fft_layers.LayerToolError, message
@@ -187,7 +178,7 @@ class LayerToolMainTests(unittest.TestCase):
             ("GET", "/api/v1/runtime"),
             ("POST", "/api/v1/runtime/actions"),
         ])
-        self.assertEqual(requests[1][4]["action"], "structure.apply")
+        self.assertEqual(requests[1][4]["action"], "structure.set")
         self.assertNotIn("secret", output.getvalue())
         self.assertIn("Applied 2 layer(s) with direct", output.getvalue())
 

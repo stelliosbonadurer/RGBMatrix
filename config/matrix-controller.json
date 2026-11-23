@@ -33,8 +33,7 @@
       "audio_source": "usb-mic",
       "theme": "ocean",
       "gradient": false,
-      "overflow": true,
-      "non_interactive": true
+      "overflow": true
     },
     "master_theorem": {
       "example": "custom",

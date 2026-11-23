@@ -16,23 +16,6 @@ DIRECT_OUTPUT_PATH = "direct"
 PILLOW_BULK_OUTPUT_PATH = "pillow-bulk"
 OUTPUT_PATH_ENVIRONMENT = "RGBMATRIX_FFT_OUTPUT_PATH"
 _BLACK = (0, 0, 0)
-_PILLOW_BULK_INCOMPATIBLE_RUNTIME_PATHS = frozenset({
-    "dynamic.adjust_speed",
-    "dynamic.cycle_speed",
-    "dynamic.freeze",
-    "dynamic.frozen",
-    "dynamic.reseed",
-    "settings.overflow_multiplier",
-    "settings.peak_enabled",
-    "settings.shadow_enabled",
-    "theme.next",
-    "theme.previous",
-    "visualizer.bars",
-    "visualizer.full",
-    "visualizer.gradient",
-    "visualizer.overflow",
-    "visualizer.theme",
-})
 
 
 class PillowBulkBarsOutputPlan:
@@ -49,7 +32,6 @@ class PillowBulkBarsOutputPlan:
         "_geometry_boxes",
         "_height",
         "_image",
-        "_incompatible_runtime_paths",
         "_overflow_multiplier",
         "_overflow_colors",
         "_width",
@@ -69,9 +51,6 @@ class PillowBulkBarsOutputPlan:
         self._full_frame_box = (0, 0, width, height)
         self._overflow_multiplier = overflow_multiplier
         self._overflow_colors = overflow_colors
-        self._incompatible_runtime_paths = (
-            _PILLOW_BULK_INCOMPATIBLE_RUNTIME_PATHS
-        )
         self._geometry_boxes = tuple(
             tuple(
                 (column, height - visible, column + 1, height)
@@ -97,12 +76,6 @@ class PillowBulkBarsOutputPlan:
         """Return the startup-compiled ocean colors by layer class and position."""
 
         return self._overflow_colors
-
-    @property
-    def incompatible_runtime_paths(self) -> frozenset[str]:
-        """Return controls that would invalidate this immutable output plan."""
-
-        return self._incompatible_runtime_paths
 
     def begin_frame(self) -> None:
         """Clear the one reusable image before ordered layer painting."""

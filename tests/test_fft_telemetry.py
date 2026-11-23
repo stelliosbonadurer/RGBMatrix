@@ -619,9 +619,6 @@ class MainTelemetryWiringTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, clean_environment, clear=True))
             stack.enter_context(mock.patch.object(sys, "argv", ["main.py", *argv]))
-            load_state = stack.enter_context(
-                mock.patch.object(fft_main, "load_runtime_state", return_value=None)
-            )
             initialize = stack.enter_context(
                 mock.patch.object(
                     fft_main.MatrixApp, "initialize_matrix", return_value=False
@@ -664,7 +661,6 @@ class MainTelemetryWiringTests(unittest.TestCase):
             code=exited.exception.code,
             stdout=stdout.getvalue(),
             stderr=stderr.getvalue(),
-            load_state=load_state,
             initialize=initialize,
             resolve_source=resolve_source,
             built=built,
@@ -688,7 +684,7 @@ class MainTelemetryWiringTests(unittest.TestCase):
             self.assertIn(default, help_text)
         result.initialize.assert_not_called()
 
-    def test_configuration_errors_exit_2_before_state_or_matrix(self) -> None:
+    def test_configuration_errors_exit_2_before_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             # argparse's usage line lists every telemetry flag, so match the
             # specific error line rather than any mention of telemetry.
@@ -718,11 +714,10 @@ class MainTelemetryWiringTests(unittest.TestCase):
                     result = self._run_main(argv)
                     self.assertEqual(result.code, 2)
                     self.assertIn(message, result.stderr)
-                    result.load_state.assert_not_called()
                     result.initialize.assert_not_called()
             self.assertEqual(os.listdir(directory), [])
 
-    def test_retired_step6_variable_exits_2_before_state_or_matrix(self) -> None:
+    def test_retired_step6_variable_exits_2_before_matrix(self) -> None:
         result = self._run_main(
             [], environment={"RGBMATRIX_FFT_STEP6_METRICS_PATH": "/run/x.json"}
         )
@@ -733,7 +728,6 @@ class MainTelemetryWiringTests(unittest.TestCase):
         )
         self.assertIn("use --telemetry-out, --telemetry-label", result.stderr)
         result.built.assert_not_called()
-        result.load_state.assert_not_called()
         result.initialize.assert_not_called()
 
     def test_valid_options_build_telemetry_with_the_selected_output_mode(self) -> None:
@@ -758,7 +752,7 @@ class MainTelemetryWiringTests(unittest.TestCase):
             self.assertEqual(telemetry.duration_ns, 30_000_000_000)
             self.assertEqual(os.listdir(directory), [])
 
-    def test_unavailable_bluetooth_exits_before_state_or_matrix(self) -> None:
+    def test_unavailable_bluetooth_exits_before_matrix(self) -> None:
         result = self._run_main(
             ["--audio-source", "bluetooth"],
             source_error=fft_main.AudioSourceResolutionError(
@@ -773,8 +767,19 @@ class MainTelemetryWiringTests(unittest.TestCase):
         )
         result.resolve_source.assert_called_once()
         self.assertEqual(result.resolve_source.call_args.args[0], "bluetooth")
-        result.load_state.assert_not_called()
         result.initialize.assert_not_called()
+
+    def test_main_has_no_runtime_state_file_or_keyboard(self) -> None:
+        # web-control-refactor D-011: no runtime_state.json, no keyboard adapter.
+        for name in (
+            "load_runtime_state",
+            "save_runtime_state",
+            "should_reload_prior_state",
+            "KeyboardHandler",
+            "ThemeCycler",
+            "RUNTIME_STATE_PATH",
+        ):
+            self.assertFalse(hasattr(fft_main, name), name)
 
     def test_no_telemetry_flags_leave_telemetry_off(self) -> None:
         result = self._run_main([])

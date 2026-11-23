@@ -470,7 +470,24 @@ def build_handler(
                     if type(visualization_id) is not str or not visualization_id:
                         raise ValidationError("visualization_id must be a non-empty string")
                     parameters = payload.get("parameters", {})
-                    result = supervisor.start(visualization_id, parameters)
+                    unknown = set(payload) - {"visualization_id", "parameters", "structure"}
+                    if unknown:
+                        raise ValidationError(
+                            f"unknown run fields: {', '.join(sorted(unknown))}"
+                        )
+                    if "structure" in payload:
+                        structure = payload["structure"]
+                        if not isinstance(structure, dict):
+                            raise ValidationError("structure must be a JSON object")
+                        result = supervisor.start(
+                            visualization_id,
+                            parameters,
+                            structure=_bounded_runtime_value(
+                                structure, label="structure"
+                            ),
+                        )
+                    else:
+                        result = supervisor.start(visualization_id, parameters)
                     self._send_json(
                         HTTPStatus.OK,
                         {

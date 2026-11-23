@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import Any
 
 from matrix_controller.registry import build_default_registry
+from matrix_controller.runtime_transport import (
+    LAUNCH_STRUCTURE_ENVIRONMENT,
+    MAX_LAUNCH_STRUCTURE_BYTES,
+)
 from matrix_controller.schema import ValidationError
 from matrix_controller.supervisor import VisualizationSupervisor
 
@@ -99,6 +105,39 @@ class SupervisorTests(unittest.TestCase):
         status = self.supervisor.status()
         self.assertEqual(status["pid"], running.pid)
         self.assertEqual(self.signals, [])
+
+    def test_launch_structure_reaches_child_environment_compactly(self) -> None:
+        structure = {"output_backend": "direct", "layers": []}
+        with unittest.mock.patch.dict(
+            os.environ, {LAUNCH_STRUCTURE_ENVIRONMENT: "inherited"}
+        ):
+            self.supervisor.start("fft", {}, structure=structure)
+            self.supervisor.start("fft", {})
+        with_structure = self.factory.calls[0][1]["env"]
+        without = self.factory.calls[1][1]["env"]
+        self.assertEqual(
+            with_structure[LAUNCH_STRUCTURE_ENVIRONMENT],
+            '{"output_backend":"direct","layers":[]}',
+        )
+        # Never inherited from the service's own environment.
+        self.assertNotIn(LAUNCH_STRUCTURE_ENVIRONMENT, without)
+
+    def test_bad_launch_structure_keeps_current_child_running(self) -> None:
+        self.supervisor.start("fft", {})
+        cases = (
+            ("sorts", {"layers": []}, "does not accept a launch structure"),
+            ("fft", ["layers"], "must be a JSON object"),
+            ("fft", {"bad": float("nan")}, "plain JSON"),
+            ("fft", {"pad": "x" * MAX_LAUNCH_STRUCTURE_BYTES}, "at most"),
+        )
+        for visualization_id, structure, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                ValidationError, message
+            ):
+                self.supervisor.start(visualization_id, {}, structure=structure)
+        self.assertEqual(len(self.factory.calls), 1)
+        self.assertEqual(self.signals, [])
+        self.assertEqual(self.supervisor.status()["state"], "running")
 
     def test_stop_is_idempotent(self) -> None:
         running = self.supervisor.start("fft")
