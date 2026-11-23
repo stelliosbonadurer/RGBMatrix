@@ -15,6 +15,11 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+from matrix_controller.controller_config import ControllerConfigError, load_controller_config
+from matrix_controller.definitions import MATRIX_PARAMETERS
+from matrix_controller.schema import ValidationError
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,10 @@ class ProgramEntry:
 
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG_PATH = WORKSPACE_ROOT / "config" / "matrix-controller.json"
+MATRIX_SPECS = {parameter.name: parameter for parameter in MATRIX_PARAMETERS}
+# Launcher flags that override one value from the config's "matrix" section.
+LED_OVERRIDES = ("led_rows", "led_cols", "led_gpio_mapping", "led_slowdown_gpio")
 SEARCH_ROOTS = [
     WORKSPACE_ROOT / "my_programs",
     WORKSPACE_ROOT / "rpi-rgb-led-matrix" / "bindings" / "python" / "samples",
@@ -150,13 +159,30 @@ def resolve_python_executable(user_choice: str | None) -> str:
     return sys.executable
 
 
-def build_led_args(args: argparse.Namespace) -> list[str]:
-    return [
-        f"--led-rows={args.led_rows}",
-        f"--led-cols={args.led_cols}",
-        f"--led-gpio-mapping={args.led_gpio_mapping}",
-        f"--led-slowdown-gpio={args.led_slowdown_gpio}",
-    ]
+def load_matrix_settings(config_path: Path) -> dict[str, Any]:
+    """Return every matrix setting: code defaults overlaid with the config file.
+
+    This is the same "matrix" section the web controller passes to managed
+    visualizations, so manual launches drive the panel identically.
+    """
+
+    config = load_controller_config(config_path)
+    settings = {parameter.name: parameter.default for parameter in MATRIX_PARAMETERS}
+    settings.update(config.matrix_defaults)
+    return settings
+
+
+def build_led_args(args: argparse.Namespace, settings: dict[str, Any]) -> list[str]:
+    merged = dict(settings)
+    for name in LED_OVERRIDES:
+        value = getattr(args, name)
+        if value is not None:
+            merged[name] = MATRIX_SPECS[name].normalize(value)
+
+    led_args: list[str] = []
+    for parameter in MATRIX_PARAMETERS:
+        led_args.extend(parameter.cli_arguments(merged[parameter.name]))
+    return led_args
 
 
 def parse_args() -> tuple[argparse.Namespace, list[str]]:
@@ -175,15 +201,26 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--no-sudo", action="store_true", help="Run without sudo -E.")
     parser.add_argument("--dry-run", action="store_true", help="Print command and exit without running.")
 
-    parser.add_argument("--led-rows", type=int, default=64)
-    parser.add_argument("--led-cols", type=int, default=64)
-    parser.add_argument("--led-gpio-mapping", default="adafruit-hat")
-    parser.add_argument("--led-slowdown-gpio", type=int, default=2)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help='Controller config whose "matrix" section supplies the LED flags.',
+    )
+    override_help = "Override the config's matrix value for this launch."
+    parser.add_argument("--led-rows", type=int, help=override_help)
+    parser.add_argument("--led-cols", type=int, help=override_help)
+    parser.add_argument(
+        "--led-gpio-mapping",
+        choices=MATRIX_SPECS["led_gpio_mapping"].choices,
+        help=override_help,
+    )
+    parser.add_argument("--led-slowdown-gpio", type=int, help=override_help)
 
     parser.add_argument(
         "--no-led-defaults",
         action="store_true",
-        help="Do not inject default LED args; pass only launcher passthrough args.",
+        help="Do not inject config LED args; pass only launcher passthrough args.",
     )
 
     args, passthrough = parser.parse_known_args()
@@ -215,7 +252,11 @@ def main() -> int:
     command.extend([python_exec, str(selected.abs_path)])
 
     if not args.no_led_defaults:
-        command.extend(build_led_args(args))
+        try:
+            command.extend(build_led_args(args, load_matrix_settings(args.config)))
+        except (ControllerConfigError, ValidationError) as exc:
+            print(f"Matrix settings error: {exc}", file=sys.stderr)
+            return 2
 
     command.extend(passthrough)
 

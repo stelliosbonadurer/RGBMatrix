@@ -15,7 +15,7 @@
     "led_parallel": 1,
     "led_pwm_bits": 11,
     "led_brightness": 100,
-    "led_gpio_mapping": "adafruit-hat",
+    "led_gpio_mapping": "adafruit-hat-pwm",
     "led_slowdown_gpio": 2,
     "led_scan_mode": 1,
     "led_pwm_lsb_nanoseconds": 130,
