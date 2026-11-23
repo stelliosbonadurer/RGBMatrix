@@ -38,6 +38,7 @@ from core.runtime_graph import (
     thaw_settings,
 )
 from core.scaling import ScalingProcessor
+from runtime_control import ANALYSIS_PROJECTION_COMMAND_PATHS
 from themes import get_theme, list_themes
 from visualizers.bars_unified import BarsUnifiedVisualizer
 from visualizers.peaks import draw_peaks
@@ -63,6 +64,11 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "smoothing_fall",
     "dynamic_cycle_speed",
     "dynamic_frozen",
+    "min_freq",
+    "max_freq",
+    "noise_floor",
+    "low_freq_weight",
+    "high_freq_weight",
 })
 
 
@@ -274,6 +280,7 @@ def compile_ordered_layer_plan(
     *,
     begin_draw: Callable[[Any], None],
     end_draw: Callable[[Any], None] = lambda _canvas: None,
+    analyzer_resolver: Callable[[CompiledLayerDefinition], Any] | None = None,
 ) -> OrderedLayerPlan:
     """Compile direct references, visible order, and analyzer sharing once."""
 
@@ -293,7 +300,11 @@ def compile_ordered_layer_plan(
             raise LayerPlanCompilationError(
                 f"no runtime factory for layer type {definition.layer_type!r}"
             )
-        analyzer = analyzer_registry.resolve(definition.analyzer)
+        analyzer = (
+            analyzer_resolver(definition)
+            if analyzer_resolver is not None
+            else analyzer_registry.resolve(definition.analyzer)
+        )
         components = _validate_components(
             definition,
             factory(definition, analyzer, plan.output_backend),
@@ -488,6 +499,11 @@ def current_bars_settings_from_runtime(
         "smoothing_fall": float(settings.smoothing.fall),
         "dynamic_cycle_speed": float(getattr(theme, "cycle_speed", 0.06)),
         "dynamic_frozen": bool(getattr(theme, "frozen", False)),
+        "min_freq": float(settings.frequency.active_min_freq),
+        "max_freq": float(settings.frequency.active_max_freq),
+        "noise_floor": float(settings.sensitivity.noise_floor),
+        "low_freq_weight": float(settings.sensitivity.low_freq_weight),
+        "high_freq_weight": float(settings.sensitivity.high_freq_weight),
     }
 
 
@@ -512,6 +528,11 @@ def current_bars_settings_descriptor() -> dict[str, object]:
             {"name": "smoothing_fall", "type": "number", "min": 0.0, "max": 1.0, "default": 0.1},
             {"name": "dynamic_cycle_speed", "type": "number", "min": 0.0, "max": 5.0, "default": 0.06},
             {"name": "dynamic_frozen", "type": "boolean", "default": False},
+            {"name": "min_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 100.0},
+            {"name": "max_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 6300.0},
+            {"name": "noise_floor", "type": "number", "min": 0.0, "max": 100.0, "default": 0.3},
+            {"name": "low_freq_weight", "type": "number", "min": 0.0, "max": 100.0, "default": 0.45},
+            {"name": "high_freq_weight", "type": "number", "min": 0.0, "max": 100.0, "default": 10.0},
         ],
         "backend_constraints": {
             PILLOW_BULK_OUTPUT_PATH: {
@@ -595,6 +616,13 @@ def normalize_current_bars_settings(
     normalized["smoothing_rise"] = _number(normalized, "smoothing_rise", 0.0, 1.0)
     normalized["smoothing_fall"] = _number(normalized, "smoothing_fall", 0.0, 1.0)
     normalized["dynamic_cycle_speed"] = _number(normalized, "dynamic_cycle_speed", 0.0, 5.0)
+    normalized["min_freq"] = _number(normalized, "min_freq", 1.0, 24000.0)
+    normalized["max_freq"] = _number(normalized, "max_freq", 1.0, 24000.0)
+    if normalized["max_freq"] <= normalized["min_freq"]:
+        raise ValueError("max_freq must be greater than min_freq")
+    normalized["noise_floor"] = _number(normalized, "noise_floor", 0.0, 100.0)
+    normalized["low_freq_weight"] = _number(normalized, "low_freq_weight", 0.0, 100.0)
+    normalized["high_freq_weight"] = _number(normalized, "high_freq_weight", 0.0, 100.0)
 
     if output_backend == PILLOW_BULK_OUTPUT_PATH:
         fixed = current_bars_settings_descriptor()["backend_constraints"][PILLOW_BULK_OUTPUT_PATH]  # type: ignore[index]
@@ -794,6 +822,17 @@ def compile_current_bars_layer_plan(
             thaw_settings(definition.settings),
             output_backend,
         )
+        analyzer_settings = thaw_settings(definition.analyzer.settings)
+        custom_projection = any(
+            normalized[name] != analyzer_settings[name]
+            for name in (
+                "min_freq",
+                "max_freq",
+                "noise_floor",
+                "low_freq_weight",
+                "high_freq_weight",
+            )
+        )
         if use_initial_objects and definition.layer_id == CURRENT_BARS_LAYER_ID:
             layer_settings = settings
             layer_visualizer = visualizer
@@ -822,7 +861,14 @@ def compile_current_bars_layer_plan(
         )
         if output_backend == DIRECT_OUTPUT_PATH:
             executor = _DirectBarsExecutor(presentation, height)
-            incompatible_runtime_paths = frozenset()
+            incompatible_runtime_paths = (
+                ANALYSIS_PROJECTION_COMMAND_PATHS
+                if (
+                    definition.layer_id == CURRENT_BARS_LAYER_ID
+                    and custom_projection
+                )
+                else frozenset()
+            )
         elif output_backend == PILLOW_BULK_OUTPUT_PATH:
             assert shared_output is not None
             executor = _PillowBulkBarsExecutor(
@@ -830,6 +876,14 @@ def compile_current_bars_layer_plan(
                 shared_output,
             )
             incompatible_runtime_paths = executor.incompatible_runtime_paths
+            if (
+                definition.layer_id == CURRENT_BARS_LAYER_ID
+                and custom_projection
+            ):
+                incompatible_runtime_paths = (
+                    incompatible_runtime_paths
+                    | ANALYSIS_PROJECTION_COMMAND_PATHS
+                )
         else:
             raise LayerPlanCompilationError(
                 f"unsupported current bars backend {output_backend!r}"
@@ -850,12 +904,32 @@ def compile_current_bars_layer_plan(
         begin_draw = lambda _canvas: shared_output.begin_frame()
         end_draw = shared_output.end_frame
 
+    def projection_analyzer(definition: CompiledLayerDefinition) -> Any:
+        normalized = normalize_current_bars_settings(
+            thaw_settings(definition.settings),
+            graph.output_backend,
+        )
+        return analyzer_registry.resolve_projection(
+            definition.analyzer,
+            {
+                name: normalized[name]
+                for name in (
+                    "min_freq",
+                    "max_freq",
+                    "noise_floor",
+                    "low_freq_weight",
+                    "high_freq_weight",
+                )
+            },
+        )
+
     return compile_ordered_layer_plan(
         graph,
         analyzer_registry,
         {CURRENT_BARS_LAYER_TYPE: bars_factory},
         begin_draw=begin_draw,
         end_draw=end_draw,
+        analyzer_resolver=projection_analyzer,
     )
 
 

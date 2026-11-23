@@ -607,7 +607,7 @@ class TelemetryOptionTests(unittest.TestCase):
 class MainTelemetryWiringTests(unittest.TestCase):
     """Drive main() up to the matrix boundary without hardware."""
 
-    def _run_main(self, argv, environment=None):
+    def _run_main(self, argv, environment=None, source_error=None):
         clean_environment = {
             key: value
             for key, value in os.environ.items()
@@ -627,6 +627,22 @@ class MainTelemetryWiringTests(unittest.TestCase):
                     fft_main.MatrixApp, "initialize_matrix", return_value=False
                 )
             )
+            if source_error is None:
+                resolve_source = stack.enter_context(
+                    mock.patch.object(
+                        fft_main,
+                        "resolve_audio_source",
+                        side_effect=lambda _source_id, settings: settings,
+                    )
+                )
+            else:
+                resolve_source = stack.enter_context(
+                    mock.patch.object(
+                        fft_main,
+                        "resolve_audio_source",
+                        side_effect=source_error,
+                    )
+                )
             real_telemetry_from_args = fft_main.telemetry_from_args
             built_values = []
 
@@ -650,6 +666,7 @@ class MainTelemetryWiringTests(unittest.TestCase):
             stderr=stderr.getvalue(),
             load_state=load_state,
             initialize=initialize,
+            resolve_source=resolve_source,
             built=built,
             built_values=built_values,
         )
@@ -740,6 +757,24 @@ class MainTelemetryWiringTests(unittest.TestCase):
             self.assertEqual(telemetry.output_mode, "pillow-bulk")
             self.assertEqual(telemetry.duration_ns, 30_000_000_000)
             self.assertEqual(os.listdir(directory), [])
+
+    def test_unavailable_bluetooth_exits_before_state_or_matrix(self) -> None:
+        result = self._run_main(
+            ["--audio-source", "bluetooth"],
+            source_error=fft_main.AudioSourceResolutionError(
+                "bluetooth audio input is unavailable or ambiguous"
+            ),
+        )
+
+        self.assertEqual(result.code, 2)
+        self.assertIn(
+            "error: bluetooth audio input is unavailable or ambiguous",
+            result.stderr,
+        )
+        result.resolve_source.assert_called_once()
+        self.assertEqual(result.resolve_source.call_args.args[0], "bluetooth")
+        result.load_state.assert_not_called()
+        result.initialize.assert_not_called()
 
     def test_no_telemetry_flags_leave_telemetry_off(self) -> None:
         result = self._run_main([])

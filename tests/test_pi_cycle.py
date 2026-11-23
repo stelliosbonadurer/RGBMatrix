@@ -45,7 +45,7 @@ HEAD = "a" * 40
 OTHER = "b" * 40
 PYTHON = "/venv/bin/python3"
 BASE_ARGV = ["sudo", "-n", "-E", PYTHON, "/checkout/my_programs/fft_program/main.py",
-             "--led-rows", "64", "--non-interactive"]
+             "--led-rows", "64", "--audio-source", "usb-mic", "--non-interactive"]
 
 
 def passing_summary(**overrides):
@@ -409,6 +409,20 @@ class CheckRefusalTests(TempHostCase):
         host = self.host(argv_result=remote.Result(1, "", "ImportError: boom"))
         self.assert_refused_without_changes(host, "ImportError: boom")
 
+    def test_run_plan_refuses_controller_argv_without_audio_source(self):
+        argv = [item for item in BASE_ARGV if item not in ("--audio-source", "usb-mic")]
+        host = self.host(argv_result=remote.Result(0, json.dumps({
+            "argv": argv,
+            "cwd": "/checkout/my_programs/fft_program",
+            "python": PYTHON,
+        })))
+        code, result, _ = _check(host, "--run-plan", "bluetooth:direct:30")
+        self.assertEqual(code, remote.EXIT_REFUSED)
+        self.assertIn("no --audio-source value", result["refused"])
+        for name in ("stop", "start", "make_run_dir", "foreground"):
+            self.assertNotIn(name, host.names())
+        self.assertFalse((self.root / "evidence").exists())
+
     def test_bad_arguments(self):
         host = self.host()
         code, result, _ = _run(host, "check", HEAD, "--modes", "direct,bogus",
@@ -421,6 +435,57 @@ class CheckRefusalTests(TempHostCase):
 
 
 class CheckRunTests(TempHostCase):
+    def test_mixed_source_run_plan_uses_one_transaction_and_per_run_durations(self):
+        host = self.host()
+        plan = (
+            "usb-mic:direct:60,usb-mic:pillow-bulk:60,"
+            "bluetooth:direct:90,bluetooth:pillow-bulk:90"
+        )
+        code, result, _ = _run(
+            host,
+            "check", HEAD[:7],
+            "--modes", "direct",
+            "--settle", "5",
+            "--duration", "30",
+            "--max-samples", "10000",
+            "--run-plan", plan,
+        )
+
+        self.assertEqual(code, remote.EXIT_OK, result.get("errors"))
+        runs = [call for call in host.calls if call[0] == "foreground"]
+        self.assertEqual(
+            [call[1] for call in runs],
+            [
+                "usb-mic-direct",
+                "usb-mic-pillow-bulk",
+                "bluetooth-direct",
+                "bluetooth-pillow-bulk",
+            ],
+        )
+        self.assertEqual([call[4] for call in runs], [155, 155, 185, 185])
+        self.assertEqual(host.names().count("stop"), 1)
+        self.assertEqual(host.names().count("start"), 1)
+        self.assertEqual(
+            [(item["source"], item["duration"]) for item in result["runs"]],
+            [
+                ("usb-mic", 60.0),
+                ("usb-mic", 60.0),
+                ("bluetooth", 90.0),
+                ("bluetooth", 90.0),
+            ],
+        )
+        for call, expected_source, expected_duration in zip(
+            runs,
+            ("usb-mic", "usb-mic", "bluetooth", "bluetooth"),
+            ("60", "60", "90", "90"),
+        ):
+            argv = list(call[2])
+            self.assertEqual(argv[argv.index("--audio-source") + 1], expected_source)
+            self.assertEqual(
+                argv[argv.index("--telemetry-duration") + 1],
+                expected_duration,
+            )
+
     def test_passing_check_runs_modes_in_order_and_keeps_evidence(self):
         host = self.host()
         code, result, _ = _check(host)
@@ -911,6 +976,16 @@ class MacCommandTests(unittest.TestCase):
         self.assertIn("| table |", output)
         self.assertIn("Evidence (on the Pi): /home/u/rgb-matrix-evidence/x", output)
 
+    def test_check_forwards_a_validated_mixed_source_run_plan(self):
+        popen = FakePopen(result={"command": "check"})
+        plan = "usb-mic:direct:60,bluetooth:pillow-bulk:90"
+        code, _ = self.main(["check", HEAD[:7], "--run-plan", plan], popen)
+        self.assertEqual(code, 0)
+        self.assertTrue(popen.calls[0][0][-1].endswith(
+            f"check {HEAD} --modes direct,pillow-bulk,direct --settle 5 "
+            f"--duration 30 --max-samples 100000 --run-plan {plan}"
+        ))
+
     def test_check_sha_is_resolved_on_the_mac(self):
         popen = FakePopen()
         self.assertEqual(self.main(["check", "deploy"], popen)[0], pi_cycle.EXIT_REFUSED)
@@ -931,6 +1006,22 @@ class MacCommandTests(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(SystemExit) as raised:
                 with unittest.mock.patch("sys.stderr", io.StringIO()):
                     self.main(["check", HEAD, *bad], popen)
+            self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(popen.calls, [])
+
+    def test_check_rejects_bad_run_plans_before_ssh(self):
+        popen = FakePopen()
+        bad_plans = (
+            "bluetooth:warp:60",
+            "phone:direct:60",
+            "usb-mic:direct:0",
+            "usb-mic:direct:not-a-number",
+            "usb-mic:direct",
+        )
+        for plan in bad_plans:
+            with self.subTest(plan=plan), self.assertRaises(SystemExit) as raised:
+                with unittest.mock.patch("sys.stderr", io.StringIO()):
+                    self.main(["check", HEAD, "--run-plan", plan], popen)
             self.assertEqual(raised.exception.code, 2)
         self.assertEqual(popen.calls, [])
 

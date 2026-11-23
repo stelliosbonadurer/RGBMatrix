@@ -16,6 +16,13 @@ class AudioSettings:
     fft_size: int = 8192    # Zero-pad to this size for better freq resolution
     channel: int = 0
     sleep_delay: float = 0.005  # Delay between frames (lower = smoother but more CPU)
+    # Populated by the startup resolver before matrix/analyzer construction. These
+    # defaults preserve direct construction in hardware-free tests and utilities.
+    source_id: str = 'usb-mic'
+    resolved_device: str | None = None
+    resolved_sample_rate: int | None = None
+    capture_channels: int = 1
+    capture_dtype: str = 'float32'
 
 
 @dataclass

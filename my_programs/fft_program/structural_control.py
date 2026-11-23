@@ -64,6 +64,17 @@ class _ActivationEnvelope:
     base_revision: int
     legacy_presentation: Any | None
     unavailable_paths: frozenset[str]
+    commit: Callable[[], None]
+    rollback: Callable[[], None]
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedStructuralPlan:
+    """Executable candidate plus registry transaction hooks."""
+
+    plan: OrderedLayerPlan
+    commit: Callable[[], None]
+    rollback: Callable[[], None]
 
 
 def _object(
@@ -359,7 +370,9 @@ class StructuralRuntimeCoordinator:
         active_plan: Any,
         initial_definition: RuntimeDefinition,
         capabilities: RuntimeCapabilities,
-        compile_definition: Callable[[RuntimeDefinition], OrderedLayerPlan],
+        compile_definition: Callable[
+            [RuntimeDefinition], OrderedLayerPlan | PreparedStructuralPlan
+        ],
         bridge: FrameBoundaryRuntimeBridge,
         deadline_seconds: float = 0.7,
     ) -> None:
@@ -384,10 +397,38 @@ class StructuralRuntimeCoordinator:
 
     def _fold_live_presentation(self) -> RuntimeDefinition:
         live_settings = self._controller.current_presentation_settings()
+        analyzers = {
+            analyzer.analyzer_id: analyzer
+            for analyzer in self._active_definition.analyzers
+        }
+        projection_names = (
+            "min_freq",
+            "max_freq",
+            "noise_floor",
+            "low_freq_weight",
+            "high_freq_weight",
+        )
+
+        def folded_settings(layer: Any) -> Mapping[str, object]:
+            if layer.layer_id != CURRENT_BARS_LAYER_ID:
+                return layer.settings
+            merged = dict(live_settings)
+            analyzer = analyzers.get(layer.analyzer_id)
+            if analyzer is None:
+                return merged
+            # Legacy controls still own the default projection. Once the web
+            # surface gives this layer an explicit non-default projection, keep it
+            # layer-owned across later structural transactions.
+            if any(
+                layer.settings[name] != analyzer.settings[name]
+                for name in projection_names
+            ):
+                for name in projection_names:
+                    merged[name] = layer.settings[name]
+            return merged
+
         layers = tuple(
-            replace(layer, settings=live_settings)
-            if layer.layer_id == CURRENT_BARS_LAYER_ID
-            else layer
+            replace(layer, settings=folded_settings(layer))
             for layer in self._active_definition.layers
         )
         return replace(self._active_definition, layers=layers)
@@ -468,7 +509,15 @@ class StructuralRuntimeCoordinator:
                     args["operations"],
                     self._capabilities,
                 )
-                candidate_plan = self._compile_definition(candidate_definition)
+                compiled = self._compile_definition(candidate_definition)
+                if isinstance(compiled, PreparedStructuralPlan):
+                    candidate_plan = compiled.plan
+                    commit = compiled.commit
+                    rollback = compiled.rollback
+                else:
+                    candidate_plan = compiled
+                    commit = lambda: None
+                    rollback = lambda: None
             except StructuralValidationError as exc:
                 raise RuntimeControlError(
                     exc.code, str(exc), path=exc.path
@@ -479,7 +528,11 @@ class StructuralRuntimeCoordinator:
                 ) from exc
 
             # Never submit an already timed-out compile result.
-            remaining()
+            try:
+                remaining()
+            except BaseException:
+                rollback()
+                raise
 
             legacy = next(
                 (
@@ -498,12 +551,18 @@ class StructuralRuntimeCoordinator:
                 base_revision=base.revision,
                 legacy_presentation=legacy,
                 unavailable_paths=unavailable,
+                commit=commit,
+                rollback=rollback,
             )
-            self._bridge.handle(
-                "structure.activate",
-                envelope,
-                timeout=remaining(),
-            )
+            try:
+                self._bridge.handle(
+                    "structure.activate",
+                    envelope,
+                    timeout=remaining(),
+                )
+            except BaseException:
+                rollback()
+                raise
             # The render owner only swaps prepared references and signals this
             # listener. Build the JSON-shaped response off the frame path.
             return self._controller.snapshot()
@@ -539,6 +598,7 @@ class StructuralRuntimeCoordinator:
                 )
             self._active_plan.stage(envelope.plan)
             self._active_plan.begin_frame()
+            envelope.commit()
             self._active_definition = envelope.definition
             self._controller.rebind_presentation(
                 envelope.legacy_presentation,
@@ -557,5 +617,6 @@ __all__ = [
     "STRUCTURAL_OPERATION_NAMES",
     "StructuralRuntimeCoordinator",
     "StructuralValidationError",
+    "PreparedStructuralPlan",
     "apply_structural_operations",
 ]

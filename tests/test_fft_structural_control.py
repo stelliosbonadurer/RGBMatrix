@@ -70,6 +70,7 @@ try:
         apply_structural_operations,
     )
     from themes import get_theme  # noqa: E402
+    from tools.fft_layers import build_structure_action  # noqa: E402
     from visualizers.bars_unified import BarsUnifiedVisualizer  # noqa: E402
 finally:
     if _prior_sounddevice is None:
@@ -85,6 +86,7 @@ class _Analyzer:
         self.release_calls = 0
         self.last_acquired_analysis_sequence = 0
         self.last_acquired_analysis_publish_time_ns = 0
+        self.projections = []
 
     def setup(self): return 44_100
     def start(self): pass
@@ -96,6 +98,14 @@ class _Analyzer:
 
     def release_fft_magnitudes(self):
         self.release_calls += 1
+
+    def create_projection(self, _candidate, _noise_floor):
+        projection = _Analyzer(len(self.result))
+        self.projections.append(projection)
+        return projection
+
+    def remove_projection(self, projection):
+        self.projections.remove(projection)
 
 
 class _AudioAdapter:
@@ -422,6 +432,32 @@ class StructuralOperationTests(unittest.TestCase):
 
 
 class StructuralExecutionTests(unittest.TestCase):
+    def test_layer_ranges_select_distinct_or_shared_projection_views(self) -> None:
+        settings, definition, capabilities, registry, analyzer, _plan, _controller = _runtime()
+        base = dict(definition.layers[0].settings)
+        low = replace(
+            definition.layers[0],
+            layer_id="low",
+            settings={**base, "min_freq": 80.0, "max_freq": 1950.0},
+        )
+        low_alias = replace(low, layer_id="low-alias")
+        high = replace(
+            definition.layers[0],
+            layer_id="high",
+            settings={**base, "min_freq": 2000.0, "max_freq": 6300.0},
+        )
+        graph = compile_runtime_graph(
+            replace(definition, layers=(low, low_alias, high)),
+            capabilities,
+        )
+        plan = compile_current_bars_layer_plan(
+            graph, registry, visualizer=None, settings=settings, width=8, height=8
+        )
+
+        self.assertIs(plan.layers[0].analyzer, plan.layers[1].analyzer)
+        self.assertIsNot(plan.layers[0].analyzer, plan.layers[2].analyzer)
+        self.assertEqual(len(analyzer.projections), 2)
+
     def test_equivalent_analyzer_references_share_one_physical_lease(self) -> None:
         settings, definition, capabilities, _registry, _analyzer, _plan, _controller = _runtime()
         alias = replace(definition.analyzers[0], analyzer_id="alias")
@@ -619,6 +655,7 @@ class StructuralExecutionTests(unittest.TestCase):
 
 class StructuralCoordinatorTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.runtime_width = 8
         (
             self.settings,
             self.definition,
@@ -638,8 +675,8 @@ class StructuralCoordinatorTests(unittest.TestCase):
             self.registry,
             visualizer=None,
             settings=self.settings,
-            width=8,
-            height=8,
+            width=self.runtime_width,
+            height=self.runtime_width,
         )
 
     def _coordinator(self, compiler=None):
@@ -698,6 +735,88 @@ class StructuralCoordinatorTests(unittest.TestCase):
         # snapshot publishes identity only.
         self.assertNotIn("settings", snapshot["structure"]["analyzers"][0])
         json.dumps(snapshot)
+
+    def test_custom_current_layer_projection_uses_structural_controls(self) -> None:
+        coordinator = self._coordinator()
+        custom = {
+            **self.definition.layers[0].settings,
+            "min_freq": 80.0,
+            "max_freq": 1950.0,
+        }
+        result = self._exchange(
+            coordinator,
+            _payload([{
+                "op": "set_layer_settings",
+                "layer_id": "current-bars",
+                "settings": custom,
+            }]),
+        )
+        self.assertNotIn("error", result)
+        snapshot = result["value"]
+        layer = snapshot["structure"]["layers"][0]
+        self.assertEqual(
+            (layer["settings"]["min_freq"], layer["settings"]["max_freq"]),
+            (80.0, 1950.0),
+        )
+        controls = {item["path"]: item for item in snapshot["controls"]}
+        self.assertFalse(controls["settings.noise_floor"]["available"])
+        self.assertFalse(controls["settings.zoom_preset_index"]["available"])
+
+    def test_public_layer_tool_compiles_and_activates_all_counts_and_backends(self) -> None:
+        # Pillow's accepted bulk path intentionally supports only the qualified
+        # 64x64 geometry, so run this public-surface matrix at that geometry.
+        self.runtime_width = 64
+        (
+            self.settings,
+            self.definition,
+            self.capabilities,
+            self.registry,
+            self.analyzer,
+            self.plan,
+            self.controller,
+        ) = _runtime(width=self.runtime_width)
+        self.owner = ActiveLayerPlan(self.plan)
+        self.bridge = FrameBoundaryRuntimeBridge(response_timeout=1.0)
+        coordinator = self._coordinator()
+        for backend in (DIRECT_OUTPUT_PATH, PILLOW_BULK_OUTPUT_PATH):
+            for count in range(1, 9):
+                with self.subTest(backend=backend, count=count):
+                    action = build_structure_action(
+                        self.controller.snapshot(), count, backend
+                    )
+                    result = self._exchange(coordinator, {
+                        "command": {
+                            "operation": "action",
+                            "action": action["action"],
+                            "args": action["args"],
+                        },
+                        "expected_revision": action["expected_revision"],
+                    })
+                    self.assertNotIn("error", result)
+                    snapshot = result["value"]
+                    self.assertEqual(snapshot["structure"]["output_backend"], backend)
+                    self.assertEqual(
+                        [
+                            layer["layer_id"]
+                            for layer in snapshot["structure"]["layers"]
+                        ],
+                        [
+                            "current-bars",
+                            *(f"layer-{index}" for index in range(2, count + 1)),
+                        ],
+                    )
+                    self.assertEqual(len(self.owner.active.layers), count)
+                    self.assertEqual(
+                        len({id(layer.analyzer) for layer in self.owner.active.layers}),
+                        1,
+                    )
+                    self.assertEqual(
+                        len({
+                            id(layer.presentation_state)
+                            for layer in self.owner.active.layers
+                        }),
+                        count,
+                    )
 
     def test_blocked_compiler_does_not_stop_frames_and_conflict_is_atomic(self) -> None:
         entered = threading.Event()

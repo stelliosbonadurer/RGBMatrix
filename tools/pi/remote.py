@@ -42,6 +42,7 @@ EXIT_OPERATION_FAILED = 3
 TELEMETRY_SCHEMA = "rgbmatrix-fft-telemetry"
 TELEMETRY_SCHEMA_VERSION = 3
 OUTPUT_MODES = ("direct", "pillow-bulk")
+AUDIO_SOURCES = ("usb-mic", "bluetooth")
 MIN_ANALYZED_PUBLISHED_FRACTION = 0.95
 RESULT_AGE_LIMIT_BLOCKS = 2
 # The matrix library drops the FFT child to this user after GPIO setup, and the
@@ -703,6 +704,25 @@ def run_labels(modes: Sequence[str]) -> list[tuple[str, str]]:
     return labels
 
 
+def planned_runs(
+    modes: Sequence[str],
+    duration: float,
+    run_plan: Optional[Sequence[tuple[str, str, float]]],
+) -> list[tuple[str, str, Optional[str], float]]:
+    """Return unique label, mode, optional source override, and duration."""
+
+    if run_plan is None:
+        return [(label, mode, None, duration) for label, mode in run_labels(modes)]
+    counts: dict[str, int] = {}
+    runs = []
+    for source, mode, run_duration in run_plan:
+        base = f"{source}-{mode}"
+        counts[base] = counts.get(base, 0) + 1
+        suffix = f"-{counts[base]}" if counts[base] > 1 else ""
+        runs.append((f"{base}{suffix}", mode, source, run_duration))
+    return runs
+
+
 def _throttle_gate(value: Optional[int], baseline: Optional[int]) -> tuple[bool, str]:
     if value is None:
         return False, "throttle state unknown"
@@ -781,6 +801,8 @@ def evaluate_run(run: dict[str, Any], summary: Optional[dict[str, Any]],
     return {
         "label": run["label"],
         "mode": run["mode"],
+        "source": run.get("source"),
+        "duration": run.get("duration"),
         "returncode": run.get("returncode"),
         "skipped": run.get("skipped", False),
         "valid": get("valid"),
@@ -808,12 +830,13 @@ def _fmt(value: Any, spec: str = "", suffix: str = "") -> str:
 
 
 def results_markdown(context: dict[str, Any], evaluations: list[dict[str, Any]]) -> str:
+    duration_detail = context.get("duration_detail", f"{context['duration']:g} s each")
     lines = [
         f"# pi-check {context['sha'][:7]}",
         "",
         f"- Source: `{context['sha']}` (Pi HEAD, clean tree)",
         f"- Started: {context['stamp']} · settle {context['settle']:g} s · "
-        f"duration {context['duration']:g} s · max samples {context['max_samples']}",
+        f"duration {duration_detail} · max samples {context['max_samples']}",
         f"- Evidence: `{context['evidence_dir']}`",
         f"- Throttle before: {_fmt(None if context['throttle_before'] is None else hex(context['throttle_before']))}"
         " (sticky bits already set can't show a repeat event)",
@@ -914,8 +937,26 @@ def _restore_signals(previous: dict[int, Any]) -> None:
         signal.signal(sig, handler)
 
 
+def parse_run_plan(text: str) -> list[tuple[str, str, float]]:
+    runs = []
+    for entry in (item for item in text.split(",") if item):
+        parts = entry.split(":")
+        if len(parts) != 3:
+            raise argparse.ArgumentTypeError(
+                "run plan entries must be source:mode:seconds"
+            )
+        source, mode, duration_text = parts
+        try:
+            run_duration = float(duration_text)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError("invalid run plan duration") from exc
+        runs.append((source, mode, run_duration))
+    return runs
+
+
 def _validate_check_args(modes: Sequence[str], settle: float, duration: float,
-                         max_samples: int) -> None:
+                         max_samples: int,
+                         run_plan: Optional[Sequence[tuple[str, str, float]]] = None) -> None:
     if not modes:
         raise Refused("no modes given")
     unknown = sorted(set(modes) - set(OUTPUT_MODES))
@@ -927,6 +968,28 @@ def _validate_check_args(modes: Sequence[str], settle: float, duration: float,
         raise Refused("duration must be finite and > 0")
     if max_samples <= 0:
         raise Refused("max samples must be > 0")
+    if run_plan is not None:
+        if not run_plan:
+            raise Refused("run plan must contain at least one run")
+        for source, mode, run_duration in run_plan:
+            if source not in AUDIO_SOURCES:
+                raise Refused(f"unknown audio source: {source}")
+            if mode not in OUTPUT_MODES:
+                raise Refused(f"unknown mode: {mode}")
+            if not (math.isfinite(run_duration) and run_duration > 0):
+                raise Refused("run duration must be finite and > 0")
+
+
+def _with_audio_source(argv: Sequence[str], source: str) -> list[str]:
+    """Replace the controller-generated public source value without a shell."""
+
+    updated = list(argv)
+    try:
+        index = updated.index("--audio-source")
+        updated[index + 1] = source
+    except (ValueError, IndexError) as exc:
+        raise Refused("controller FFT argv has no --audio-source value") from exc
+    return updated
 
 
 def fft_launch(host: PiHost) -> dict[str, Any]:
@@ -944,10 +1007,11 @@ def fft_launch(host: PiHost) -> dict[str, Any]:
 
 def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
               settle: float, duration: float, max_samples: int,
+              run_plan: Optional[Sequence[tuple[str, str, float]]] = None,
               install_signals: bool = True) -> int:
     payload: dict[str, Any] = {"command": "check"}
     try:
-        _validate_check_args(modes, settle, duration, max_samples)
+        _validate_check_args(modes, settle, duration, max_samples, run_plan)
         before = collect_status(host)
         payload["status_before"] = before
         if before["porcelain"] != []:
@@ -959,6 +1023,9 @@ def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
                 f" not detached at {target}; run deploy first"
             )
         launch = fft_launch(host)
+        runs_to_execute = planned_runs(modes, duration, run_plan)
+        if run_plan is not None:
+            _with_audio_source(launch["argv"], run_plan[0][0])
     except Refused as exc:
         payload["refused"] = str(exc)
         report.line(f"refused: {exc}")
@@ -992,7 +1059,6 @@ def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
     write_commands()
     _write_json(evidence_dir / "status-before.json", before)
 
-    child_timeout = settle + duration + CHILD_MARGIN_SECONDS
     runs: list[dict[str, Any]] = []
     errors: list[str] = []
     previous_handlers = _set_stop_signals(_raise_aborted) if install_signals else {}
@@ -1005,27 +1071,41 @@ def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
             if stopped.returncode != 0:
                 raise RuntimeError(f"service stop failed: {stopped.stderr.strip()}")
             report.line(f"stopped   {host.unit}")
-            for label, mode in run_labels(modes):
+            for label, mode, source, run_duration in runs_to_execute:
                 if report.stdout_broken:
-                    runs.append({"label": label, "mode": mode, "skipped": True,
+                    runs.append({"label": label, "mode": mode, "source": source,
+                                 "duration": run_duration, "skipped": True,
                                  "error": "skipped: the Mac side disconnected"})
                     continue
-                argv = [*launch["argv"],
+                base_argv = (
+                    launch["argv"]
+                    if source is None
+                    else _with_audio_source(launch["argv"], source)
+                )
+                argv = [*base_argv,
                         "--telemetry-out", str(run_dir / f"{label}.json"),
                         "--telemetry-label", label,
                         "--telemetry-source-id", target,
                         "--telemetry-settle", f"{settle:g}",
-                        "--telemetry-duration", f"{duration:g}",
+                        "--telemetry-duration", f"{run_duration:g}",
                         "--telemetry-max-samples", str(max_samples)]
                 env = {"RGBMATRIX_FFT_OUTPUT_PATH": mode,
                        "RGBMATRIX_STATE_DIR": str(run_dir / "state")}
                 commands[label] = {"argv": argv, "env": env}
                 write_commands()
-                report.line(f"run       {label} ({mode}), about {settle + duration:g} s")
-                record: dict[str, Any] = {"label": label, "mode": mode}
+                report.line(
+                    f"run       {label} ({mode}), about {settle + run_duration:g} s"
+                )
+                record: dict[str, Any] = {
+                    "label": label,
+                    "mode": mode,
+                    "source": source,
+                    "duration": run_duration,
+                }
                 runs.append(record)
                 record.update(host.run_foreground(
-                    argv, cwd=Path(launch["cwd"]), env=env, timeout=child_timeout,
+                    argv, cwd=Path(launch["cwd"]), env=env,
+                    timeout=settle + run_duration + CHILD_MARGIN_SECONDS,
                     log_path=evidence_dir / f"{label}.log",
                 ))
                 record["throttled"] = _parse_throttled(
@@ -1063,11 +1143,12 @@ def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
     after = collect_status(host)
     _write_json(evidence_dir / "status-after.json", after)
     done = {record["label"] for record in runs}
-    for label, mode in run_labels(modes):
+    for label, mode, source, run_duration in runs_to_execute:
         if label not in done:
-            runs.append({"label": label, "mode": mode, "skipped": True,
+            runs.append({"label": label, "mode": mode, "source": source,
+                         "duration": run_duration, "skipped": True,
                          "error": "skipped: the check stopped early"})
-    order = [label for label, _ in run_labels(modes)]
+    order = [label for label, _mode, _source, _duration in runs_to_execute]
     runs.sort(key=lambda record: order.index(record["label"]))
 
     evaluations = []
@@ -1085,6 +1166,10 @@ def cmd_check(host: PiHost, report: Reporter, *, sha: str, modes: Sequence[str],
     passed = healthy and not errors and all(not item["failed_gates"] for item in evaluations)
     context = {
         "sha": target, "stamp": stamp, "settle": settle, "duration": duration,
+        "duration_detail": (
+            ", ".join(f"{item[0]}={item[3]:g}s" for item in runs_to_execute)
+            if run_plan is not None else f"{duration:g} s each"
+        ),
         "max_samples": max_samples, "evidence_dir": str(evidence_dir),
         "healthy": healthy, "errors": errors, "passed": passed,
         "throttle_before": before["throttled"],
@@ -2113,6 +2198,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--modes", required=True)
     check.add_argument("--settle", type=float, required=True)
     check.add_argument("--duration", type=float, required=True)
+    check.add_argument("--run-plan", type=parse_run_plan)
     check.add_argument("--max-samples", type=int, required=True)
     measure = sub.add_parser("measure-split")
     measure.add_argument("baseline")
@@ -2147,6 +2233,7 @@ def main(argv: Optional[Sequence[str]] = None,
     return cmd_check(
         host, report, sha=args.sha, modes=[m for m in args.modes.split(",") if m],
         settle=args.settle, duration=args.duration, max_samples=args.max_samples,
+        run_plan=args.run_plan,
     )
 
 

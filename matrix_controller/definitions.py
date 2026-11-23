@@ -115,6 +115,14 @@ MATRIX_PARAMETERS: tuple[ParameterSpec, ...] = (
 FFT_PARAMETERS: tuple[ParameterSpec, ...] = (
     *MATRIX_PARAMETERS,
     ParameterSpec(
+        "audio_source",
+        "--audio-source",
+        "enum",
+        "usb-mic",
+        "Audio input used by the FFT analyzer.",
+        choices=("usb-mic", "bluetooth"),
+    ),
+    ParameterSpec(
         "theme",
         "--theme",
         "enum",

@@ -48,6 +48,7 @@ PI_REMOTE = "pi"
 DEPLOY_REF = "refs/heads/deploy"
 RESULT_MARKER = "@@PI_CYCLE_RESULT@@ "
 OUTPUT_MODES = ("direct", "pillow-bulk")
+AUDIO_SOURCES = ("usb-mic", "bluetooth")
 # Fixed by the Step 4 v2 measurement plan (D-011b); not command-line options.
 # 250,000 samples leave room for about 275 FPS over 900 s.
 MEASURE_SETTLE_SECONDS = 60.0
@@ -236,6 +237,39 @@ def _modes(text: str) -> list[str]:
     return modes
 
 
+def _run_plan(text: str) -> list[tuple[str, str, float]]:
+    """Parse ``source:mode:seconds`` entries for one mixed-source check."""
+
+    runs = []
+    for entry in (item.strip() for item in text.split(",")):
+        if not entry:
+            continue
+        parts = entry.split(":")
+        if len(parts) != 3:
+            raise argparse.ArgumentTypeError(
+                "run plan entries must be source:mode:seconds"
+            )
+        source, mode, duration_text = parts
+        if source not in AUDIO_SOURCES:
+            raise argparse.ArgumentTypeError(
+                f"run plan source must be one of: {', '.join(AUDIO_SOURCES)}"
+            )
+        if mode not in OUTPUT_MODES:
+            raise argparse.ArgumentTypeError(
+                f"run plan mode must be one of: {', '.join(OUTPUT_MODES)}"
+            )
+        try:
+            duration = _positive_float(duration_text)
+        except (ValueError, argparse.ArgumentTypeError) as exc:
+            raise argparse.ArgumentTypeError(
+                "run plan duration must be a finite number > 0"
+            ) from exc
+        runs.append((source, mode, duration))
+    if not runs:
+        raise argparse.ArgumentTypeError("run plan must contain at least one run")
+    return runs
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pi_cycle.py",
@@ -259,6 +293,12 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Comma list of RGBMATRIX_FFT_OUTPUT_PATH values, run in order.")
     check.add_argument("--duration", type=_positive_float, default=30.0,
                        help="Measured seconds per run.")
+    check.add_argument(
+        "--run-plan",
+        type=_run_plan,
+        help="Mixed-source sequence as source:mode:seconds entries; overrides"
+             " --modes and --duration.",
+    )
     check.add_argument("--settle", type=_nonnegative_float, default=5.0,
                        help="Unmeasured warm-up seconds per run.")
     check.add_argument("--max-samples", type=_positive_int, default=100000,
@@ -323,13 +363,22 @@ def main(argv: Optional[Sequence[str]] = None, *,
         # Resolved here, not on the Pi, so "HEAD" or a branch name means the Mac's
         # commit and can't trivially match whatever is deployed (D-005).
         sha = resolve_local_commit(args.sha, git)
-        code, result = run_remote(target, [
+        check_args = [
             "check", sha,
             "--modes", ",".join(args.modes),
             "--settle", f"{args.settle:g}",
             "--duration", f"{args.duration:g}",
             "--max-samples", str(args.max_samples),
-        ], popen=popen, out=out)
+        ]
+        if args.run_plan is not None:
+            check_args.extend([
+                "--run-plan",
+                ",".join(
+                    f"{source}:{mode}:{duration:g}"
+                    for source, mode, duration in args.run_plan
+                ),
+            ])
+        code, result = run_remote(target, check_args, popen=popen, out=out)
         if result and result.get("results_markdown"):
             _print(out)
             out.write(result["results_markdown"])
