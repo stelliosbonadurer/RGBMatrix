@@ -1,6 +1,5 @@
 [Unit]
 Description=RGB Matrix NetworkManager fallback controller for %i
-Documentation=file:/home/%i/rgb_Matrix/docs_agents/network-fallback-operations.md
 After=NetworkManager.service
 Wants=NetworkManager.service
 ConditionPathExists=/home/%i/rgb_Matrix/matrix_network/service.py

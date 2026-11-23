@@ -70,8 +70,12 @@ class FakeSupervisor:
 
     def runtime_command(self, command, **_kwargs):
         self.runtime_commands.append(command)
+        if self.runtime_error is not None:
+            raise self.runtime_error
         self.runtime["revision"] += 1
         return self.runtime
+
+    runtime_error: Exception | None = None
 
 
 class FakeNetworkClient:
@@ -266,6 +270,74 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(body["revision"], 5)
         self.assertEqual(self.supervisor.runtime_commands[-1]["operation"], "action")
         self.assertEqual(self.supervisor.runtime_commands[-1]["action"], "dynamic.reseed")
+
+    def _structure_payload(self) -> dict:
+        settings = {
+            "theme": "ocean", "gradient": False, "overflow": True,
+            "overflow_multiplier": 1.5, "bars": True, "full": False,
+            "shadow_enabled": False, "peak_enabled": False,
+            "peak_color_mode": "contrast", "peak_fall_speed": 0.08,
+            "peak_hold_frames": 8, "sensitivity_scalar": 1.0,
+            "smoothing_rise": 0.4, "smoothing_fall": 0.1,
+            "dynamic_cycle_speed": 0.06, "dynamic_frozen": False,
+        }
+        return {
+            "run_id": 1,
+            "expected_revision": 4,
+            "action": "structure.apply",
+            "args": {"operations": [
+                {"op": "add_layer", "layer": {
+                    "layer_id": "top", "layer_type": "current-bars",
+                    "analyzer_id": "main-audio", "visible": True,
+                    "settings": settings,
+                }},
+                {"op": "set_layer_order", "layer_ids": ["top", "current-bars"]},
+            ]},
+        }
+
+    def test_runtime_structure_batch_passes_existing_action_bounds(self) -> None:
+        status, _body = self.request(
+            "/api/v1/runtime/actions",
+            payload=self._structure_payload(),
+            token="secret-token",
+        )
+        self.assertEqual(status, 200)
+        command = self.supervisor.runtime_commands[-1]
+        self.assertEqual(command["action"], "structure.apply")
+        self.assertEqual(
+            command["args"]["operations"][0]["layer"]["settings"]["peak_hold_frames"],
+            8,
+        )
+
+    def test_runtime_structure_errors_include_bounded_field_path(self) -> None:
+        from matrix_controller.runtime_transport import RuntimeRemoteError
+
+        for error, status in (
+            (RuntimeRemoteError(
+                "invalid_reference",
+                "unknown layer ID",
+                path="args.operations[1].layer_ids",
+            ), 400),
+            (RuntimeRemoteError("revision_conflict", "runtime state changed"), 409),
+            (RuntimeRemoteError("busy", "structural request in flight"), 503),
+        ):
+            self.supervisor.runtime_error = error
+            with self.subTest(code=error.code), self.assertRaises(
+                urllib.error.HTTPError
+            ) as caught:
+                self.request(
+                    "/api/v1/runtime/actions",
+                    payload=self._structure_payload(),
+                    token="secret-token",
+                )
+            body = json.loads(caught.exception.read().decode("utf-8"))
+            caught.exception.close()
+            self.assertEqual(caught.exception.code, status)
+            self.assertEqual(body["code"], error.code)
+            if error.path is None:
+                self.assertNotIn("path", body)
+            else:
+                self.assertEqual(body["path"], error.path)
 
     def test_runtime_patch_rejects_unknown_fields_before_supervisor(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:

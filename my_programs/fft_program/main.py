@@ -29,6 +29,7 @@ import termios
 import json
 import signal
 import threading
+from typing import cast
 import numpy as np  # type: ignore
 
 # Ensure the fft_program package is importable
@@ -43,15 +44,35 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from config import Settings, load_settings
-from core import MatrixApp, AudioProcessor, ScalingProcessor
+from core import (
+    ActiveLayerPlan,
+    AnalyzerRegistry,
+    AudioCapture,
+    AudioProcessor,
+    DIRECT_OUTPUT_PATH,
+    MatrixApp,
+    OUTPUT_PATH_ENVIRONMENT,
+    compile_current_bars_layer_plan,
+    compile_runtime_graph,
+    current_bars_runtime_capabilities,
+    current_bars_runtime_definition,
+    current_bars_settings_from_runtime,
+)
 from themes import get_theme, list_themes
-from visualizers import get_visualizer, draw_peaks
+from visualizers import get_visualizer
 from matrix_controller.definitions import application_parameters
 from matrix_controller.runtime_transport import (
     FrameBoundaryRuntimeBridge,
     RuntimeControlClient,
 )
-from runtime_control import FftRuntimeController
+from runtime_control import FftRuntimeController, bounded_dynamic_cycle_speed
+from structural_control import StructuralRuntimeCoordinator
+from core.telemetry import (
+    TelemetryConfigurationError,
+    add_telemetry_arguments,
+    check_retired_environment,
+    telemetry_from_args,
+)
 
 
 STATE_VERSION = 1
@@ -91,6 +112,10 @@ def _apply_dynamic_theme_state(theme, dynamic_state: dict) -> None:
 
     for key in ('cycle_speed', 'saturation', 'value', 'column_spread', 'height_spread'):
         value = dynamic_state.get(key)
+        if key == 'cycle_speed' and value is not None:
+            # Clamp a saved speed into the control range so a stale state file
+            # cannot make the startup layer settings fail validation.
+            value = bounded_dynamic_cycle_speed(value)
         if value is not None and hasattr(theme, key):
             setattr(theme, key, value)
 
@@ -257,10 +282,6 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"\nMain Controls:")
     print(f"[g] Toggle gradient mode (per-pixel vs uniform color)")
     print(f"[o] Toggle overflow mode (bars can exceed height)")
-    print(f"[l] Toggle layered mode (multi-layer visualization)")
-    print(f"\n[1/2/3] Select layer to edit (when layered mode on)")
-    print(f"[!/@/#] Toggle layer 1/2/3 visibility (Shift+1/2/3)")
-    print(f"[</>] Move layer back/forward in draw order")
     print(f"\n[b] Toggle bars (OFF = peaks only)")
     print(f"[s] Toggle shadow mode")
     print(f"[p] Toggle peak mode")
@@ -272,9 +293,8 @@ def print_startup_info(width: int, height: int, theme: str, visualizer: str, sha
     print(f"[c] Reseed dynamic start color")
     print(f"[x] Freeze/unfreeze dynamic animation")
 
-    print(f"\nAdvanced Visual Test Modes:")
+    print(f"\nAdvanced Visual Mode:")
     print(f"[f] Toggle full mode (full screen with crossfade)")
-    print(f"[d] Toggle debug mode (static gradient test)")
     print(f"\n[Ctrl+C] Quit")
     print(f"{'='*50}\n")
 
@@ -303,6 +323,7 @@ def main():
         action="store_true",
         help="List available themes and exit"
     )
+    add_telemetry_arguments(app.parser)
     
     # Parse arguments
     args = app.process_args()
@@ -313,7 +334,16 @@ def main():
         for theme_name in list_themes():
             print(f"  - {theme_name}")
         sys.exit(0)
-    
+
+    # Validate telemetry before touching state, audio, or the matrix. Telemetry is
+    # None unless --telemetry-out is given; configuration errors exit with code 2.
+    output_path = os.environ.get(OUTPUT_PATH_ENVIRONMENT, DIRECT_OUTPUT_PATH)
+    try:
+        check_retired_environment(os.environ)
+        telemetry = telemetry_from_args(args, output_mode=output_path)
+    except TelemetryConfigurationError as exc:
+        app.parser.error(str(exc))
+
     # Load settings from file or use defaults
     settings_path = getattr(args, 'settings', None)
     settings = load_settings(settings_path)
@@ -369,9 +399,6 @@ def main():
         if isinstance(zoom_idx, int) and settings.frequency.zoom_presets:
             settings.frequency.zoom_preset_index = zoom_idx % len(settings.frequency.zoom_presets)
 
-        if 'layers_enabled' in persisted_visualizer:
-            settings.layers.enabled = bool(persisted_visualizer['layers_enabled'])
-
         persisted_theme = persisted_visualizer.get('single_theme_name')
         if isinstance(persisted_theme, str) and persisted_theme:
             settings.color.theme = persisted_theme
@@ -393,23 +420,6 @@ def main():
     
     # Initialize components
     try:
-        # Audio processor
-        audio = AudioProcessor(
-            audio_settings=settings.audio,
-            freq_settings=settings.frequency,
-            sensitivity_settings=settings.sensitivity,
-            num_bins=app.width
-        )
-        
-        # Scaling processor
-        scaler = ScalingProcessor(
-            scaling_settings=settings.scaling,
-            sensitivity_settings=settings.sensitivity,
-            smoothing_settings=settings.smoothing,
-            num_bins=app.width,
-            frame_rate=1.0 / settings.audio.sleep_delay
-        )
-        
         # Visualizer
         visualizer = get_visualizer(
             visualizer_name,
@@ -435,36 +445,6 @@ def main():
             brightness_boost=settings.color.brightness_boost
         )
         
-        layer_scalers = []
-
-        def ensure_layer_pipeline() -> None:
-            """Ensure audio/layer visualizer/scalers are initialized for layered mode."""
-            nonlocal layer_scalers
-
-            if not audio.layers_enabled:
-                audio.setup_layers(settings.layers.layers)
-
-            if not visualizer.layer_states:
-                visualizer.setup_layers(
-                    settings.layers.layers,
-                    brightness_boost=settings.color.brightness_boost
-                )
-
-            if len(layer_scalers) != len(settings.layers.layers):
-                layer_scalers = []
-                for layer_config in settings.layers.layers:
-                    layer_scaler = ScalingProcessor(
-                        scaling_settings=settings.scaling,
-                        sensitivity_settings=settings.sensitivity,
-                        smoothing_settings=settings.smoothing,
-                        num_bins=layer_config.bins,
-                        frame_rate=1.0 / settings.audio.sleep_delay
-                    )
-                    layer_scalers.append(layer_scaler)
-
-        if settings.layers.enabled:
-            ensure_layer_pipeline()
-
         def apply_persisted_runtime_state(state: dict) -> None:
             """Apply persisted visualizer/runtime state to initialized components."""
             persisted_settings = state.get('settings', {})
@@ -474,54 +454,9 @@ def main():
                 settings.peak.color_mode = persisted_settings['peak_color_mode']
 
             # Global/single-mode visualizer flags
-            for attr in ('gradient_mode', 'overflow_mode', 'bars_enabled', 'full_mode', 'debug_mode'):
+            for attr in ('gradient_mode', 'overflow_mode', 'bars_enabled', 'full_mode'):
                 if attr in persisted_visualizer and hasattr(visualizer, attr):
                     setattr(visualizer, attr, bool(persisted_visualizer[attr]))
-
-            target_layers_enabled = bool(persisted_visualizer.get('layers_enabled', visualizer.layers_enabled))
-            settings.layers.enabled = target_layers_enabled
-
-            if target_layers_enabled:
-                ensure_layer_pipeline()
-                visualizer.layers_enabled = True
-
-                layer_states_data = persisted_visualizer.get('layer_states', [])
-                for idx, state_data in enumerate(layer_states_data):
-                    if idx >= len(visualizer.layer_states):
-                        break
-
-                    theme_name = state_data.get('theme_name')
-                    if isinstance(theme_name, str):
-                        visualizer.select_layer(idx)
-                        visualizer.set_layer_theme(
-                            theme_name,
-                            brightness_boost=settings.color.brightness_boost
-                        )
-
-                    layer_state = visualizer.layer_states[idx]
-                    for attr in ('bars_enabled', 'gradient_enabled', 'overflow_enabled', 'peak_enabled', 'visible'):
-                        if attr in state_data:
-                            setattr(layer_state, attr, bool(state_data[attr]))
-
-                    if 'boost' in state_data:
-                        layer_state.boost = float(state_data['boost'])
-                        settings.layers.layers[idx].boost = layer_state.boost
-
-                    _apply_dynamic_theme_state(layer_state.theme, state_data.get('dynamic', {}))
-
-                draw_order = persisted_visualizer.get('draw_order')
-                if isinstance(draw_order, list) and len(draw_order) == len(visualizer.layer_states):
-                    visualizer.draw_order = [int(i) for i in draw_order]
-
-                active_layer = persisted_visualizer.get('active_layer')
-                if isinstance(active_layer, int):
-                    if visualizer.select_layer(active_layer):
-                        settings.layers.active_layer = active_layer
-                        active_name = visualizer.layer_states[active_layer].theme_name
-                        if active_name in theme_cycler.themes:
-                            theme_cycler.current_index = theme_cycler.themes.index(active_name)
-            else:
-                visualizer.layers_enabled = False
 
             single_theme_name = persisted_visualizer.get('single_theme_name')
             if isinstance(single_theme_name, str):
@@ -550,6 +485,51 @@ def main():
             apply_persisted_runtime_state(prior_state)
             print(f"Reloaded prior runtime state from: {RUNTIME_STATE_PATH}")
 
+        initial_layer_settings = current_bars_settings_from_runtime(
+            settings,
+            visualizer,
+        )
+        initial_definition = current_bars_runtime_definition(
+            audio_settings=settings.audio,
+            frequency_settings=settings.frequency,
+            sensitivity_settings=settings.sensitivity,
+            num_bins=app.width,
+            output_backend=output_path,
+            layer_settings=initial_layer_settings,
+        )
+        capabilities = current_bars_runtime_capabilities()
+        compiled_graph = compile_runtime_graph(initial_definition, capabilities)
+        analyzer_registry = AnalyzerRegistry(
+            compiled_graph,
+            {
+                compiled_graph.analyzers[0].analyzer_type: lambda _definition: AudioProcessor(
+                    audio_settings=settings.audio,
+                    freq_settings=settings.frequency,
+                    sensitivity_settings=settings.sensitivity,
+                    num_bins=app.width,
+                )
+            },
+        )
+        capture: AudioCapture = analyzer_registry
+
+        # Compile the complete current bars layer and selected output executor once.
+        # The layer owns scaling, peaks, visual state, and backend execution; the
+        # frame loop retains only direct plan calls and the existing NumPy lease.
+        initial_layer_plan = compile_current_bars_layer_plan(
+            compiled_graph,
+            analyzer_registry,
+            visualizer=visualizer,
+            settings=settings,
+            width=app.width,
+            height=app.height,
+            theme_cycler=theme_cycler,
+        )
+        active_layer_plan = ActiveLayerPlan(initial_layer_plan)
+        audio = cast(AudioProcessor, initial_layer_plan.primary_analyzer)
+        unavailable_command_paths = (
+            initial_layer_plan.incompatible_runtime_paths
+        )
+
         controller = FftRuntimeController(
             settings=settings,
             visualizer=visualizer,
@@ -557,13 +537,32 @@ def main():
             theme_cycler=theme_cycler,
             width=app.width,
             height=app.height,
-            ensure_layer_pipeline=ensure_layer_pipeline,
             run_id=os.environ.get("RGB_MATRIX_RUN_ID", "local"),
+            unavailable_command_paths=unavailable_command_paths,
         )
         runtime_client = RuntimeControlClient.from_environment()
         runtime_bridge = FrameBoundaryRuntimeBridge(
             max_pending=32,
             response_timeout=0.75,
+        )
+        def compile_structural_definition(definition):
+            graph = compile_runtime_graph(definition, capabilities)
+            return compile_current_bars_layer_plan(
+                graph,
+                analyzer_registry,
+                visualizer=None,
+                settings=settings,
+                width=app.width,
+                height=app.height,
+            )
+
+        structural_controller = StructuralRuntimeCoordinator(
+            controller=controller,
+            active_plan=active_layer_plan,
+            initial_definition=initial_definition,
+            capabilities=capabilities,
+            compile_definition=compile_structural_definition,
+            bridge=runtime_bridge,
         )
         runtime_stop_event = threading.Event()
         runtime_thread = None
@@ -575,15 +574,17 @@ def main():
     # Main loop
     try:
         keyboard_enabled = not args.non_interactive
-        with ShutdownSignalHandler(), audio, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
+        with ShutdownSignalHandler(), capture, KeyboardHandler(enabled=keyboard_enabled) as keyboard:
             time.sleep(0.5)  # Let audio stream settle
+            if telemetry is not None:
+                telemetry.arm(audio)
             if runtime_client is not None:
                 def serve_runtime_controls() -> None:
                     """Keep control-channel failures isolated from rendering."""
                     while not runtime_stop_event.is_set():
                         try:
                             runtime_client.serve(
-                                runtime_bridge.handle,
+                                structural_controller.handle_runtime_operation,
                                 stop_event=runtime_stop_event,
                             )
                         except Exception as exc:
@@ -603,13 +604,15 @@ def main():
             last_state_save_time = 0.0
             state_save_interval = 2.0
             while True:
+                if (
+                    telemetry is not None
+                    and telemetry.poll(audio)
+                ):
+                    break
                 # IPC listeners only enqueue validated request envelopes.  Drain a
                 # small bounded batch here so all visualizer/audio mutations happen
                 # between frames on this render thread.
-                runtime_bridge.process_pending(
-                    controller.handle_runtime_operation,
-                    max_items=4,
-                )
+                structural_controller.process_pending(max_items=4)
                 # Check for keyboard input
                 key = keyboard.get_key()
                 state_dirty = key is not None
@@ -620,108 +623,109 @@ def main():
                     message = controller.handle_key(key)
                     if message:
                         print(message)
-                # Get FFT data
-                bars = audio.get_fft_magnitudes()
-                layer_bars_raw = None
-                
-                # Get layer data if enabled
-                if audio.layers_enabled and visualizer.layers_enabled:
-                    layer_bars_raw = audio.get_layer_magnitudes()
-                
-                if bars is None and layer_bars_raw is None:
+                # Activate only a complete staged plan at this frame boundary, then
+                # acquire each physical analyzer result once. Every visible layer
+                # updates its own presentation state before the direct lease is
+                # released; drawing uses the precompiled backend executor tuple.
+                frame_plan = active_layer_plan.begin_frame()
+                smoothed = frame_plan.prepare_frame()
+
+                if smoothed is None:
                     now = time.time()
-                    if state_dirty or (now - last_state_save_time) >= state_save_interval:
+                    if (
+                        telemetry is None
+                        and (
+                            state_dirty
+                            or (now - last_state_save_time) >= state_save_interval
+                        )
+                    ):
                         save_runtime_state(build_runtime_state())
                         last_state_save_time = now
                     time.sleep(0.001)
                     continue
-                
-                # Process through scaler (for single-layer mode or fallback)
-                normalized, smoothed, peaks = scaler.process(
-                    bars if bars is not None else np.zeros(app.width),
-                    peak_hold_frames=settings.peak.hold_frames,
-                    peak_fall_speed=settings.peak.fall_speed
+
+                measure_frame = (
+                    telemetry is not None
+                    and telemetry.begin_frame(audio)
                 )
-                
-                # Process each layer through its own scaler (skip invisible layers)
-                smoothed_layers = None
-                layer_peaks = None
-                if layer_bars_raw is not None and layer_scalers and visualizer.layers_enabled:
-                    smoothed_layers = []
-                    layer_peaks = []
-                    for i, (raw_bars, layer_scaler) in enumerate(zip(layer_bars_raw, layer_scalers)):
-                        # Skip processing if layer is not visible
-                        if i < len(visualizer.layer_states) and not visualizer.layer_states[i].visible:
-                            # Append None placeholders to maintain index alignment
-                            smoothed_layers.append(None)
-                            layer_peaks.append(None)
-                            continue
-                        
-                        # Apply boost from layer config
-                        boost = settings.layers.layers[i].boost
-                        boosted = raw_bars * boost
-                        
-                        # Process through layer's scaler (also tracks peaks)
-                        _, layer_smoothed, layer_peak = layer_scaler.process(
-                            boosted,
-                            peak_hold_frames=settings.peak.hold_frames,
-                            peak_fall_speed=settings.peak.fall_speed
-                        )
-                        smoothed_layers.append(np.clip(layer_smoothed, 0, 1))
-                        layer_peaks.append(layer_peak)
-                
-                # Draw visualization
-                if smoothed_layers is not None and visualizer.layers_enabled:
-                    visualizer.draw(
-                        app.canvas,
-                        smoothed,
-                        None,
-                        layer_bars=smoothed_layers,
-                        layer_peaks=layer_peaks
+                if telemetry is not None and telemetry.complete:
+                    break
+                if measure_frame:
+                    analysis_sequence = audio.last_acquired_analysis_sequence
+                    analysis_publish_time_ns = (
+                        audio.last_acquired_analysis_publish_time_ns
                     )
-                else:
-                    visualizer.draw(
-                        app.canvas,
-                        smoothed,
-                        None
-                    )
-                
-                # Draw peaks as independent overlay (only for non-layered mode)
-                if settings.peak.enabled and not visualizer.layers_enabled:
-                    draw_peaks(
-                        app.canvas,
-                        peaks,
-                        visualizer.theme,
-                        settings,
-                        app.height
-                    )
+                    draw_started_ns = time.perf_counter_ns()
+
+                # Draw the exact precompiled visible order. Direct clears the native
+                # canvas once; pillow-bulk clears its reusable image and uploads once.
+                frame_plan.draw_frame(app.canvas)
+                if measure_frame:
+                    draw_completed_ns = time.perf_counter_ns()
                 
                 # Swap buffers
+                if measure_frame:
+                    swap_started_ns = time.perf_counter_ns()
                 app.swap_canvas()
+                if measure_frame:
+                    swap_completed_ns = time.perf_counter_ns()
+                    if telemetry.record_frame(
+                        audio=audio,
+                        smoothed_bars=smoothed,
+                        height=app.height,
+                        overflow_multiplier=settings.overflow.multiplier,
+                        draw_started_ns=draw_started_ns,
+                        draw_completed_ns=draw_completed_ns,
+                        swap_started_ns=swap_started_ns,
+                        swap_completed_ns=swap_completed_ns,
+                        analysis_sequence=analysis_sequence,
+                        analysis_publish_time_ns=analysis_publish_time_ns,
+                    ):
+                        break
                 
                 # Frame delay
                 time.sleep(settings.audio.sleep_delay)
 
                 now = time.time()
-                if state_dirty or (now - last_state_save_time) >= state_save_interval:
+                if (
+                    telemetry is None
+                    and (
+                        state_dirty
+                        or (now - last_state_save_time) >= state_save_interval
+                    )
+                ):
                     save_runtime_state(build_runtime_state())
                     last_state_save_time = now
                 
     except KeyboardInterrupt:
+        if telemetry is not None:
+            telemetry.finish(audio, reason="keyboard_interrupt")
         print("\nExiting...")
     except Exception as e:
+        if telemetry is not None:
+            telemetry.finish(audio, reason="runtime_error")
         print(f"Runtime error: {e}")
         raise
     finally:
         runtime_stop_event.set()
-        runtime_bridge.close()
+        structural_controller.close()
         if runtime_thread is not None:
             runtime_thread.join(timeout=1.0)
-        try:
-            save_runtime_state(build_runtime_state())
-        except Exception:
-            pass
+        if telemetry is None:
+            try:
+                save_runtime_state(build_runtime_state())
+            except Exception:
+                pass
+        telemetry_write_failure = None
+        if telemetry is not None:
+            try:
+                telemetry.write(audio)
+            except Exception as exc:
+                print(f"Telemetry write failed: {exc}")
+                telemetry_write_failure = exc
         app.clear()
+        if telemetry_write_failure is not None and sys.exc_info()[0] is None:
+            raise RuntimeError("telemetry write failed") from telemetry_write_failure
 
 
 if __name__ == "__main__":

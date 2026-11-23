@@ -177,32 +177,16 @@ In practice, if you're extracting 64 bins from the range covering ~300 FFT bins:
 
 The FFT is doing **99.1%** of the computational work!
 
-### Why This Matters for Multi-Layer Mode
+### Why This Matters for Future Multiple Views
 
-When we run multi-layer visualization (e.g., 3 layers: bass, mid, treble):
+The active program has one standard 64-bin analyzer. The removed legacy layered mode
+is not an active optimization model, and its old low-overhead estimates must not be
+used to predict future behavior.
 
-```
-┌─────────────────────────────────────────┐
-│           FFT Computation               │  ← 22,500 ops (done ONCE)
-│         O(N log N) = O(2048 × 11)       │
-└─────────────────────────────────────────┘
-                    │
-        ┌───────────┼───────────┬───────────┐
-        ▼           ▼           ▼           ▼
-┌────────────┐ ┌────────────┐ ┌────────────┐
-│ Layer 0    │ │ Layer 1    │ │ Layer 2    │
-│ Bass       │ │ Mid        │ │ Treble     │
-│ 64 bins    │ │ 64 bins    │ │ 64 bins    │
-│ 80-1950 Hz │ │ 2000-4000Hz│ │ 4000-8000Hz│
-│ ~100 ops   │ │ ~100 ops   │ │ ~100 ops   │
-└────────────┘ └────────────┘ └────────────┘
-```
-
-**Total**: 22,500 + 100 + 100 + 100 = 22,800 ops (3 layers)
-
-vs. running three separate FFTs: 22,500 × 3 = 67,500 ops
-
-**Multi-layer mode overhead: ~1.3%** 🎉
+Future multiple views are intended to be separate instances of the standard
+analyzer/scaler/drawing path. Their total cost includes FFT/projection, independent
+temporal scaling state, and drawing for each instance. Add and measure one instance at
+a time on the target hardware.
 
 ---
 
@@ -285,11 +269,10 @@ This compensates for:
 | Magnitude calc | $O(N)$ | 1,024 | 4% |
 | Bin extraction | $O(W)$ | ~200 | **<1%** |
 
-The FFT is the computational bottleneck. Everything else—including fancy multi-layer visualizations with different frequency ranges—is essentially free in comparison.
-
-This is why we can run multi-layer mode, or even a hypothetical 10-layer system, with minimal performance impact: **the FFT is computed once, and we just slice it differently for each layer.**
-
-Additional optimization: **Invisible layers skip even the bin extraction and scaling**, so hiding a layer saves its processing cost entirely.
+The FFT is a major analysis cost, but end-to-end behavior also includes scaling,
+per-pixel native-canvas drawing, and VSync. Those costs must be measured rather than
+inferred from the FFT operation count alone. Future multiple views will use independent
+standard pipeline instances, not the deleted special-case layered implementation.
 
 ---
 

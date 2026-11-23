@@ -7,10 +7,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # type: ignore
 from dataclasses import dataclass
-from typing import List, Optional, Callable, Tuple
+import threading
+import time
+from typing import Optional
 import sounddevice as sd  # type: ignore
 
 from config.settings import AudioSettings, FrequencySettings, SensitivitySettings
+from core.analysis_plan import (
+    StandardAnalysisCandidate,
+    StandardAnalysisPlan,
+    compile_standard_analysis_plan,
+)
 
 
 @dataclass
@@ -24,6 +31,102 @@ class FFTData:
     current_scale: float          # Current normalization scale
     sample_rate: int              # Audio sample rate
     num_bins: int                 # Number of frequency bins
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkerAnalysisState:
+    """One complete control-plane snapshot consumed by the analysis worker."""
+
+    plan: StandardAnalysisPlan
+    noise_floor: float
+    epoch: int
+
+
+class _LatestAnalysisTransport:
+    """Fixed two-slot, latest-value transport for standard analysis."""
+
+    def __init__(self, num_bins: int) -> None:
+        self.slots = (
+            np.zeros(num_bins, dtype=np.float32),
+            np.zeros(num_bins, dtype=np.float32),
+        )
+        self._lock = threading.Lock()
+        self._active_epoch = 0
+        self._writing_index: Optional[int] = None
+        self._published_index: Optional[int] = None
+        self._published_epoch = 0
+        self._leased_index: Optional[int] = None
+        self._slot_sequences = [0, 0]
+        self._slot_published_time_ns = [0, 0]
+        self.published_sequence = 0
+        self.published_time_ns = 0
+        self.transport_drop_count = 0
+        self.last_acquired_sequence = 0
+        self.last_acquired_time_ns = 0
+
+    def activate_epoch(self, epoch: int) -> None:
+        """Reject future publications from every earlier worker state."""
+        with self._lock:
+            self._active_epoch = epoch
+
+    def claim_write(self) -> Optional[np.ndarray]:
+        """Claim one safe inactive slot without waiting or allocating."""
+        with self._lock:
+            if self._writing_index is not None:
+                raise RuntimeError("analysis transport already has a claimed write slot")
+            for index, slot in enumerate(self.slots):
+                if index not in (self._published_index, self._leased_index):
+                    self._writing_index = index
+                    return slot
+            self.transport_drop_count += 1
+            return None
+
+    def publish_claimed(self, epoch: int) -> bool:
+        """Publish the completely filled slot if its worker epoch is still active."""
+        with self._lock:
+            index = self._writing_index
+            if index is None:
+                raise RuntimeError("analysis transport has no claimed write slot")
+            self._writing_index = None
+            if epoch != self._active_epoch:
+                self.transport_drop_count += 1
+                return False
+            self.published_sequence += 1
+            self._published_index = index
+            self._published_epoch = epoch
+            self.published_time_ns = time.monotonic_ns()
+            self._slot_sequences[index] = self.published_sequence
+            self._slot_published_time_ns[index] = self.published_time_ns
+            return True
+
+    def abort_claimed(self) -> None:
+        """Release a producer claim after analysis fails."""
+        with self._lock:
+            self._writing_index = None
+
+    def acquire_latest(self, epoch: int) -> Optional[np.ndarray]:
+        """Lease the newest complete slot while the caller owns the active epoch."""
+        with self._lock:
+            if self._leased_index is not None:
+                raise RuntimeError("analysis transport slot is already leased")
+            if (
+                self._published_index is None
+                or epoch != self._active_epoch
+            ):
+                return None
+            self._leased_index = self._published_index
+            self.last_acquired_sequence = self._slot_sequences[self._leased_index]
+            self.last_acquired_time_ns = self._slot_published_time_ns[
+                self._leased_index
+            ]
+            return self.slots[self._leased_index]
+
+    def release_latest(self) -> None:
+        """Release the consumer lease after scaling finishes reading the slot."""
+        with self._lock:
+            if self._leased_index is None:
+                raise RuntimeError("analysis transport has no leased slot")
+            self._leased_index = None
 
 
 class AudioProcessor:
@@ -62,27 +165,32 @@ class AudioProcessor:
         self.latest_samples: Optional[np.ndarray] = None
         self.have_data: bool = False
         self.sample_rate: int = 0
+        self.sample_generation: int = 0
+        self.callback_status_count: int = 0
+        self.last_analyzed_generation: int = 0
+        self.skipped_generation_count: int = 0
+        self.worker_failure_count: int = 0
+        self._last_seen_generation: int = 0
+        self._sample_lock = threading.Lock()
+        self._analysis_wake = threading.Event()
+        self._analysis_stop = threading.Event()
+        self._analysis_thread: Optional[threading.Thread] = None
+        self._worker_failure: Optional[BaseException] = None
+        self._worker_state: Optional[_WorkerAnalysisState] = None
+        self._analysis_transport = _LatestAnalysisTransport(num_bins)
         
-        # FFT state (initialized in setup())
-        self.freqs: Optional[np.ndarray] = None
-        self.bin_masks: List[np.ndarray] = []
-        self.bin_weights: Optional[np.ndarray] = None
-        self.window: Optional[np.ndarray] = None
-        
-        # Optimized bin lookup (initialized in setup())
-        self.bin_indices: Optional[List[np.ndarray]] = None  # Pre-computed indices for each bin
-        self.empty_bins: Optional[np.ndarray] = None  # Mask for bins with no frequency coverage
-        
+        # The standard projection is validated now and compiled after setup learns
+        # the device sample rate.  The hot path reads only ``active_plan``.
+        self.analysis_candidate = StandardAnalysisCandidate.from_settings(
+            audio_settings,
+            freq_settings,
+            sensitivity_settings,
+            num_bins,
+        )
+        self.active_plan: Optional[StandardAnalysisPlan] = None
+
         # Stream (initialized in start())
         self._stream: Optional[sd.InputStream] = None
-        
-        # Layer mode state (initialized in setup_layers())
-        self.layers_enabled: bool = False
-        self.num_layers: int = 0
-        self.layer_indices: List[List[np.ndarray]] = []  # Per-layer bin indices
-        self.layer_weights: List[np.ndarray] = []        # Per-layer frequency weights
-        self.layer_empty: List[np.ndarray] = []          # Per-layer empty bin masks
-        self.layer_bins: List[int] = []                  # Per-layer bin counts
     
     def setup(self) -> int:
         """
@@ -104,25 +212,19 @@ class AudioProcessor:
         print(f"Using device: {device_info['name']} at {self.sample_rate} Hz")
         
         # Report frequency range
-        freq_min = self.freq_settings.active_min_freq
-        freq_max = self.freq_settings.active_max_freq
+        candidate = self.analysis_candidate
+        freq_min = candidate.min_freq
+        freq_max = candidate.max_freq
         mode = "ZOOM MODE" if self.freq_settings.zoom_mode else "Full range"
         print(f"{mode}: {freq_min} Hz - {freq_max} Hz")
         
         # Initialize FFT parameters
         self.latest_samples = np.zeros(self.audio_settings.block_size, dtype=np.float32)
-        self.freqs = np.fft.rfftfreq(self.audio_settings.fft_size, 1 / self.sample_rate)
-        self.bin_masks, self.bin_weights = self._create_frequency_bins(
-            self.freqs, freq_min, freq_max, self.num_bins
-        )
-        self.window = np.hanning(self.audio_settings.block_size)
-        
-        # Pre-compute bin indices for vectorized magnitude calculation
-        self.bin_indices = [np.where(mask)[0] for mask in self.bin_masks]
-        self.empty_bins = np.array([len(idx) == 0 for idx in self.bin_indices])
+        plan = self.compile_analysis_candidate(candidate)
+        self.activate_analysis_plan(candidate, plan)
         
         # Check bin coverage
-        empty_count = np.sum(self.empty_bins)
+        empty_count = sum(len(indices) == 0 for indices in plan.bin_indices)
         if empty_count > 0:
             print(f"Warning: {empty_count} bins have no frequency coverage. "
                   f"Consider increasing FFT_SIZE.")
@@ -135,246 +237,255 @@ class AudioProcessor:
         
         Call this after modifying freq_settings (e.g., changing zoom preset).
         """
-        freq_min = self.freq_settings.active_min_freq
-        freq_max = self.freq_settings.active_max_freq
-        
-        self.bin_masks, self.bin_weights = self._create_frequency_bins(
-            self.freqs, freq_min, freq_max, self.num_bins
+        candidate = StandardAnalysisCandidate.from_settings(
+            self.audio_settings,
+            self.freq_settings,
+            self.sensitivity_settings,
+            self.num_bins,
         )
-        
-        # Re-compute bin indices
-        self.bin_indices = [np.where(mask)[0] for mask in self.bin_masks]
-        self.empty_bins = np.array([len(idx) == 0 for idx in self.bin_indices])
+        plan = self.compile_analysis_candidate(candidate)
+        self.activate_analysis_plan(candidate, plan)
         
         # Warn about empty bins
-        empty_count = np.sum(self.empty_bins)
+        empty_count = sum(len(indices) == 0 for indices in plan.bin_indices)
         if empty_count > 0:
             print(f"Warning: {empty_count} bins have no frequency coverage.")
+
+    def compile_analysis_candidate(
+        self,
+        candidate: StandardAnalysisCandidate,
+    ) -> StandardAnalysisPlan:
+        """Compile a candidate without changing the active runtime plan."""
+        if self.sample_rate <= 0:
+            raise RuntimeError("Call setup() before compiling an analysis candidate")
+        return compile_standard_analysis_plan(candidate, self.sample_rate)
+
+    def activate_analysis_plan(
+        self,
+        candidate: StandardAnalysisCandidate,
+        plan: StandardAnalysisPlan,
+    ) -> None:
+        """Publish one complete standard-analysis plan between frames."""
+        self.analysis_candidate = candidate
+        self.active_plan = plan
+        self.activate_analysis_inputs()
+
+    def activate_analysis_inputs(self) -> None:
+        """Publish one coherent plan/noise-floor snapshot to the worker."""
+        plan = self.active_plan
+        if plan is None:
+            raise RuntimeError("Call setup() before activating analysis inputs")
+        prior_state = self._worker_state
+        epoch = 1 if prior_state is None else prior_state.epoch + 1
+        state = _WorkerAnalysisState(
+            plan=plan,
+            noise_floor=float(self.sensitivity_settings.noise_floor),
+            epoch=epoch,
+        )
+        # Reject any later publication from the old state before exposing the new
+        # one. The last frame that was already complete stays readable until the new
+        # epoch publishes, keeping render cadence independent from Apply.
+        self._analysis_transport.activate_epoch(epoch)
+        self._worker_state = state
+        self._analysis_wake.set()
     
-    def setup_layers(self, layer_configs: List) -> None:
-        """
-        Set up multi-layer frequency bins for layered visualization.
-        
-        Args:
-            layer_configs: List of LayerConfig objects defining each layer
-        """
-        if self.freqs is None:
-            raise RuntimeError("Call setup() before setup_layers()")
-        
-        self.layers_enabled = True
-        self.num_layers = len(layer_configs)
-        self.layer_indices = []
-        self.layer_weights = []
-        self.layer_empty = []
-        self.layer_bins = []
-        
-        # Global frequency range for proper weighting (20Hz - 20kHz audible spectrum)
-        global_fmin = 20.0
-        global_fmax = 20000.0
-        
-        for i, config in enumerate(layer_configs):
-            fmin, fmax = config.freq_range
-            bins = config.bins
-            
-            # Use global weighting for all layers to ensure proper treble boost
-            masks, weights = self._create_frequency_bins_global(
-                self.freqs, fmin, fmax, bins, global_fmin, global_fmax
+    @staticmethod
+    def _analyze_into(
+        samples: np.ndarray,
+        plan: StandardAnalysisPlan,
+        noise_floor: float,
+        destination: np.ndarray,
+    ) -> None:
+        """Run the accepted standard FFT/projection directly into one fixed slot."""
+        x = samples * plan.window
+        X = np.fft.rfft(x, n=plan.fft_size)
+        magnitudes = np.abs(X)
+
+        destination.fill(0)
+        for index, bin_indices in enumerate(plan.bin_indices):
+            if len(bin_indices) > 0:
+                destination[index] = (
+                    np.mean(magnitudes[bin_indices]) * plan.bin_weights[index]
+                )
+        np.subtract(destination, noise_floor, out=destination)
+        np.maximum(destination, 0, out=destination)
+
+    def _process_latest_samples_once(self) -> bool:
+        """Analyze at most one newest sample generation without waiting."""
+        with self._sample_lock:
+            samples = self.latest_samples
+            generation = self.sample_generation
+
+        state = self._worker_state
+        if samples is None or state is None or generation <= self._last_seen_generation:
+            return False
+
+        self.skipped_generation_count += max(
+            0,
+            generation - self._last_seen_generation - 1,
+        )
+        self._last_seen_generation = generation
+
+        destination = self._analysis_transport.claim_write()
+        if destination is None:
+            self.skipped_generation_count += 1
+            return False
+
+        try:
+            self._analyze_into(
+                samples,
+                state.plan,
+                state.noise_floor,
+                destination,
             )
-            
-            indices = [np.where(mask)[0] for mask in masks]
-            empty = np.array([len(idx) == 0 for idx in indices])
-            
-            self.layer_indices.append(indices)
-            self.layer_weights.append(weights)
-            self.layer_empty.append(empty)
-            self.layer_bins.append(bins)
-            
-            empty_count = np.sum(empty)
-            print(f"Layer {i} '{config.name}': {fmin}-{fmax}Hz ({bins} bins, {empty_count} empty)")
-    
-    def get_layer_magnitudes(self) -> Optional[List[np.ndarray]]:
-        """
-        Compute FFT and return magnitudes for all layers.
-        
-        Returns:
-            List of magnitude arrays (one per layer), or None if no data
-        """
-        if not self.have_data or self.latest_samples is None:
-            return None
-        
-        if not self.layers_enabled:
-            return None
-        
-        # Apply window and compute FFT with zero-padding (done ONCE)
-        x = self.latest_samples * self.window
-        X = np.fft.rfft(x, n=self.audio_settings.fft_size)
-        mag = np.abs(X)
-        
-        # Extract bins for each layer (cheap O(bins) per layer)
-        layer_bars = []
-        for layer_idx in range(self.num_layers):
-            indices_list = self.layer_indices[layer_idx]
-            weights = self.layer_weights[layer_idx]
-            num_bins = self.layer_bins[layer_idx]
-            
-            bars = np.zeros(num_bins, dtype=np.float32)
-            for i, indices in enumerate(indices_list):
-                if len(indices) > 0:
-                    bars[i] = np.mean(mag[indices]) * weights[i]
-            
-            bars = np.maximum(0, bars - self.sensitivity_settings.noise_floor)
-            layer_bars.append(bars)
-        
-        return layer_bars
-    
-    def _create_frequency_bins_global(
-        self,
-        freqs: np.ndarray,
-        fmin: float,
-        fmax: float,
-        n: int,
-        global_fmin: float = 20.0,
-        global_fmax: float = 20000.0
-    ) -> tuple:
-        """
-        Create frequency bins with GLOBAL frequency weighting.
-        
-        Uses the full audible spectrum (20Hz-20kHz) as reference for weight calculation,
-        not just the layer's frequency range. This ensures treble frequencies get
-        proper boost even when extracted as a separate layer.
-        
-        Args:
-            freqs: Array of FFT frequency values
-            fmin: Minimum frequency for this layer
-            fmax: Maximum frequency for this layer
-            n: Number of bins
-            global_fmin: Global minimum frequency (20Hz)
-            global_fmax: Global maximum frequency (20kHz)
-        
-        Returns:
-            Tuple of (bin_masks, bin_weights)
-        """
-        edges = np.logspace(np.log10(fmin), np.log10(fmax), n + 1)
-        bins = []
-        weights = []
-        
-        low_weight = self.sensitivity_settings.low_freq_weight
-        high_weight = self.sensitivity_settings.high_freq_weight
-        
-        for i in range(n):
-            mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
-            bins.append(mask)
-            
-            # Calculate center frequency
-            center_freq = (edges[i] + edges[i + 1]) / 2
-            
-            # GLOBAL normalized position: 0 at 20Hz, 1 at 20kHz (log scale)
-            norm_pos = np.log10(center_freq / global_fmin) / np.log10(global_fmax / global_fmin)
-            norm_pos = np.clip(norm_pos, 0, 1)
-            
-            # Weight curve: interpolate from low to high weight
-            weight = low_weight + (high_weight - low_weight) * (norm_pos ** 1.5)
-            weights.append(weight)
-        
-        return bins, np.array(weights)
-    
-    def _create_frequency_bins(
-        self,
-        freqs: np.ndarray,
-        fmin: float,
-        fmax: float,
-        n: int
-    ) -> tuple:
-        """
-        Create logarithmic frequency bins with frequency-dependent weights.
-        
-        Weights interpolate from low_freq_weight to high_freq_weight to compensate
-        for the natural 1/f rolloff of most audio content.
-        
-        Args:
-            freqs: Array of FFT frequency values
-            fmin: Minimum frequency
-            fmax: Maximum frequency
-            n: Number of bins
-        
-        Returns:
-            Tuple of (bin_masks, bin_weights)
-        """
-        edges = np.logspace(np.log10(fmin), np.log10(fmax), n + 1)
-        bins = []
-        weights = []
-        
-        low_weight = self.sensitivity_settings.low_freq_weight
-        high_weight = self.sensitivity_settings.high_freq_weight
-        
-        for i in range(n):
-            mask = (freqs >= edges[i]) & (freqs < edges[i + 1])
-            bins.append(mask)
-            
-            # Calculate center frequency
-            center_freq = (edges[i] + edges[i + 1]) / 2
-            
-            # Normalized position: 0 at fmin, 1 at fmax (log scale)
-            norm_pos = np.log10(center_freq / fmin) / np.log10(fmax / fmin)
-            
-            # Weight curve: interpolate from low to high weight
-            weight = low_weight + (high_weight - low_weight) * (norm_pos ** 1.5)
-            weights.append(weight)
-        
-        return bins, np.array(weights)
-    
+        except BaseException:
+            self._analysis_transport.abort_claimed()
+            raise
+
+        self.last_analyzed_generation = generation
+        return self._analysis_transport.publish_claimed(state.epoch)
+
+    def _analysis_worker(self) -> None:
+        """Consume only the newest callback generation and publish latest results."""
+        try:
+            while not self._analysis_stop.is_set():
+                self._analysis_wake.wait()
+                self._analysis_wake.clear()
+                if self._analysis_stop.is_set():
+                    break
+                self._process_latest_samples_once()
+        except BaseException as exc:
+            self.worker_failure_count += 1
+            self._worker_failure = exc
+            self._analysis_stop.set()
+
+    def _start_analysis_worker(self) -> None:
+        if self._analysis_thread is not None:
+            raise RuntimeError("analysis worker is already running")
+        self._analysis_stop.clear()
+        self._analysis_wake.clear()
+        self._worker_failure = None
+        worker = threading.Thread(
+            target=self._analysis_worker,
+            name="fft-analysis",
+            daemon=True,
+        )
+        self._analysis_thread = worker
+        try:
+            worker.start()
+        except BaseException:
+            self._analysis_thread = None
+            raise
+
+    def _stop_analysis_worker(self, timeout: float = 1.0) -> None:
+        worker = self._analysis_thread
+        if worker is None:
+            return
+        self._analysis_stop.set()
+        self._analysis_wake.set()
+        worker.join(timeout=timeout)
+        if worker.is_alive():
+            raise RuntimeError("analysis worker did not stop within 1.0 seconds")
+        self._analysis_thread = None
+
+    def _raise_worker_failure(self) -> None:
+        failure = self._worker_failure
+        if failure is not None:
+            raise RuntimeError("analysis worker failed") from failure
+
     def _audio_callback(self, indata, frames, time_info, status):
-        """Callback function for audio input stream."""
-        if status:
-            print(f"Audio status: {status}")
-        self.latest_samples = indata[:, self.audio_settings.channel].copy()
-        self.have_data = True
+        """Copy and publish only the newest input block, then wake analysis."""
+        samples = indata[:, self.audio_settings.channel].copy()
+        with self._sample_lock:
+            self.latest_samples = samples
+            self.sample_generation += 1
+            if status:
+                self.callback_status_count += 1
+            self.have_data = True
+        self._analysis_wake.set()
     
     def start(self) -> None:
         """Start the audio input stream."""
-        self._stream = sd.InputStream(
-            device=self.audio_settings.device,
-            channels=1,
-            samplerate=self.sample_rate,
-            blocksize=self.audio_settings.block_size,
-            dtype="float32",
-            callback=self._audio_callback
-        )
-        self._stream.start()
+        self._start_analysis_worker()
+        try:
+            self._stream = sd.InputStream(
+                device=self.audio_settings.device,
+                channels=1,
+                samplerate=self.sample_rate,
+                blocksize=self.audio_settings.block_size,
+                dtype="float32",
+                callback=self._audio_callback
+            )
+            self._stream.start()
+        except BaseException:
+            stream = self._stream
+            self._stream = None
+            if stream is not None:
+                try:
+                    stream.close()
+                finally:
+                    self._stop_analysis_worker()
+            else:
+                self._stop_analysis_worker()
+            raise
         print("Listening... Press CTRL-C to stop")
     
     def stop(self) -> None:
         """Stop the audio input stream."""
-        if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
-            self._stream = None
+        stream = self._stream
+        self._stream = None
+        stream_failure = None
+        if stream is not None:
+            try:
+                stream.stop()
+            except BaseException as exc:
+                stream_failure = exc
+            finally:
+                try:
+                    stream.close()
+                except BaseException as exc:
+                    if stream_failure is None:
+                        stream_failure = exc
+        self._stop_analysis_worker()
+        if stream_failure is not None:
+            raise stream_failure
     
     def get_fft_magnitudes(self) -> Optional[np.ndarray]:
-        """
-        Compute FFT and return bar magnitudes.
-        
-        Returns:
-            Array of magnitude values per bin, or None if no data available
-        """
-        if not self.have_data or self.latest_samples is None:
-            return None
-        
-        # Apply window and compute FFT with zero-padding
-        x = self.latest_samples * self.window
-        X = np.fft.rfft(x, n=self.audio_settings.fft_size)
-        mag = np.abs(X)
-        
-        # Vectorized magnitude calculation using pre-computed bin indices
-        bars = np.zeros(self.num_bins, dtype=np.float32)
-        for i, indices in enumerate(self.bin_indices):
-            if len(indices) > 0:
-                bars[i] = np.mean(mag[indices]) * self.bin_weights[i]
-        
-        # Apply noise floor (vectorized)
-        bars = np.maximum(0, bars - self.sensitivity_settings.noise_floor)
-        
-        return bars
+        """Lease the latest complete standard result for direct NumPy access."""
+        self._raise_worker_failure()
+        state = self._worker_state
+        if state is None:
+            raise RuntimeError("Call setup() before get_fft_magnitudes()")
+        return self._analysis_transport.acquire_latest(state.epoch)
+
+    def release_fft_magnitudes(self) -> None:
+        """Release the standard result after render-thread scaling consumes it."""
+        self._analysis_transport.release_latest()
+
+    @property
+    def analysis_sequence(self) -> int:
+        """Number of complete standard frames published by the worker."""
+        return self._analysis_transport.published_sequence
+
+    @property
+    def transport_drop_count(self) -> int:
+        """Number of stale-epoch or no-writable-slot results dropped."""
+        return self._analysis_transport.transport_drop_count
+
+    @property
+    def latest_analysis_publish_time_ns(self) -> int:
+        """Monotonic publication time for opt-in result-age measurement."""
+        return self._analysis_transport.published_time_ns
+
+    @property
+    def last_acquired_analysis_sequence(self) -> int:
+        """Sequence of the exact result slot most recently leased by rendering."""
+        return self._analysis_transport.last_acquired_sequence
+
+    @property
+    def last_acquired_analysis_publish_time_ns(self) -> int:
+        """Publication time of the exact result slot most recently leased."""
+        return self._analysis_transport.last_acquired_time_ns
     
     def __enter__(self):
         """Context manager entry."""

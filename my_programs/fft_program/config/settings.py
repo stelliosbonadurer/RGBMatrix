@@ -4,7 +4,7 @@ Configuration settings for FFT visualizer.
 All user-configurable parameters are defined here as dataclasses.
 """
 from dataclasses import dataclass, field
-from typing import Tuple, Literal, List
+from typing import Tuple, Literal
 
 
 @dataclass
@@ -136,68 +136,6 @@ class ShadowSettings:
 
 
 @dataclass
-class LayerConfig:
-    """
-    Configuration for a single visualization layer.
-    
-    Each layer has its own frequency range, theme, and display settings.
-    """
-    name: str                              # Layer identifier (e.g., 'bass', 'treble')
-    freq_range: Tuple[int, int]            # (min_freq, max_freq) in Hz
-    theme_name: str = 'ocean'              # Theme for this layer
-    bars_enabled: bool = True              # Draw bars for this layer
-    gradient_enabled: bool = False         # Per-pixel gradient vs uniform color
-    overflow_enabled: bool = True          # Allow bars to exceed height
-    peak_enabled: bool = False             # Show floating peak indicators
-    visible: bool = True                   # Whether layer is drawn
-    boost: float = 1.0                     # Sensitivity multiplier
-    bins: int = 64                         # Number of frequency bins (always 64 for now)
-
-
-@dataclass
-class LayeredVisualizerSettings:
-    """
-    Multi-layer visualization settings.
-    
-    Layers are drawn in order (index 0 = bottom/background, higher = foreground).
-    """
-    enabled: bool = False                  # True = use layered mode
-    
-    # Default three layers: bass, mid-treble, high-treble
-    layers: List[LayerConfig] = field(default_factory=lambda: [
-        LayerConfig(
-            name='bass',
-            freq_range=(80, 1950),
-            theme_name='ocean',
-            gradient_enabled=False,
-            overflow_enabled=True,
-            visible=True,
-            boost=1.0
-        ),
-        LayerConfig(
-            name='mid',
-            freq_range=(2000, 4000),
-            theme_name='warm',
-            gradient_enabled=False,
-            overflow_enabled=False,
-            visible=True,
-            boost=2.5
-        ),
-        # LayerConfig(
-        #     name='treble',
-        #     freq_range=(4000, 8000),
-        #     theme_name='forest',
-        #     gradient_enabled=False,
-        #     overflow_enabled=False,
-        #     visible=True,
-        #     boost=4.0
-        # ),
-    ])
-    
-    active_layer: int = 0  # Which layer is currently being edited
-
-
-@dataclass
 class Settings:
     """Master settings container."""
     audio: AudioSettings = field(default_factory=AudioSettings)
@@ -209,7 +147,6 @@ class Settings:
     scaling: ScalingSettings = field(default_factory=ScalingSettings)
     smoothing: SmoothingSettings = field(default_factory=SmoothingSettings)
     shadow: ShadowSettings = field(default_factory=ShadowSettings)
-    layers: LayeredVisualizerSettings = field(default_factory=LayeredVisualizerSettings)
 
 
 def get_default_settings() -> Settings:
@@ -231,8 +168,6 @@ def load_settings(path: str = None) -> Settings:
         return get_default_settings()
     
     import json
-    from dataclasses import asdict
-    
     try:
         with open(path, 'r') as f:
             data = json.load(f)
@@ -263,18 +198,7 @@ def load_settings(path: str = None) -> Settings:
             settings.smoothing = SmoothingSettings(**data['smoothing'])
         if 'shadow' in data:
             settings.shadow = ShadowSettings(**data['shadow'])
-        if 'layers' in data:
-            layer_section = dict(data['layers'])
-            raw_layers = layer_section.pop('layers', None)
-            settings.layers = LayeredVisualizerSettings(**layer_section)
-            if raw_layers is not None:
-                settings.layers.layers = []
-                for raw_layer in raw_layers:
-                    layer_data = dict(raw_layer)
-                    if 'freq_range' in layer_data:
-                        layer_data['freq_range'] = tuple(layer_data['freq_range'])
-                    settings.layers.layers.append(LayerConfig(**layer_data))
-        
+
         return settings
     
     except FileNotFoundError:

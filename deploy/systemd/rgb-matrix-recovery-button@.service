@@ -1,6 +1,5 @@
 [Unit]
 Description=RGB Matrix physical network recovery button for %i
-Documentation=file:/home/%i/rgb_Matrix/docs_agents/network-fallback-operations.md
 After=rgb-matrix-network@%i.service
 Requires=rgb-matrix-network@%i.service
 ConditionPathExists=/dev/gpiochip0

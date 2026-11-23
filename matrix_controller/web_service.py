@@ -261,6 +261,10 @@ def _runtime_error_response(exc: Exception) -> tuple[HTTPStatus, str, str]:
             "invalid_value": HTTPStatus.BAD_REQUEST,
             "invalid_path": HTTPStatus.BAD_REQUEST,
             "invalid_command": HTTPStatus.BAD_REQUEST,
+            "invalid_structure": HTTPStatus.BAD_REQUEST,
+            "invalid_operation": HTTPStatus.BAD_REQUEST,
+            "invalid_reference": HTTPStatus.BAD_REQUEST,
+            "limit_exceeded": HTTPStatus.BAD_REQUEST,
             "unsupported_version": HTTPStatus.BAD_REQUEST,
             "protocol_error": HTTPStatus.BAD_REQUEST,
             "unsupported": HTTPStatus.NOT_IMPLEMENTED,
@@ -525,7 +529,10 @@ def build_handler(
                 self._send_json(HTTPStatus.OK, _runtime_snapshot(supervisor))
             except Exception as exc:
                 status, code, message = _runtime_error_response(exc)
-                self._send_json(status, {"error": message, "code": code})
+                body = {"error": message, "code": code}
+                if isinstance(getattr(exc, "path", None), str):
+                    body["path"] = exc.path
+                self._send_json(status, body)
 
         def _handle_runtime_command(self, command: dict[str, Any]) -> None:
             method = getattr(supervisor, "runtime_command", None)
@@ -555,7 +562,10 @@ def build_handler(
                 self._send_json(HTTPStatus.OK, _normalize_runtime_result(result))
             except Exception as exc:
                 status, code, message = _runtime_error_response(exc)
-                self._send_json(status, {"error": message, "code": code})
+                body = {"error": message, "code": code}
+                if isinstance(getattr(exc, "path", None), str):
+                    body["path"] = exc.path
+                self._send_json(status, body)
 
         def _handle_network_request(
             self,
