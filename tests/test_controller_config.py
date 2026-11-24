@@ -11,7 +11,8 @@ from matrix_controller.controller_config import (
     ControllerConfigError,
     load_controller_config,
 )
-from matrix_controller.registry import build_default_registry
+from matrix_controller.matrix_settings import config_matrix_values
+from matrix_controller.web_service import registry_for_config
 
 
 class ControllerConfigTests(unittest.TestCase):
@@ -65,18 +66,60 @@ class ControllerConfigTests(unittest.TestCase):
                 }
             )
         )
-        defaults = {
-            item: config.defaults_for(item)
-            for item in ("system_info", "fft", "sorts", "master_theorem", "graph_traversal")
-        }
-        registry = build_default_registry(parameter_defaults=defaults)
+        # D-035: a program's defaults no longer include the matrix block.
+        self.assertEqual(config.defaults_for("fft"), {"theme": "warm"})
+        self.assertEqual(config.defaults_for("sorts"), {})
+        registry = registry_for_config(config)
         fft = registry.get("fft")
         values = fft.validate_parameters({})
-        self.assertEqual(values["led_rows"], 32)
         self.assertEqual(values["theme"], "warm")
-        argv = fft.build_argv("/fixed/python", values)
+        matrix = config_matrix_values(config.matrix_defaults)
+        self.assertEqual(matrix["led_rows"], 32)
+        self.assertEqual(matrix["led_cols"], 64)  # code default fills the rest
+        argv = fft.build_argv("/fixed/python", values, matrix_values=matrix)
         pulse_index = argv.index("--led-no-hardware-pulse")
         self.assertEqual(argv[pulse_index + 1], "1")
+        self.assertEqual(argv[argv.index("--led-rows") + 1], "32")
+
+    def test_every_configured_program_gets_its_defaults(self) -> None:
+        # Graph Traversal was left out of the service's defaults list until M4.
+        config = load_controller_config(
+            self.write_config(
+                {
+                    "version": 1,
+                    "visualizations": {
+                        "graph_traversal": {"n": 20, "traverse": "dfs"},
+                        "sorts": {"sort": "bubble"},
+                        "master_theorem": {"a": 3},
+                    },
+                }
+            )
+        )
+        registry = registry_for_config(config)
+        graph = registry.get("graph_traversal").validate_parameters({})
+        self.assertEqual((graph["n"], graph["traverse"]), (20, "dfs"))
+        self.assertEqual(registry.get("sorts").validate_parameters({})["sort"], "bubble")
+        self.assertEqual(registry.get("master_theorem").validate_parameters({})["a"], 3)
+
+    def test_shipped_config_applies_to_graph_traversal(self) -> None:
+        config = load_controller_config(
+            Path(__file__).resolve().parents[1] / "config" / "matrix-controller.json"
+        )
+        self.assertIn("graph_traversal", config.visualization_defaults)
+        self.assertEqual(
+            config_matrix_values(config.matrix_defaults)["led_gpio_mapping"],
+            "adafruit-hat-pwm",
+        )
+
+    def test_access_switch_defaults_locked_and_is_strict(self) -> None:
+        self.assertTrue(load_controller_config(self.write_config({"version": 1})).require_pairing)
+        opened = load_controller_config(
+            self.write_config({"version": 1, "access": {"require_pairing": False}})
+        )
+        self.assertFalse(opened.require_pairing)
+        for access in ({"require_pairing": "no"}, {"require_pairing": 0}, {"other": True}, []):
+            with self.subTest(access=access), self.assertRaises(ControllerConfigError):
+                load_controller_config(self.write_config({"version": 1, "access": access}))
 
     def test_unknown_and_invalid_values_are_rejected(self) -> None:
         cases = (

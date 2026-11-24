@@ -163,6 +163,9 @@ while not stopping:
 
 # Printed as JSON by the checkout's own controller code, run with the service's
 # interpreter, so the check launches exactly what the web service would (D-003).
+# From web-control-refactor M4 the matrix flags come from the shared matrix
+# settings the web pages save (D-035), with the config's matrix block as the
+# fallback; older checkouts still merge that block into the FFT defaults.
 FFT_ARGV_SNIPPET = r"""
 import json, sys
 from pathlib import Path
@@ -175,8 +178,17 @@ python = config.python_executable or sys.executable
 spec = build_default_registry(
     parameter_defaults={"fft": config.defaults_for("fft")}
 ).get("fft")
+try:
+    from matrix_controller.matrix_settings import MatrixSettingsStore, config_matrix_values
+except ImportError:
+    argv = spec.build_argv(python, {}, command_prefix=prefix)
+else:
+    matrix = MatrixSettingsStore(
+        config_values=config_matrix_values(config.matrix_defaults)
+    ).effective_values()
+    argv = spec.build_argv(python, {}, command_prefix=prefix, matrix_values=matrix)
 print(json.dumps({
-    "argv": spec.build_argv(python, {}, command_prefix=prefix),
+    "argv": argv,
     "cwd": str(spec.working_directory),
     "python": python,
 }))

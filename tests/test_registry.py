@@ -26,7 +26,35 @@ class RegistryTests(unittest.TestCase):
         # missing rgbmatrix binding will make the regression visible.
         listing = [item.as_public_dict() for item in self.registry.list()]
         self.assertEqual(len(listing), 5)
-        self.assertTrue(all(item["parameters"] for item in listing))
+        by_id = {item["id"]: item for item in listing}
+        self.assertEqual(by_id["system_info"]["parameters"], [])
+        self.assertTrue(all(by_id[item]["parameters"] for item in by_id if item != "system_info"))
+
+    def test_program_parameters_exclude_the_shared_matrix_settings(self) -> None:
+        # web-control-refactor D-035: led_* belong to the matrix settings store.
+        for spec in self.registry.list():
+            with self.subTest(spec=spec.visualization_id):
+                names = [item["name"] for item in spec.as_public_dict()["parameters"]]
+                self.assertFalse([name for name in names if name.startswith("led_")])
+                self.assertEqual(len(spec.matrix_parameters), 18)
+
+    def test_launch_parameters_refuse_matrix_settings_by_name(self) -> None:
+        for spec in self.registry.list():
+            with self.subTest(spec=spec.visualization_id), self.assertRaisesRegex(
+                ValidationError, "shared matrix settings.*led_brightness"
+            ):
+                spec.validate_parameters({"led_brightness": 50})
+
+    def test_public_parameters_carry_their_cli_flags(self) -> None:
+        gradient = self.registry.get("fft").parameter("gradient").as_public_dict()
+        self.assertEqual(gradient["cli_flag"], "--gradient")
+        self.assertEqual(gradient["negative_cli_flag"], "--no-gradient")
+        self.assertIsNone(gradient["true_cli_value"])
+        pulse = next(
+            item for item in self.registry.get("fft").matrix_parameters
+            if item.name == "led_no_hardware_pulse"
+        ).as_public_dict()
+        self.assertEqual(pulse["true_cli_value"], "1")
 
     def test_unknown_visualization_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValidationError, "unknown visualization"):
@@ -39,9 +67,6 @@ class RegistryTests(unittest.TestCase):
     def test_strict_parameter_types_and_ranges(self) -> None:
         fft = self.registry.get("fft")
         invalid_cases = (
-            {"led_rows": True},
-            {"led_rows": 0},
-            {"led_brightness": 101},
             {"gradient": "true"},
             {"theme": "not-a-theme"},
         )
@@ -91,7 +116,7 @@ class RegistryTests(unittest.TestCase):
 
     def test_complete_matrix_contract_is_public_and_builds_fixed_flags(self) -> None:
         fft = self.registry.get("fft")
-        names = {parameter.name for parameter in fft.parameters}
+        names = {parameter.name for parameter in fft.matrix_parameters}
         self.assertTrue(
             {
                 "led_rows",
@@ -109,10 +134,29 @@ class RegistryTests(unittest.TestCase):
                 "led_no_drop_privs",
             }.issubset(names)
         )
-        values = fft.validate_parameters({"led_no_hardware_pulse": True})
-        argv = fft.build_argv("/fixed/python", values)
+        matrix = fft.validate_matrix_values(None)
+        matrix["led_no_hardware_pulse"] = True
+        argv = fft.build_argv("/fixed/python", {}, matrix_values=matrix)
         index = argv.index("--led-no-hardware-pulse")
         self.assertEqual(argv[index + 1], "1")
+        # Matrix flags come first, then the program's own (the pre-D-035 order).
+        self.assertLess(argv.index("--led-rows"), argv.index("--audio-source"))
+
+    def test_matrix_values_must_be_complete_and_valid(self) -> None:
+        fft = self.registry.get("fft")
+        complete = fft.validate_matrix_values(None)
+        partial = dict(complete)
+        del partial["led_rows"]
+        cases = (
+            (partial, "missing matrix settings: led_rows"),
+            ({**complete, "led_extra": 1}, "unknown matrix settings: led_extra"),
+            ({**complete, "led_rows": True}, "must be an integer"),
+            ({**complete, "led_rows": 0}, "at least 1"),
+            ({**complete, "led_brightness": 101}, "at most 100"),
+        )
+        for supplied, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(ValidationError, message):
+                fft.build_argv("/fixed/python", {}, matrix_values=supplied)
 
     def test_argparse_adapter_uses_contract_validation(self) -> None:
         parser = argparse.ArgumentParser(exit_on_error=False)

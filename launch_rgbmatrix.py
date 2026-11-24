@@ -162,8 +162,9 @@ def resolve_python_executable(user_choice: str | None) -> str:
 def load_matrix_settings(config_path: Path) -> dict[str, Any]:
     """Return every matrix setting: code defaults overlaid with the config file.
 
-    This is the same "matrix" section the web controller passes to managed
-    visualizations, so manual launches drive the panel identically.
+    The web controller starts from this same "matrix" section, but once settings
+    are saved from the home page it uses its own matrix-settings file instead
+    (web-control-refactor D-035), so a manual launch can differ from a web launch.
     """
 
     config = load_controller_config(config_path)

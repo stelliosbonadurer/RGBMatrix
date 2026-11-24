@@ -206,10 +206,11 @@ class MasterTheoremCliTests(unittest.TestCase):
                 "example": "root_heavy",
                 "animate": False,
                 "cycles": 1,
-                "led_no_hardware_pulse": True,
             }
         )
-        argv = definition.build_argv("/fixed/python", values)
+        matrix = definition.validate_matrix_values(None)
+        matrix["led_no_hardware_pulse"] = True
+        argv = definition.build_argv("/fixed/python", values, matrix_values=matrix)
         app = NativeMatrixApp()
         for parameter in application_parameters("master_theorem"):
             parameter.add_to_argparse(app.parser)

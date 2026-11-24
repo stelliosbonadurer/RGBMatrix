@@ -18,7 +18,6 @@ import json
 import os
 import re
 import secrets
-import tempfile
 import threading
 import unicodedata
 from http import HTTPStatus
@@ -26,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .boot_code import DEFAULT_STATE_DIRECTORY
+from .state_files import write_bytes_atomically
 
 
 PRESET_FILE_VERSION = 1
@@ -330,47 +330,7 @@ class PresetStore:
             # The stored presets load without NaN or Infinity, so this one came from
             # the request; nothing has been written yet.
             raise _invalid("preset values must be finite numbers") from None
-        directory = self.path.parent
         try:
-            directory.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise _unavailable("preset directory can't be created") from exc
-        temporary_name: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                dir=directory,
-                prefix=f".{self.path.name}.",
-                delete=False,
-            ) as temporary:
-                temporary_name = temporary.name
-                os.chmod(temporary.fileno(), 0o600)
-                temporary.write(encoded)
-                temporary.flush()
-                os.fsync(temporary.fileno())
-            os.replace(temporary_name, self.path)
-            temporary_name = None
-            self._fsync_directory(directory)
+            write_bytes_atomically(self.path, encoded)
         except OSError as exc:
             raise _unavailable("preset file can't be written") from exc
-        finally:
-            if temporary_name is not None:
-                try:
-                    Path(temporary_name).unlink()
-                except FileNotFoundError:
-                    pass
-
-    @staticmethod
-    def _fsync_directory(directory: Path) -> None:
-        """Persist the rename across power loss where the platform allows it."""
-
-        try:
-            descriptor = os.open(directory, os.O_RDONLY)
-        except OSError:
-            return
-        try:
-            os.fsync(descriptor)
-        except OSError:
-            pass
-        finally:
-            os.close(descriptor)

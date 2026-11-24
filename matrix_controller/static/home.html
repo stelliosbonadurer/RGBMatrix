@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090b12">
+  <title>RGB Matrix</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/js/home.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="RGB Matrix home">
+      <span class="pixel-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+      <span>RGB MATRIX</span>
+    </a>
+    <a class="topbar-link" href="/setup">Wi-Fi setup</a>
+  </header>
+
+  <main class="page">
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+    <section class="panel now-playing" aria-labelledby="now-playing-title">
+      <p class="eyebrow" id="now-playing-title">Now playing</p>
+      <div class="now-row">
+        <span class="status-dot" id="now-dot" data-tone="unknown" aria-hidden="true"></span>
+        <div class="now-text">
+          <strong id="now-name">Checking the matrix…</strong>
+          <span id="now-detail" aria-live="polite"></span>
+        </div>
+        <div class="now-actions">
+          <a id="now-open" class="button secondary small" href="/" hidden>Open ›</a>
+          <button id="now-stop" class="button danger small" type="button" disabled>■ Stop</button>
+        </div>
+      </div>
+      <p id="now-matrix-note" class="note" hidden></p>
+    </section>
+
+    <section aria-labelledby="programs-title">
+      <h2 class="section-title" id="programs-title">Programs</h2>
+      <nav id="program-list" class="program-list" aria-labelledby="programs-title" aria-busy="true"></nav>
+    </section>
+
+    <details id="matrix-settings" class="panel matrix-panel">
+      <summary>
+        <span class="summary-title">Matrix settings</span>
+        <span class="summary-hint">all programs</span>
+      </summary>
+      <div id="matrix-error" class="banner error" hidden></div>
+      <div id="matrix-banner" class="banner" hidden></div>
+      <div id="matrix-common" class="fields"></div>
+      <details class="subgroup">
+        <summary>Advanced (<span id="matrix-advanced-count">0</span>)</summary>
+        <div id="matrix-advanced-fields" class="fields"></div>
+      </details>
+      <div class="flags">
+        <span class="flags-label">Passes</span>
+        <code id="matrix-flags"></code>
+      </div>
+      <div class="matrix-actions">
+        <button id="matrix-reset" class="button ghost small" type="button" disabled>Reset to Pi config values</button>
+        <span class="spacer"></span>
+        <span id="matrix-dirty" class="dirty-count"></span>
+        <button id="matrix-discard" class="link-button" type="button" hidden>Discard</button>
+        <button id="matrix-save" class="button primary" type="button" disabled>Save</button>
+      </div>
+      <p id="matrix-meta" class="meta"></p>
+    </details>
+  </main>
+
+  <footer class="footer"><span id="last-updated">Waiting for status</span></footer>
+</body>
+</html>

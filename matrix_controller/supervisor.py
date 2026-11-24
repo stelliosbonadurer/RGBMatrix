@@ -75,7 +75,12 @@ class VisualizationSupervisor:
         clock: Clock = time.time,
         runtime_dir: str | os.PathLike[str] | None = None,
         runtime_request_timeout: float = 1.0,
+        matrix_settings: Callable[[], Mapping[str, Any]] | None = None,
     ):
+        """``matrix_settings`` returns the shared panel values for each launch
+        (web-control-refactor D-035); without it, launches use the code defaults.
+        """
+
         self.registry = registry
         self.python_executable = python_executable
         self.command_prefix = tuple(command_prefix)
@@ -86,12 +91,17 @@ class VisualizationSupervisor:
         self._clock = clock
         self._runtime_dir = runtime_dir
         self._runtime_request_timeout = runtime_request_timeout
+        self._matrix_settings = matrix_settings
         self._lock = threading.RLock()
 
         self._state = "idle"
         self._process: ManagedProcess | None = None
         self._visualization_id: str | None = None
         self._parameters: dict[str, Any] = {}
+        self._matrix_values: dict[str, Any] = {}
+        # The program most recently launched, kept after it stops or fails so a
+        # page can tell whose failure ``last_error`` describes.
+        self._last_visualization_id: str | None = None
         self._argv: tuple[str, ...] = ()
         self._started_at: float | None = None
         self._last_exit_code: int | None = None
@@ -141,10 +151,14 @@ class VisualizationSupervisor:
                 raise ValidationError(
                     f"structure must be at most {MAX_LAUNCH_STRUCTURE_BYTES} bytes"
                 )
+        matrix_values = spec.validate_matrix_values(
+            self._matrix_settings() if self._matrix_settings is not None else None
+        )
         argv = spec.build_argv(
             self.python_executable,
             normalized,
             command_prefix=self.command_prefix,
+            matrix_values=matrix_values,
         )
 
         if not spec.script_path.is_file():
@@ -159,6 +173,9 @@ class VisualizationSupervisor:
             self._last_error = None
             self._last_exit_code = None
             self._run_id += 1
+            # Set before spawning, so a launch that fails in the process factory
+            # is reported against this program, not the one it replaced.
+            self._last_visualization_id = visualization_id
             runtime_control: RuntimeControlServer | None = None
             if spec.supports_live_control:
                 try:
@@ -205,6 +222,7 @@ class VisualizationSupervisor:
             self._runtime_control = runtime_control
             self._visualization_id = visualization_id
             self._parameters = dict(normalized)
+            self._matrix_values = dict(matrix_values)
             self._argv = tuple(argv)
             self._started_at = self._clock()
 
@@ -351,6 +369,7 @@ class VisualizationSupervisor:
         self._close_runtime_control_locked()
         self._visualization_id = None
         self._parameters = {}
+        self._matrix_values = {}
         self._argv = ()
         self._started_at = None
         self._state = "idle"
@@ -370,6 +389,7 @@ class VisualizationSupervisor:
         self._close_runtime_control_locked()
         self._visualization_id = None
         self._parameters = {}
+        self._matrix_values = {}
         self._argv = ()
         self._started_at = None
 
@@ -391,6 +411,8 @@ class VisualizationSupervisor:
             "state": self._state,
             "visualization_id": self._visualization_id,
             "parameters": dict(self._parameters),
+            "matrix_settings": dict(self._matrix_values),
+            "last_visualization_id": self._last_visualization_id,
             "pid": process.pid if process is not None else None,
             "started_at": self._started_at,
             "run_id": self._run_id,

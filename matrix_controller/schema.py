@@ -161,6 +161,11 @@ class ParameterSpec:
             "default": self.default,
             "description": self.description,
             "restart_required": True,
+            # The pages show the exact flags a launch passes (web-control-refactor
+            # D-035, D-037) and rebuild them with the rules of ``cli_arguments``.
+            "cli_flag": self.cli_flag,
+            "negative_cli_flag": self.negative_cli_flag,
+            "true_cli_value": self.true_cli_value,
         }
         if self.minimum is not None:
             data["minimum"] = self.minimum
@@ -175,7 +180,12 @@ class ParameterSpec:
 
 @dataclass(frozen=True)
 class VisualizationSpec:
-    """A single code-owned, web-launchable visualization definition."""
+    """A single code-owned, web-launchable visualization definition.
+
+    ``parameters`` are the program's own launch options. ``matrix_parameters`` are
+    the shared panel settings (web-control-refactor D-035): a launch never
+    supplies them, and ``build_argv`` takes their values separately.
+    """
 
     visualization_id: str
     display_name: str
@@ -186,6 +196,7 @@ class VisualizationSpec:
     requires_audio: bool = False
     supports_live_control: bool = False
     parameter_validator: Callable[[Mapping[str, Any]], None] | None = None
+    matrix_parameters: tuple[ParameterSpec, ...] = ()
 
     def parameter(self, name: str) -> ParameterSpec:
         for parameter in self.parameters:
@@ -201,6 +212,13 @@ class VisualizationSpec:
         if not isinstance(supplied, Mapping):
             raise ValidationError("parameters must be a JSON object")
 
+        matrix_names = {parameter.name for parameter in self.matrix_parameters}
+        shared = sorted(set(supplied) & matrix_names)
+        if shared:
+            raise ValidationError(
+                f"shared matrix settings aren't launch parameters: {', '.join(shared)}; "
+                "change them in the matrix settings"
+            )
         known = {parameter.name for parameter in self.parameters}
         unknown = sorted(set(supplied) - known)
         if unknown:
@@ -216,16 +234,48 @@ class VisualizationSpec:
             self.parameter_validator(normalized)
         return normalized
 
+    def validate_matrix_values(self, supplied: Mapping[str, Any] | None) -> dict[str, Any]:
+        """Normalize a complete set of shared matrix values, or their defaults.
+
+        ``None`` means the code defaults. Otherwise every matrix parameter must be
+        present, so a launch can never mix stored values with silent defaults.
+        """
+
+        if supplied is None:
+            return {parameter.name: parameter.default for parameter in self.matrix_parameters}
+        if not isinstance(supplied, Mapping):
+            raise ValidationError("matrix values must be a JSON object")
+        names = {parameter.name for parameter in self.matrix_parameters}
+        unknown = sorted(set(supplied) - names)
+        if unknown:
+            raise ValidationError(f"unknown matrix settings: {', '.join(unknown)}")
+        missing = sorted(names - set(supplied))
+        if missing:
+            raise ValidationError(f"missing matrix settings: {', '.join(missing)}")
+        return {
+            parameter.name: parameter.normalize(supplied[parameter.name])
+            for parameter in self.matrix_parameters
+        }
+
     def build_argv(
         self,
         python_executable: str,
         parameters: Mapping[str, Any],
         command_prefix: tuple[str, ...] = (),
+        *,
+        matrix_values: Mapping[str, Any] | None = None,
     ) -> list[str]:
-        """Build an argv list without invoking a shell or accepting raw arguments."""
+        """Build an argv list without invoking a shell or accepting raw arguments.
+
+        Matrix flags come first, then the program's own, matching the order the
+        combined parameter lists produced before D-035.
+        """
 
         normalized = self.validate_parameters(parameters)
+        matrix = self.validate_matrix_values(matrix_values)
         argv = [*command_prefix, python_executable, str(self.script_path)]
+        for parameter in self.matrix_parameters:
+            argv.extend(parameter.cli_arguments(matrix[parameter.name]))
         for parameter in self.parameters:
             argv.extend(parameter.cli_arguments(normalized[parameter.name]))
         return argv

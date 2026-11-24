@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "access": {
+    "require_pairing": false
+  },
   "runtime": {
     "python_executable": "~/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3",
     "use_sudo": true,

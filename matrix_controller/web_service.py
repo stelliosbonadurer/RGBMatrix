@@ -28,10 +28,16 @@ from .bluetooth import (
     unavailable_status,
 )
 from .boot_code import DEFAULT_CODE_FILE, ensure_boot_code
-from .controller_config import ControllerConfigError, load_controller_config
+from .controller_config import ControllerConfig, ControllerConfigError, load_controller_config
+from .matrix_settings import (
+    DEFAULT_MATRIX_SETTINGS_FILE,
+    MatrixSettingsError,
+    MatrixSettingsStore,
+    config_matrix_values,
+)
 from .pairing import PairingError, PairingManager
 from .presets import DEFAULT_PRESET_FILE, PresetError, PresetStore
-from .registry import build_default_registry
+from .registry import Registry, build_default_registry
 from .runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
 from .schema import ValidationError
 from .supervisor import VisualizationSupervisor
@@ -47,6 +53,29 @@ BROWSER_SESSION_HEADER = "X-RGB-Matrix-Session"
 # Temporary trusted-LAN convenience requested during UI development. Keep this
 # explicit and easy to remove; it intentionally weakens possession-based pairing.
 TEMPORARY_FALLBACK_PAIRING_CODE = "000000"
+
+PROGRAM_PAGE_PREFIX = "/programs/"
+MATRIX_SETTINGS_PATH = "/api/v1/matrix-settings"
+PAGE_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; connect-src 'self'; script-src 'self'; "
+    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+_JAVASCRIPT = "text/javascript; charset=utf-8"
+# Every page asset has a literal route (web-control-refactor D-042); request paths
+# are never joined into a filesystem path.
+STATIC_ASSETS: dict[str, tuple[str, str]] = {
+    "/static/app.css": ("app.css", "text/css; charset=utf-8"),
+    "/static/js/api.js": ("js/api.js", _JAVASCRIPT),
+    "/static/js/model.js": ("js/model.js", _JAVASCRIPT),
+    "/static/js/ui.js": ("js/ui.js", _JAVASCRIPT),
+    "/static/js/home.js": ("js/home.js", _JAVASCRIPT),
+    "/static/js/program.js": ("js/program.js", _JAVASCRIPT),
+    "/static/js/programs/graph_traversal.js": (
+        "js/programs/graph_traversal.js",
+        _JAVASCRIPT,
+    ),
+}
 
 
 class _RuntimeResponseError(RuntimeError):
@@ -311,11 +340,16 @@ def build_handler(
     pairing_manager: PairingManager,
     preset_store: PresetStore | None = None,
     bluetooth: BluetoothController | None = None,
+    matrix_settings: MatrixSettingsStore | None = None,
+    require_pairing: bool = True,
 ) -> type[BaseHTTPRequestHandler]:
     """Bind one supervisor and token policy to an HTTP handler class.
 
     Without ``preset_store`` the preset routes answer 503. Without ``bluetooth``
     the Bluetooth status reports ``available: false`` and its actions answer 503.
+    Without ``matrix_settings`` the matrix-settings routes answer 503.
+    ``require_pairing=False`` opens visualization control to every request
+    (web-control-refactor D-036); network administration still needs the token.
     """
 
     pairing = pairing_manager
@@ -326,15 +360,16 @@ def build_handler(
         def do_GET(self) -> None:  # noqa: N802 - HTTP handler API name
             path = urlsplit(self.path).path
             if path == "/":
-                self._send_control_page()
-            elif path == "/config/fft":
-                self._send_fft_config_page()
-            elif path == "/static/control.css":
-                self._send_static_file("control.css", "text/css; charset=utf-8")
-            elif path == "/static/control.js":
-                self._send_static_file("control.js", "text/javascript; charset=utf-8")
-            elif path == "/static/fft-config.js":
-                self._send_static_file("fft-config.js", "text/javascript; charset=utf-8")
+                self._send_page("home.html")
+            elif path.startswith(PROGRAM_PAGE_PREFIX):
+                # D-033: one shared page for every registered program. The ID is
+                # only compared with the registry; it never reaches a file path.
+                if path.removeprefix(PROGRAM_PAGE_PREFIX) in self._registered_ids():
+                    self._send_page("program.html")
+                else:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "program not found")
+            elif path in STATIC_ASSETS:
+                self._send_static_file(*STATIC_ASSETS[path])
             elif path == "/setup":
                 self._send_setup_page()
             elif path in {"/generate_204", "/hotspot-detect.html", "/connecttest.txt", "/ncsi.txt"}:
@@ -359,6 +394,10 @@ def build_handler(
                 self._send_json(HTTPStatus.OK, {"visualizations": supervisor.list_visualizations()})
             elif path == "/api/v1/status":
                 self._send_json(HTTPStatus.OK, supervisor.status())
+            elif path == MATRIX_SETTINGS_PATH:
+                # Public like the visualization list: the values aren't secret, and
+                # a page without control access can still show them (D-008).
+                self._handle_matrix_settings_request("get")
             elif path == "/api/v1/runtime":
                 if not self._is_control_authorized():
                     self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
@@ -394,6 +433,7 @@ def build_handler(
                     {
                         "authorized": self._is_control_authorized(),
                         "temporary_session": pairing.is_session_token(supplied_token),
+                        "pairing_required": require_pairing,
                     },
                 )
             elif path == "/healthz":
@@ -405,8 +445,11 @@ def build_handler(
                         "service": "rgb-matrix-control",
                         "api_version": "v1",
                         "endpoints": [
+                            "GET /",
+                            "GET /programs/{visualization_id}",
                             "GET /api/v1/visualizations",
                             "GET /api/v1/status",
+                            "GET /api/v1/matrix-settings",
                             "GET /api/v1/runtime",
                             "PATCH /api/v1/runtime",
                             "POST /api/v1/runtime/actions",
@@ -417,12 +460,12 @@ def build_handler(
                             "GET /api/v1/pairing/status",
                             "GET /api/v1/network/status",
                             "GET /setup",
-                            "GET /config/fft",
                             "POST /api/v1/run",
                             "POST /api/v1/stop",
                             "POST /api/v1/presets",
                             "PUT /api/v1/presets/{preset_id}",
                             "DELETE /api/v1/presets/{preset_id}",
+                            "PUT /api/v1/matrix-settings",
                             "POST /api/v1/bluetooth/actions",
                             "POST /api/v1/pairing/exchange",
                             "POST /api/v1/pairing/logout",
@@ -435,6 +478,8 @@ def build_handler(
 
         def do_POST(self) -> None:  # noqa: N802 - HTTP handler API name
             path = urlsplit(self.path).path
+            if self._refuse_cross_site_mutation():
+                return
             try:
                 if path == "/api/v1/pairing/exchange":
                     payload = self._read_json_object()
@@ -596,6 +641,8 @@ def build_handler(
             """Apply one authenticated atomic runtime patch."""
 
             path = urlsplit(self.path).path
+            if self._refuse_cross_site_mutation():
+                return
             if path != "/api/v1/runtime":
                 self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
                 return
@@ -614,9 +661,22 @@ def build_handler(
                 self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
 
         def do_PUT(self) -> None:  # noqa: N802 - HTTP handler API name
-            """Replace one whole preset (D-025)."""
+            """Replace one whole preset (D-025) or the matrix settings (D-035)."""
 
-            preset_id = self._preset_id_from_path(urlsplit(self.path).path)
+            if self._refuse_cross_site_mutation():
+                return
+            path = urlsplit(self.path).path
+            if path == MATRIX_SETTINGS_PATH:
+                if not self._authorize_control_mutation():
+                    return
+                try:
+                    payload = self._read_json_object()
+                except ValueError as exc:
+                    self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                    return
+                self._handle_matrix_settings_request("replace", payload=payload)
+                return
+            preset_id = self._preset_id_from_path(path)
             if preset_id is None:
                 self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
                 return
@@ -632,6 +692,8 @@ def build_handler(
         def do_DELETE(self) -> None:  # noqa: N802 - HTTP handler API name
             """Delete one preset at its expected revision (D-025)."""
 
+            if self._refuse_cross_site_mutation():
+                return
             preset_id = self._preset_id_from_path(urlsplit(self.path).path)
             if preset_id is None:
                 self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
@@ -697,6 +759,38 @@ def build_handler(
                 self._send_json(exc.status, exc.as_body())
                 return
             self._send_json(success_status, result)
+
+        def _handle_matrix_settings_request(
+            self,
+            operation: str,
+            *,
+            payload: dict[str, Any] | None = None,
+        ) -> None:
+            if matrix_settings is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "error": "matrix settings are unavailable",
+                        "code": "matrix_settings_unavailable",
+                    },
+                )
+                return
+            try:
+                if operation == "get":
+                    result = matrix_settings.snapshot()
+                else:
+                    result = matrix_settings.replace(payload)
+            except MatrixSettingsError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            self._send_json(HTTPStatus.OK, result)
+
+        def _registered_ids(self) -> set[str]:
+            return {
+                item["id"]
+                for item in supervisor.list_visualizations()
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
 
         def _handle_bluetooth_action(self, payload: dict[str, Any]) -> None:
             if bluetooth is None:
@@ -837,6 +931,14 @@ def build_handler(
             return supplied_token is not None and hmac.compare_digest(supplied_token, api_token)
 
         def _is_control_authorized(self) -> bool:
+            """Allow visualization control (never network administration).
+
+            With ``require_pairing`` off, every request counts as a paired session
+            (web-control-refactor D-036); the pairing code paths stay in place.
+            """
+
+            if not require_pairing:
+                return True
             supplied_token = self._control_session_token()
             return self._is_admin_authorized() or pairing.is_session_token(supplied_token)
 
@@ -875,9 +977,24 @@ def build_handler(
             cookie_token = self._cookie_token()
             if not pairing.is_session_token(cookie_token):
                 return True
-            host = self.headers.get("Host")
             origin = self.headers.get("Origin")
-            if not host or not origin:
+            return origin is not None and self._origin_matches_host(origin)
+
+        def _mutation_origin_is_allowed(self) -> bool:
+            """Refuse every cross-site mutation (web-control-refactor D-036).
+
+            With pairing off nothing else stops another site in the phone's browser
+            from posting here: bodies aren't checked for a JSON content type and
+            there is no preflight handler. Browsers send ``Origin`` on these
+            requests; scripts and curl usually don't, and stay allowed.
+            """
+
+            origin = self.headers.get("Origin")
+            return origin is None or self._origin_matches_host(origin)
+
+        def _origin_matches_host(self, origin: str) -> bool:
+            host = self.headers.get("Host")
+            if not host:
                 return False
             parsed = urlsplit(origin)
             return (
@@ -887,6 +1004,14 @@ def build_handler(
                 and not parsed.query
                 and not parsed.fragment
             )
+
+        def _refuse_cross_site_mutation(self) -> bool:
+            """Send 403 and return True when this mutation comes from another site."""
+
+            if self._mutation_origin_is_allowed():
+                return False
+            self._send_error_json(HTTPStatus.FORBIDDEN, "cross-site requests are refused")
+            return True
 
         def _is_loopback_client(self) -> bool:
             return _is_loopback_address(self.client_address[0])
@@ -923,28 +1048,11 @@ def build_handler(
             morsel["samesite"] = "Strict"
             return morsel.OutputString()
 
-        def _send_control_page(self) -> None:
+        def _send_page(self, filename: str) -> None:
             self._send_static_file(
-                "index.html",
+                filename,
                 "text/html; charset=utf-8",
-                content_security_policy=(
-                    "default-src 'self'; connect-src 'self'; script-src 'self'; "
-                    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
-                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-                ),
-            )
-
-        def _send_fft_config_page(self) -> None:
-            """Serve the focused music-control UI under an explicit route."""
-
-            self._send_static_file(
-                "fft-config.html",
-                "text/html; charset=utf-8",
-                content_security_policy=(
-                    "default-src 'self'; connect-src 'self'; script-src 'self'; "
-                    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
-                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-                ),
+                content_security_policy=PAGE_CONTENT_SECURITY_POLICY,
             )
 
         def _send_setup_page(self) -> None:
@@ -1016,6 +1124,18 @@ def build_handler(
     return ControlRequestHandler
 
 
+def registry_for_config(controller_config: ControllerConfig) -> Registry:
+    """Build the registry with every configured program's own defaults.
+
+    The service once listed four programs here and left Graph Traversal out, so
+    its config block never applied (fixed in web-control-refactor M4).
+    """
+
+    return build_default_registry(
+        parameter_defaults=dict(controller_config.visualization_defaults)
+    )
+
+
 def _read_token(token_file: str | None) -> str | None:
     env_token = os.environ.get("RGBMATRIX_API_TOKEN")
     if env_token:
@@ -1051,6 +1171,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_PRESET_FILE,
         help="State file holding the FFT presets saved from the web pages",
+    )
+    parser.add_argument(
+        "--matrix-settings-file",
+        type=Path,
+        default=DEFAULT_MATRIX_SETTINGS_FILE,
+        help="State file holding the shared matrix settings saved from the web pages",
     )
     parser.add_argument(
         "--network-socket",
@@ -1127,17 +1253,18 @@ def main() -> int:
         if args.stop_timeout is not None
         else controller_config.stop_timeout_seconds
     )
-    registry_defaults = {
-        visualization_id: controller_config.defaults_for(visualization_id)
-        for visualization_id in ("system_info", "fft", "sorts", "master_theorem")
-    }
-    registry = build_default_registry(parameter_defaults=registry_defaults)
+    registry = registry_for_config(controller_config)
+    matrix_settings = MatrixSettingsStore(
+        args.matrix_settings_file,
+        config_values=config_matrix_values(controller_config.matrix_defaults),
+    )
     supervisor = VisualizationSupervisor(
         registry,
         python_executable=python_executable,
         command_prefix=command_prefix,
         stop_timeout=stop_timeout,
         runtime_dir=os.environ.get("RGBMATRIX_RUNTIME_DIR"),
+        matrix_settings=matrix_settings.effective_values,
     )
     # Nothing touches D-Bus until the first Bluetooth request; a missing binding or
     # bus only makes those routes report unavailable (M3 criterion 8).
@@ -1158,6 +1285,8 @@ def main() -> int:
                 validate_structure=validate_launch_structure,
             ),
             bluetooth=bluetooth,
+            matrix_settings=matrix_settings,
+            require_pairing=controller_config.require_pairing,
         ),
     )
 

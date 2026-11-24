@@ -1,0 +1,1543 @@
+{
+ "about": "ParameterSpec.cli_arguments vectors for the page JavaScript (tests/test_web_pages.py).",
+ "cases": [
+  {
+   "parameter": {
+    "name": "led_rows",
+    "type": "int",
+    "default": 64,
+    "description": "Panel row count.",
+    "restart_required": true,
+    "cli_flag": "--led-rows",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 256
+   },
+   "value": 64,
+   "argv": [
+    "--led-rows",
+    "64"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_cols",
+    "type": "int",
+    "default": 64,
+    "description": "Panel column count.",
+    "restart_required": true,
+    "cli_flag": "--led-cols",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 256
+   },
+   "value": 64,
+   "argv": [
+    "--led-cols",
+    "64"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_chain",
+    "type": "int",
+    "default": 1,
+    "description": "Number of chained panels.",
+    "restart_required": true,
+    "cli_flag": "--led-chain",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 16
+   },
+   "value": 1,
+   "argv": [
+    "--led-chain",
+    "1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_parallel",
+    "type": "int",
+    "default": 1,
+    "description": "Parallel panel chains.",
+    "restart_required": true,
+    "cli_flag": "--led-parallel",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 3
+   },
+   "value": 1,
+   "argv": [
+    "--led-parallel",
+    "1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_pwm_bits",
+    "type": "int",
+    "default": 11,
+    "description": "PWM bit depth.",
+    "restart_required": true,
+    "cli_flag": "--led-pwm-bits",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 11
+   },
+   "value": 11,
+   "argv": [
+    "--led-pwm-bits",
+    "11"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_brightness",
+    "type": "int",
+    "default": 100,
+    "description": "Panel brightness percentage.",
+    "restart_required": true,
+    "cli_flag": "--led-brightness",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 100
+   },
+   "value": 100,
+   "argv": [
+    "--led-brightness",
+    "100"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_gpio_mapping",
+    "type": "enum",
+    "default": "adafruit-hat",
+    "description": "GPIO/HAT hardware mapping.",
+    "restart_required": true,
+    "cli_flag": "--led-gpio-mapping",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "regular",
+     "regular-pi1",
+     "adafruit-hat",
+     "adafruit-hat-pwm"
+    ],
+    "maximum_length": 256
+   },
+   "value": "adafruit-hat",
+   "argv": [
+    "--led-gpio-mapping",
+    "adafruit-hat"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_slowdown_gpio",
+    "type": "int",
+    "default": 2,
+    "description": "GPIO timing slowdown.",
+    "restart_required": true,
+    "cli_flag": "--led-slowdown-gpio",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 5
+   },
+   "value": 2,
+   "argv": [
+    "--led-slowdown-gpio",
+    "2"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_scan_mode",
+    "type": "int",
+    "default": 1,
+    "description": "Panel scan mode: zero is progressive and one is interlaced.",
+    "restart_required": true,
+    "cli_flag": "--led-scan-mode",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 1
+   },
+   "value": 1,
+   "argv": [
+    "--led-scan-mode",
+    "1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_pwm_lsb_nanoseconds",
+    "type": "int",
+    "default": 130,
+    "description": "PWM least-significant-bit duration in nanoseconds.",
+    "restart_required": true,
+    "cli_flag": "--led-pwm-lsb-nanoseconds",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 10,
+    "maximum": 1000
+   },
+   "value": 130,
+   "argv": [
+    "--led-pwm-lsb-nanoseconds",
+    "130"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_show_refresh",
+    "type": "bool",
+    "default": false,
+    "description": "Print the panel refresh rate in service logs.",
+    "restart_required": true,
+    "cli_flag": "--led-show-refresh",
+    "negative_cli_flag": null,
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": []
+  },
+  {
+   "parameter": {
+    "name": "led_show_refresh",
+    "type": "bool",
+    "default": false,
+    "description": "Print the panel refresh rate in service logs.",
+    "restart_required": true,
+    "cli_flag": "--led-show-refresh",
+    "negative_cli_flag": null,
+    "true_cli_value": null
+   },
+   "value": true,
+   "argv": [
+    "--led-show-refresh"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_no_hardware_pulse",
+    "type": "bool",
+    "default": false,
+    "description": "Disable hardware-assisted GPIO pulses.",
+    "restart_required": true,
+    "cli_flag": "--led-no-hardware-pulse",
+    "negative_cli_flag": null,
+    "true_cli_value": "1"
+   },
+   "value": false,
+   "argv": []
+  },
+  {
+   "parameter": {
+    "name": "led_no_hardware_pulse",
+    "type": "bool",
+    "default": false,
+    "description": "Disable hardware-assisted GPIO pulses.",
+    "restart_required": true,
+    "cli_flag": "--led-no-hardware-pulse",
+    "negative_cli_flag": null,
+    "true_cli_value": "1"
+   },
+   "value": true,
+   "argv": [
+    "--led-no-hardware-pulse",
+    "1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_rgb_sequence",
+    "type": "enum",
+    "default": "RGB",
+    "description": "Physical color-channel order.",
+    "restart_required": true,
+    "cli_flag": "--led-rgb-sequence",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "RGB",
+     "RBG",
+     "GRB",
+     "GBR",
+     "BRG",
+     "BGR"
+    ],
+    "maximum_length": 256
+   },
+   "value": "RGB",
+   "argv": [
+    "--led-rgb-sequence",
+    "RGB"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_pixel_mapper",
+    "type": "string",
+    "default": "",
+    "description": "Optional driver pixel-mapper chain, such as Rotate:90.",
+    "restart_required": true,
+    "cli_flag": "--led-pixel-mapper",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "maximum_length": 128
+   },
+   "value": "",
+   "argv": [
+    "--led-pixel-mapper",
+    ""
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_pixel_mapper",
+    "type": "string",
+    "default": "",
+    "description": "Optional driver pixel-mapper chain, such as Rotate:90.",
+    "restart_required": true,
+    "cli_flag": "--led-pixel-mapper",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "maximum_length": 128
+   },
+   "value": "Rotate:90",
+   "argv": [
+    "--led-pixel-mapper",
+    "Rotate:90"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_pixel_mapper",
+    "type": "string",
+    "default": "",
+    "description": "Optional driver pixel-mapper chain, such as Rotate:90.",
+    "restart_required": true,
+    "cli_flag": "--led-pixel-mapper",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "maximum_length": 128
+   },
+   "value": "U-mapper;Rotate:180",
+   "argv": [
+    "--led-pixel-mapper",
+    "U-mapper;Rotate:180"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_row_addr_type",
+    "type": "int",
+    "default": 0,
+    "description": "Panel row-addressing strategy.",
+    "restart_required": true,
+    "cli_flag": "--led-row-addr-type",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 4
+   },
+   "value": 0,
+   "argv": [
+    "--led-row-addr-type",
+    "0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_multiplexing",
+    "type": "int",
+    "default": 0,
+    "description": "Driver multiplexing mapper index.",
+    "restart_required": true,
+    "cli_flag": "--led-multiplexing",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 17
+   },
+   "value": 0,
+   "argv": [
+    "--led-multiplexing",
+    "0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_panel_type",
+    "type": "string",
+    "default": "",
+    "description": "Optional panel chipset name, such as FM6126A.",
+    "restart_required": true,
+    "cli_flag": "--led-panel-type",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "maximum_length": 64
+   },
+   "value": "",
+   "argv": [
+    "--led-panel-type",
+    ""
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_panel_type",
+    "type": "string",
+    "default": "",
+    "description": "Optional panel chipset name, such as FM6126A.",
+    "restart_required": true,
+    "cli_flag": "--led-panel-type",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "maximum_length": 64
+   },
+   "value": "FM6126A",
+   "argv": [
+    "--led-panel-type",
+    "FM6126A"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "led_no_drop_privs",
+    "type": "bool",
+    "default": false,
+    "description": "Keep root privileges after matrix initialization.",
+    "restart_required": true,
+    "cli_flag": "--led-no-drop-privs",
+    "negative_cli_flag": null,
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": []
+  },
+  {
+   "parameter": {
+    "name": "audio_source",
+    "type": "enum",
+    "default": "usb-mic",
+    "description": "Audio input used by the FFT analyzer.",
+    "restart_required": true,
+    "cli_flag": "--audio-source",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "usb-mic",
+     "bluetooth"
+    ],
+    "maximum_length": 256
+   },
+   "value": "usb-mic",
+   "argv": [
+    "--audio-source",
+    "usb-mic"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "theme",
+    "type": "enum",
+    "default": "ocean",
+    "description": "Initial FFT color theme.",
+    "restart_required": true,
+    "cli_flag": "--theme",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "autumn",
+     "dynamic",
+     "dynamic_lateral_gradient",
+     "forest",
+     "ocean",
+     "rainbow",
+     "warm"
+    ],
+    "maximum_length": 256
+   },
+   "value": "ocean",
+   "argv": [
+    "--theme",
+    "ocean"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "gradient",
+    "type": "bool",
+    "default": false,
+    "description": "Render each bar with per-pixel gradient colors.",
+    "restart_required": true,
+    "cli_flag": "--gradient",
+    "negative_cli_flag": "--no-gradient",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--no-gradient"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "gradient",
+    "type": "bool",
+    "default": false,
+    "description": "Render each bar with per-pixel gradient colors.",
+    "restart_required": true,
+    "cli_flag": "--gradient",
+    "negative_cli_flag": "--no-gradient",
+    "true_cli_value": null
+   },
+   "value": true,
+   "argv": [
+    "--gradient"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "overflow",
+    "type": "bool",
+    "default": true,
+    "description": "Allow FFT bars to wrap above the matrix height.",
+    "restart_required": true,
+    "cli_flag": "--overflow",
+    "negative_cli_flag": "--no-overflow",
+    "true_cli_value": null
+   },
+   "value": true,
+   "argv": [
+    "--overflow"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "overflow",
+    "type": "bool",
+    "default": true,
+    "description": "Allow FFT bars to wrap above the matrix height.",
+    "restart_required": true,
+    "cli_flag": "--overflow",
+    "negative_cli_flag": "--no-overflow",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--no-overflow"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "n",
+    "type": "int",
+    "default": 12,
+    "description": "Number of graph nodes.",
+    "restart_required": true,
+    "cli_flag": "--n",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 2,
+    "maximum": 32
+   },
+   "value": 12,
+   "argv": [
+    "--n",
+    "12"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "e",
+    "type": "int",
+    "default": 0,
+    "description": "Number of edges; zero selects a valid automatic count based on the other options.",
+    "restart_required": true,
+    "cli_flag": "--e",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 90
+   },
+   "value": 0,
+   "argv": [
+    "--e",
+    "0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "e",
+    "type": "int",
+    "default": 0,
+    "description": "Number of edges; zero selects a valid automatic count based on the other options.",
+    "restart_required": true,
+    "cli_flag": "--e",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 90
+   },
+   "value": 45,
+   "argv": [
+    "--e",
+    "45"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "display_mode",
+    "type": "enum",
+    "default": "single",
+    "description": "Use the full panel or compare two algorithms in 32x64 viewports.",
+    "restart_required": true,
+    "cli_flag": "--display-mode",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "single",
+     "bfs_dfs_split",
+     "prim_kruskal_split"
+    ],
+    "maximum_length": 256
+   },
+   "value": "single",
+   "argv": [
+    "--display-mode",
+    "single"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "traverse",
+    "type": "enum",
+    "default": "bfs",
+    "description": "Graph traversal algorithm.",
+    "restart_required": true,
+    "cli_flag": "--traverse",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "bfs",
+     "dfs",
+     "dijkstra",
+     "components",
+     "prim",
+     "kruskal"
+    ],
+    "maximum_length": 256
+   },
+   "value": "bfs",
+   "argv": [
+    "--traverse",
+    "bfs"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "seed",
+    "type": "int",
+    "default": 0,
+    "description": "Random seed; identical values reproduce the graph and edge weights.",
+    "restart_required": true,
+    "cli_flag": "--seed",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 2147483647
+   },
+   "value": 0,
+   "argv": [
+    "--seed",
+    "0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "seed",
+    "type": "int",
+    "default": 0,
+    "description": "Random seed; identical values reproduce the graph and edge weights.",
+    "restart_required": true,
+    "cli_flag": "--seed",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 2147483647
+   },
+   "value": 2147483647,
+   "argv": [
+    "--seed",
+    "2147483647"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "connected",
+    "type": "bool",
+    "default": true,
+    "description": "Guarantee connectivity for an undirected graph.",
+    "restart_required": true,
+    "cli_flag": "--connected",
+    "negative_cli_flag": "--not-connected",
+    "true_cli_value": null
+   },
+   "value": true,
+   "argv": [
+    "--connected"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "connected",
+    "type": "bool",
+    "default": true,
+    "description": "Guarantee connectivity for an undirected graph.",
+    "restart_required": true,
+    "cli_flag": "--connected",
+    "negative_cli_flag": "--not-connected",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--not-connected"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "allow_cycles",
+    "type": "bool",
+    "default": false,
+    "description": "Permit cycles in the generated graph.",
+    "restart_required": true,
+    "cli_flag": "--allow-cycles",
+    "negative_cli_flag": "--no-cycles",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--no-cycles"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "directed",
+    "type": "bool",
+    "default": false,
+    "description": "Generate directed edges and render orange destination markers.",
+    "restart_required": true,
+    "cli_flag": "--directed",
+    "negative_cli_flag": "--undirected",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--undirected"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "directed",
+    "type": "bool",
+    "default": false,
+    "description": "Generate directed edges and render orange destination markers.",
+    "restart_required": true,
+    "cli_flag": "--directed",
+    "negative_cli_flag": "--undirected",
+    "true_cli_value": null
+   },
+   "value": true,
+   "argv": [
+    "--directed"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "ensure_path",
+    "type": "bool",
+    "default": true,
+    "description": "Guarantee that the directed start node can reach the target node.",
+    "restart_required": true,
+    "cli_flag": "--ensure-path",
+    "negative_cli_flag": "--no-ensure-path",
+    "true_cli_value": null
+   },
+   "value": true,
+   "argv": [
+    "--ensure-path"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "directed_connectivity",
+    "type": "enum",
+    "default": "weak",
+    "description": "Connectivity guarantee used when directed is enabled.",
+    "restart_required": true,
+    "cli_flag": "--directed-connectivity",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "strong",
+     "weak",
+     "none"
+    ],
+    "maximum_length": 256
+   },
+   "value": "weak",
+   "argv": [
+    "--directed-connectivity",
+    "weak"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "component_type",
+    "type": "enum",
+    "default": "weak",
+    "description": "Choose weak or strong components when traverse=components.",
+    "restart_required": true,
+    "cli_flag": "--component-type",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "weak",
+     "strong"
+    ],
+    "maximum_length": 256
+   },
+   "value": "weak",
+   "argv": [
+    "--component-type",
+    "weak"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "step_mode",
+    "type": "enum",
+    "default": "edge",
+    "description": "Advance once per examined edge or once per processed node.",
+    "restart_required": true,
+    "cli_flag": "--step-mode",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "edge",
+     "node"
+    ],
+    "maximum_length": 256
+   },
+   "value": "edge",
+   "argv": [
+    "--step-mode",
+    "edge"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "animate_back_edges",
+    "type": "bool",
+    "default": false,
+    "description": "Animate an undirected discovery edge again when examined from its child.",
+    "restart_required": true,
+    "cli_flag": "--animate-back-edges",
+    "negative_cli_flag": "--no-animate-back-edges",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--no-animate-back-edges"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "frame_duration",
+    "type": "float",
+    "default": 0.2,
+    "description": "Seconds each traversal step remains on screen.",
+    "restart_required": true,
+    "cli_flag": "--frame-duration",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.01,
+    "maximum": 10.0
+   },
+   "value": 0.2,
+   "argv": [
+    "--frame-duration",
+    "0.2"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "frame_duration",
+    "type": "float",
+    "default": 0.2,
+    "description": "Seconds each traversal step remains on screen.",
+    "restart_required": true,
+    "cli_flag": "--frame-duration",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.01,
+    "maximum": 10.0
+   },
+   "value": 0.01,
+   "argv": [
+    "--frame-duration",
+    "0.01"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "frame_duration",
+    "type": "float",
+    "default": 0.2,
+    "description": "Seconds each traversal step remains on screen.",
+    "restart_required": true,
+    "cli_flag": "--frame-duration",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.01,
+    "maximum": 10.0
+   },
+   "value": 10.0,
+   "argv": [
+    "--frame-duration",
+    "10.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "frame_duration",
+    "type": "float",
+    "default": 0.2,
+    "description": "Seconds each traversal step remains on screen.",
+    "restart_required": true,
+    "cli_flag": "--frame-duration",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.01,
+    "maximum": 10.0
+   },
+   "value": 0.333,
+   "argv": [
+    "--frame-duration",
+    "0.333"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "holding_period",
+    "type": "int",
+    "default": 10,
+    "description": "Opening- and final-frame duration measured in traversal frames.",
+    "restart_required": true,
+    "cli_flag": "--holding-period",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 10000
+   },
+   "value": 10,
+   "argv": [
+    "--holding-period",
+    "10"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "example",
+    "type": "enum",
+    "default": "custom",
+    "description": "Use a named recurrence example instead of the custom a, b, n, and k values.",
+    "restart_required": true,
+    "cli_flag": "--example",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "custom",
+     "binary_search",
+     "merge_sort",
+     "root_heavy",
+     "strassen",
+     "leaf_heavy"
+    ],
+    "maximum_length": 256
+   },
+   "value": "custom",
+   "argv": [
+    "--example",
+    "custom"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "a",
+    "type": "int",
+    "default": 2,
+    "description": "Recursive calls made by each node.",
+    "restart_required": true,
+    "cli_flag": "--a",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 8
+   },
+   "value": 2,
+   "argv": [
+    "--a",
+    "2"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "b",
+    "type": "int",
+    "default": 2,
+    "description": "Input-size divisor for each child.",
+    "restart_required": true,
+    "cli_flag": "--b",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 2,
+    "maximum": 8
+   },
+   "value": 2,
+   "argv": [
+    "--b",
+    "2"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "n",
+    "type": "int",
+    "default": 32,
+    "description": "Literal root input width in pixels.",
+    "restart_required": true,
+    "cli_flag": "--n",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 2,
+    "maximum": 32
+   },
+   "value": 32,
+   "argv": [
+    "--n",
+    "32"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "k",
+    "type": "float",
+    "default": 1.0,
+    "description": "Exponent in the non-recursive work f(n) = n^k.",
+    "restart_required": true,
+    "cli_flag": "--k",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 4.0
+   },
+   "value": 1.0,
+   "argv": [
+    "--k",
+    "1.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "k",
+    "type": "float",
+    "default": 1.0,
+    "description": "Exponent in the non-recursive work f(n) = n^k.",
+    "restart_required": true,
+    "cli_flag": "--k",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 4.0
+   },
+   "value": 4.0,
+   "argv": [
+    "--k",
+    "4.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "k",
+    "type": "float",
+    "default": 1.0,
+    "description": "Exponent in the non-recursive work f(n) = n^k.",
+    "restart_required": true,
+    "cli_flag": "--k",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 4.0
+   },
+   "value": 0.5,
+   "argv": [
+    "--k",
+    "0.5"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "k",
+    "type": "float",
+    "default": 1.0,
+    "description": "Exponent in the non-recursive work f(n) = n^k.",
+    "restart_required": true,
+    "cli_flag": "--k",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 4.0
+   },
+   "value": 2.5,
+   "argv": [
+    "--k",
+    "2.5"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "base_case",
+    "type": "int",
+    "default": 1,
+    "description": "Problem size at which recursion stops.",
+    "restart_required": true,
+    "cli_flag": "--base-case",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 1,
+    "maximum": 64
+   },
+   "value": 1,
+   "argv": [
+    "--base-case",
+    "1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "animate",
+    "type": "bool",
+    "default": false,
+    "description": "Legacy animation switch; the refactored matrix view is static.",
+    "restart_required": true,
+    "cli_flag": "--animate",
+    "negative_cli_flag": "--no-animate",
+    "true_cli_value": null
+   },
+   "value": false,
+   "argv": [
+    "--no-animate"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.45,
+    "description": "Seconds between level-reveal and comparison frames.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.02,
+    "maximum": 5.0
+   },
+   "value": 0.45,
+   "argv": [
+    "--delay",
+    "0.45"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.45,
+    "description": "Seconds between level-reveal and comparison frames.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.02,
+    "maximum": 5.0
+   },
+   "value": 2.0,
+   "argv": [
+    "--delay",
+    "2.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.45,
+    "description": "Seconds between level-reveal and comparison frames.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.02,
+    "maximum": 5.0
+   },
+   "value": 1.25,
+   "argv": [
+    "--delay",
+    "1.25"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.45,
+    "description": "Seconds between level-reveal and comparison frames.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.02,
+    "maximum": 5.0
+   },
+   "value": 0.1,
+   "argv": [
+    "--delay",
+    "0.1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "hold",
+    "type": "float",
+    "default": 3.0,
+    "description": "Seconds to hold the final Master Theorem result.",
+    "restart_required": true,
+    "cli_flag": "--hold",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.1,
+    "maximum": 30.0
+   },
+   "value": 3.0,
+   "argv": [
+    "--hold",
+    "3.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "hold",
+    "type": "float",
+    "default": 3.0,
+    "description": "Seconds to hold the final Master Theorem result.",
+    "restart_required": true,
+    "cli_flag": "--hold",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.1,
+    "maximum": 30.0
+   },
+   "value": 0.1,
+   "argv": [
+    "--hold",
+    "0.1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "hold",
+    "type": "float",
+    "default": 3.0,
+    "description": "Seconds to hold the final Master Theorem result.",
+    "restart_required": true,
+    "cli_flag": "--hold",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.1,
+    "maximum": 30.0
+   },
+   "value": 30.0,
+   "argv": [
+    "--hold",
+    "30.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "cycles",
+    "type": "int",
+    "default": 0,
+    "description": "Animation cycles before exit; zero repeats continuously.",
+    "restart_required": true,
+    "cli_flag": "--cycles",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 1000
+   },
+   "value": 0,
+   "argv": [
+    "--cycles",
+    "0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "mode",
+    "type": "enum",
+    "default": "random",
+    "description": "Automatic sort sequence to run.",
+    "restart_required": true,
+    "cli_flag": "--mode",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "single",
+     "all",
+     "random"
+    ],
+    "maximum_length": 256
+   },
+   "value": "random",
+   "argv": [
+    "--mode",
+    "random"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "sort",
+    "type": "enum",
+    "default": "quick",
+    "description": "Sort used when mode is single.",
+    "restart_required": true,
+    "cli_flag": "--sort",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "choices": [
+     "insertion",
+     "selection",
+     "bubble",
+     "quick"
+    ],
+    "maximum_length": 256
+   },
+   "value": "quick",
+   "argv": [
+    "--sort",
+    "quick"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 0.05,
+   "argv": [
+    "--delay",
+    "0.05"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 0.0,
+   "argv": [
+    "--delay",
+    "0.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 2.0,
+   "argv": [
+    "--delay",
+    "2.0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 5e-05,
+   "argv": [
+    "--delay",
+    "5e-05"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 1.25,
+   "argv": [
+    "--delay",
+    "1.25"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 0.1,
+   "argv": [
+    "--delay",
+    "0.1"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "delay",
+    "type": "float",
+    "default": 0.05,
+    "description": "Seconds to pause after each drawn sorting frame.",
+    "restart_required": true,
+    "cli_flag": "--delay",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0.0,
+    "maximum": 2.0
+   },
+   "value": 0.0001,
+   "argv": [
+    "--delay",
+    "0.0001"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "seed",
+    "type": "int",
+    "default": 0,
+    "description": "Random seed; use the same value to reproduce generated arrays.",
+    "restart_required": true,
+    "cli_flag": "--seed",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 2147483647
+   },
+   "value": 0,
+   "argv": [
+    "--seed",
+    "0"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "seed",
+    "type": "int",
+    "default": 0,
+    "description": "Random seed; use the same value to reproduce generated arrays.",
+    "restart_required": true,
+    "cli_flag": "--seed",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 2147483647
+   },
+   "value": 2147483647,
+   "argv": [
+    "--seed",
+    "2147483647"
+   ]
+  },
+  {
+   "parameter": {
+    "name": "max_runs",
+    "type": "int",
+    "default": 0,
+    "description": "Stop after this many sorts; zero means continuous where supported.",
+    "restart_required": true,
+    "cli_flag": "--max-runs",
+    "negative_cli_flag": null,
+    "true_cli_value": null,
+    "minimum": 0,
+    "maximum": 1000000
+   },
+   "value": 0,
+   "argv": [
+    "--max-runs",
+    "0"
+   ]
+  }
+ ]
+}

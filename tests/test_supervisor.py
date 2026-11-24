@@ -172,6 +172,67 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(status["last_exit_code"], 7)
         self.assertLessEqual(len(status["last_error"]), 500)
 
+    def test_launches_take_matrix_values_from_the_shared_settings(self) -> None:
+        # web-control-refactor D-035: every launch, the boot display included,
+        # reads the provider; status reports the values this run used.
+        stored = build_default_registry().get("sorts").validate_matrix_values(None)
+        stored["led_brightness"] = 40
+        reads: list[int] = []
+
+        def provider() -> dict:
+            reads.append(1)
+            return dict(stored)
+
+        self.supervisor._matrix_settings = provider
+        self.supervisor.start("system_info")
+        argv, _kwargs = self.factory.calls[0]
+        self.assertEqual(argv[argv.index("--led-brightness") + 1], "40")
+        self.assertEqual(self.supervisor.status()["matrix_settings"], stored)
+        stored["led_brightness"] = 70
+        self.supervisor.start("sorts")
+        argv, _kwargs = self.factory.calls[1]
+        self.assertEqual(argv[argv.index("--led-brightness") + 1], "70")
+        self.assertEqual(len(reads), 2)
+        self.supervisor.stop()
+        self.assertEqual(self.supervisor.status()["matrix_settings"], {})
+
+    def test_without_a_provider_launches_use_the_code_defaults(self) -> None:
+        self.supervisor.start("sorts")
+        argv, _kwargs = self.factory.calls[0]
+        self.assertEqual(argv[argv.index("--led-gpio-mapping") + 1], "adafruit-hat")
+
+    def test_an_incomplete_provider_value_set_refuses_the_launch(self) -> None:
+        self.supervisor._matrix_settings = lambda: {"led_rows": 64}
+        with self.assertRaisesRegex(ValidationError, "missing matrix settings"):
+            self.supervisor.start("sorts")
+        self.assertEqual(self.factory.calls, [])
+
+    def test_last_visualization_survives_stop_and_failure(self) -> None:
+        status = self.supervisor.status()
+        self.assertIsNone(status["last_visualization_id"])
+        self.supervisor.start("sorts")
+        self.factory.processes[0].returncode = 3
+        failed = self.supervisor.status()
+        self.assertEqual(failed["state"], "failed")
+        self.assertIsNone(failed["visualization_id"])
+        self.assertEqual(failed["last_visualization_id"], "sorts")
+        self.supervisor.stop()
+        self.assertEqual(self.supervisor.status()["last_visualization_id"], "sorts")
+
+    def test_a_spawn_failure_is_reported_against_the_new_program(self) -> None:
+        # Review finding 1: the pages read last_visualization_id to place a failure.
+        self.supervisor.start("graph_traversal")
+
+        def refuse(*_args, **_kwargs):
+            raise FileNotFoundError("no interpreter")
+
+        self.supervisor._process_factory = refuse
+        with self.assertRaisesRegex(RuntimeError, "launch failed"):
+            self.supervisor.start("sorts")
+        status = self.supervisor.status()
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(status["last_visualization_id"], "sorts")
+
     def test_unreaped_child_is_retained_as_owner(self) -> None:
         running = self.supervisor.start("fft")
         process = self.factory.processes[0]

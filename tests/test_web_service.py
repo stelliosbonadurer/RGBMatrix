@@ -19,10 +19,14 @@ from matrix_controller.bluetooth import (
     BluetoothDevice,
     FakeBluetoothBackend,
 )
+from matrix_controller.matrix_settings import MatrixSettingsStore, config_matrix_values
 from matrix_controller.presets import MAX_PRESETS, PresetStore
 from matrix_controller.registry import build_default_registry
+from matrix_controller.supervisor import VisualizationSupervisor
 from matrix_controller.runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
 from matrix_controller.web_service import (
+    PAGE_CONTENT_SECURITY_POLICY,
+    STATIC_ASSETS,
     _is_loopback_address,
     build_handler,
     validate_launch_structure,
@@ -171,47 +175,66 @@ class WebServiceTests(unittest.TestCase):
         with urllib.request.urlopen(self.base_url + path, timeout=2) as response:
             return response.status, response.headers, response.read().decode("utf-8")
 
-    def test_control_page_and_assets_are_served(self) -> None:
+    def status_of(self, path: str) -> int:
+        try:
+            with urllib.request.urlopen(self.base_url + path, timeout=2) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            error.close()
+            return error.code
+
+    def test_home_and_program_pages_are_served_with_the_page_policy(self) -> None:
         status, headers, body = self.request_raw("/")
         self.assertEqual(status, 200)
         self.assertEqual(headers.get_content_type(), "text/html")
-        self.assertIn("RGB Matrix Control", body)
-        self.assertIn('id="visualization-grid"', body)
-        self.assertIn('id="quit-button"', body)
-        self.assertIn("default-src 'self'", headers["Content-Security-Policy"])
+        self.assertIn('id="program-list"', body)
+        self.assertIn('id="matrix-settings"', body)
+        self.assertIn('src="/static/js/home.js"', body)
+        self.assertEqual(headers["Content-Security-Policy"], PAGE_CONTENT_SECURITY_POLICY)
 
-        css_status, css_headers, css = self.request_raw("/static/control.css")
-        self.assertEqual(css_status, 200)
-        self.assertEqual(css_headers.get_content_type(), "text/css")
-        self.assertIn(".visualization-grid", css)
+        # The fake registry lists only fft (D-033: any registered ID, nothing else).
+        status, headers, body = self.request_raw("/programs/fft")
+        self.assertEqual(status, 200)
+        self.assertIn('id="bottom-action"', body)
+        self.assertIn('id="top-action"', body)
+        self.assertIn('src="/static/js/program.js"', body)
+        self.assertEqual(headers["Content-Security-Policy"], PAGE_CONTENT_SECURITY_POLICY)
 
-        js_status, js_headers, script = self.request_raw("/static/control.js")
-        self.assertEqual(js_status, 200)
-        self.assertEqual(js_headers.get_content_type(), "text/javascript")
-        self.assertIn("/api/v1/visualizations", script)
-        self.assertIn("/api/v1/run", script)
-        self.assertIn("/api/v1/stop", script)
-        self.assertIn("createParameterField", script)
-        self.assertIn("configureGraphTraversalForm", script)
-        self.assertIn("/config/fft", script)
+    def test_unknown_programs_and_retired_pages_are_not_found(self) -> None:
+        for path in (
+            "/programs/sorts",  # real, but not in this fake registry
+            "/programs/",
+            "/programs/fft/",
+            "/programs/fft/extra",
+            "/programs/..%2Ffft",
+            "/programs/FFT",
+            "/config/fft",
+            "/static/control.js",
+            "/static/control.css",
+            "/static/fft-config.js",
+            "/static/home.html",
+            "/static/js/../app.css",
+            "/static/js/",
+            "/index.html",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.status_of(path), 404)
 
-        config_status, config_headers, config_page = self.request_raw("/config/fft")
-        self.assertEqual(config_status, 200)
-        self.assertEqual(config_headers.get_content_type(), "text/html")
-        self.assertIn("Music Controls", config_page)
-        self.assertIn('id="music-controls"', config_page)
-        self.assertIn("default-src 'self'", config_headers["Content-Security-Policy"])
+    def test_every_asset_has_its_type_and_no_store(self) -> None:
+        for path, (_filename, content_type) in STATIC_ASSETS.items():
+            with self.subTest(path=path):
+                status, headers, body = self.request_raw(path)
+                self.assertEqual(status, 200)
+                self.assertEqual(headers["Content-Type"], content_type)
+                self.assertEqual(headers["Cache-Control"], "no-store")
+                self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
+                self.assertTrue(body)
 
-        config_js_status, config_js_headers, config_script = self.request_raw(
-            "/static/fft-config.js"
-        )
-        self.assertEqual(config_js_status, 200)
-        self.assertEqual(config_js_headers.get_content_type(), "text/javascript")
-        self.assertIn("/api/v1/runtime", config_script)
-        self.assertIn("/api/v1/runtime/actions", config_script)
-        self.assertIn("/api/v1/pairing/exchange", config_script)
-        self.assertIn("X-RGB-Matrix-Session", config_script)
-        self.assertNotIn("sessionStorage", config_script)
+    def test_pairing_status_reports_whether_pairing_is_required(self) -> None:
+        status, body = self.request("/api/v1/pairing/status")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["authorized"])
+        self.assertTrue(body["pairing_required"])
 
     def test_read_endpoints_do_not_require_token(self) -> None:
         status, body = self.request("/api/v1/visualizations")
@@ -1203,6 +1226,307 @@ class BluetoothApiTests(unittest.TestCase):
             "/api/v1/network/forget", payload={"profile": "x"}, token=self.session
         )
         self.assertEqual(status, 403)
+
+
+
+class _SleepingProcess:
+    """A fake child that runs until the supervisor signals its group."""
+
+    def __init__(self, pid: int):
+        self.pid = pid
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0 if self.returncode is None else self.returncode
+
+
+class _ProcessFactory:
+    def __init__(self):
+        self.calls: list[list[str]] = []
+        self.processes: list[_SleepingProcess] = []
+
+    def __call__(self, argv, **_kwargs):
+        process = _SleepingProcess(2000 + len(self.processes))
+        self.calls.append(list(argv))
+        self.processes.append(process)
+        return process
+
+    def signal(self, group_id: int, _signum: int) -> None:
+        for process in self.processes:
+            if process.pid == group_id:
+                process.returncode = 0
+
+
+class MatrixSettingsApiTests(unittest.TestCase):
+    """M4 criterion 6 over HTTP, with pairing still required (the code default)."""
+
+    request = WebServiceTests.request
+    error = PresetApiTests.error
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.path = Path(self.directory.name) / "matrix-settings.json"
+        self.config_values = config_matrix_values({"led_gpio_mapping": "adafruit-hat-pwm"})
+        self.store = MatrixSettingsStore(self.path, config_values=self.config_values)
+        self.server = self.serve(self.store)
+        _, paired = self.request("/api/v1/pairing/exchange", payload={"code": "012345"})
+        self.session = paired["token"]
+
+    def serve(self, store):
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            build_handler(
+                FakeSupervisor(),
+                api_token="secret-token",
+                network_client=FakeNetworkClient(),
+                pairing_manager=PairingManager(
+                    "012345", token_factory=lambda: "temporary-session-token-with-128-bits"
+                ),
+                matrix_settings=store,
+            ),
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop() -> None:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(stop)
+        host, port = server.server_address
+        self.base_url = f"http://{host}:{port}"
+        return server
+
+    def put(self, payload, **kwargs):
+        return self.request("/api/v1/matrix-settings", payload=payload, method="PUT", **kwargs)
+
+    def test_reading_is_public_and_starts_from_the_config(self) -> None:
+        status, body = self.request("/api/v1/matrix-settings")
+        self.assertEqual(status, 200)
+        self.assertEqual((body["revision"], body["source"]), (0, "config"))
+        self.assertEqual(body["values"], self.config_values)
+        self.assertEqual(len(body["parameters"]), 18)
+        self.assertIn("cli_flag", body["parameters"][0])
+
+    def test_saving_needs_control_access_and_the_current_revision(self) -> None:
+        values = {**self.config_values, "led_brightness": 40}
+        status, body = self.error(
+            "/api/v1/matrix-settings", payload={"expected_revision": 0, "values": values}, method="PUT"
+        )
+        self.assertEqual(status, 401)
+        self.assertFalse(self.path.exists())
+        status, body = self.put({"expected_revision": 0, "values": values}, token=self.session)
+        self.assertEqual((status, body["revision"], body["source"]), (200, 1, "stored"))
+        status, body = self.error(
+            "/api/v1/matrix-settings",
+            payload={"expected_revision": 0, "values": values},
+            method="PUT",
+            token=self.session,
+        )
+        self.assertEqual((status, body["code"], body["current_revision"]), (409, "revision_conflict", 1))
+        status, body = self.error(
+            "/api/v1/matrix-settings",
+            payload={"expected_revision": 1, "values": {"led_rows": 64}},
+            method="PUT",
+            token=self.session,
+        )
+        self.assertEqual((status, body["code"]), (400, "invalid_matrix_settings"))
+
+    def test_an_unusable_file_is_reported_and_kept(self) -> None:
+        self.path.write_text("{")
+        status, body = self.request("/api/v1/matrix-settings")
+        self.assertEqual(status, 200)
+        self.assertTrue(body["error"])
+        self.assertEqual(body["values"], self.config_values)
+        status, body = self.error(
+            "/api/v1/matrix-settings",
+            payload={"expected_revision": 0, "values": self.config_values},
+            method="PUT",
+            token=self.session,
+        )
+        self.assertEqual((status, body["code"]), (503, "matrix_settings_unavailable"))
+        self.assertEqual(self.path.read_text(), "{")
+
+    def test_without_a_store_the_routes_are_unavailable(self) -> None:
+        self.serve(None)
+        status, body = self.error("/api/v1/matrix-settings")
+        self.assertEqual((status, body["code"]), (503, "matrix_settings_unavailable"))
+
+
+class OpenAccessTests(unittest.TestCase):
+    """M4 criteria 6, 7, and 9 with pairing switched off (D-035, D-036)."""
+
+    request = WebServiceTests.request
+    error = PresetApiTests.error
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        state = Path(self.directory.name)
+        registry = build_default_registry()
+        self.matrix = MatrixSettingsStore(
+            state / "matrix-settings.json",
+            config_values=config_matrix_values({"led_gpio_mapping": "adafruit-hat-pwm"}),
+        )
+        self.factory = _ProcessFactory()
+        self.supervisor = VisualizationSupervisor(
+            registry,
+            python_executable="/fixed/python",
+            process_factory=self.factory,
+            group_signaler=self.factory.signal,
+            process_group_lookup=lambda pid: pid,
+            matrix_settings=self.matrix.effective_values,
+        )
+        self.network = FakeNetworkClient()
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            build_handler(
+                self.supervisor,
+                api_token="secret-token",
+                network_client=self.network,
+                pairing_manager=PairingManager("012345"),
+                preset_store=PresetStore(
+                    state / "fft-presets.json",
+                    validate_parameters=registry.get("fft").validate_parameters,
+                    validate_structure=validate_launch_structure,
+                ),
+                bluetooth=BluetoothController(FakeBluetoothBackend([]), timer_factory=None),
+                matrix_settings=self.matrix,
+                require_pairing=False,
+            ),
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        self.base_url = f"http://{host}:{port}"
+
+    def tearDown(self) -> None:
+        self.supervisor.stop()
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+    def save_matrix(self, **changes) -> dict:
+        _, current = self.request("/api/v1/matrix-settings")
+        _, body = self.request(
+            "/api/v1/matrix-settings",
+            payload={"expected_revision": current["revision"], "values": {**current["values"], **changes}},
+            method="PUT",
+        )
+        return body
+
+    def test_requests_without_credentials_control_visualizations(self) -> None:
+        status, body = self.request("/api/v1/pairing/status")
+        self.assertEqual(
+            (status, body["authorized"], body["pairing_required"], body["temporary_session"]),
+            (200, True, False, False),
+        )
+        status, body = self.request("/api/v1/run", payload={"visualization_id": "sorts", "parameters": {}})
+        self.assertEqual((status, body["visualization_id"]), (200, "sorts"))
+        self.assertEqual(self.request("/api/v1/runtime")[0], 200)
+        self.assertEqual(self.request("/api/v1/stop", payload={})[0], 200)
+        status, preset = self.request(
+            "/api/v1/presets",
+            payload={"name": "Open", "structure": WebServiceTests._structure_document()},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(self.request("/api/v1/presets")[0], 200)
+        self.assertEqual(self.request("/api/v1/bluetooth")[0], 200)
+        status, body = self.request("/api/v1/bluetooth/actions", payload={"action": "window.open"})
+        self.assertEqual(status, 200)
+        self.request("/api/v1/bluetooth/actions", payload={"action": "window.close"})
+        self.assertEqual(self.save_matrix(led_brightness=40)["revision"], 1)
+        status, _ = self.request(
+            f"/api/v1/presets/{preset['preset_id']}", payload={"expected_revision": 1}, method="DELETE"
+        )
+        self.assertEqual(status, 200)
+
+    def test_network_administration_gains_no_authority(self) -> None:
+        # The helper checks the admin token itself; open access must not supply it.
+        self.request("/api/v1/network/scan")
+        self.request("/api/v1/network/provision", payload={"ssid": "home", "password": "secret"})
+        self.assertEqual([token for _operation, _payload, token in self.network.requests], [None, None])
+        self.request("/api/v1/network/scan", token="secret-token")
+        self.assertEqual(self.network.requests[-1][2], "secret-token")
+
+    def test_cross_site_mutations_are_refused(self) -> None:
+        cases = (
+            ("POST", "/api/v1/run", {"visualization_id": "sorts", "parameters": {}}),
+            ("POST", "/api/v1/stop", {}),
+            ("POST", "/api/v1/bluetooth/actions", {"action": "window.open"}),
+            ("POST", "/api/v1/presets", {"name": "x", "structure": {}}),
+            ("POST", "/api/v1/pairing/exchange", {"code": "012345"}),
+            ("POST", "/api/v1/network/provision", {"ssid": "home"}),
+            ("PUT", "/api/v1/matrix-settings", {"expected_revision": 0, "values": {}}),
+            ("PUT", "/api/v1/presets/0000000000000000", {}),
+            ("DELETE", "/api/v1/presets/0000000000000000", {}),
+            ("PATCH", "/api/v1/runtime", {}),
+        )
+        for origin in ("http://example.invalid", "null", self.base_url.replace("http:", "https:")):
+            for method, path, payload in cases:
+                with self.subTest(origin=origin, method=method, path=path):
+                    status, body = self.error(
+                        path, payload=payload, method=method, headers={"Origin": origin}
+                    )
+                    self.assertEqual((status, body["error"]), (403, "cross-site requests are refused"))
+        self.assertEqual(self.factory.calls, [])
+        self.assertEqual(self.network.requests, [])
+        self.assertEqual(self.matrix.snapshot()["revision"], 0)
+        status, _ = self.request(
+            "/api/v1/run",
+            payload={"visualization_id": "sorts", "parameters": {}},
+            headers={"Origin": self.base_url},
+        )
+        self.assertEqual(status, 200)
+
+    def test_launch_parameters_refuse_matrix_settings_by_name(self) -> None:
+        status, body = self.error(
+            "/api/v1/run", payload={"visualization_id": "sorts", "parameters": {"led_rows": 32}}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("led_rows", body["error"])
+        self.assertEqual(self.factory.calls, [])
+        status, body = self.error(
+            "/api/v1/presets",
+            payload={
+                "name": "Bright",
+                "parameters": {"led_brightness": 60},
+                "structure": WebServiceTests._structure_document(),
+            },
+        )
+        self.assertEqual((status, body["code"]), (400, "invalid_preset"))
+        self.assertIn("led_brightness", body["error"])
+
+    def test_saved_matrix_settings_apply_at_the_next_launch(self) -> None:
+        self.save_matrix(led_brightness=40)
+        self.request("/api/v1/run", payload={"visualization_id": "sorts", "parameters": {}})
+        argv = self.factory.calls[-1]
+        self.assertEqual(argv[argv.index("--led-brightness") + 1], "40")
+        self.assertEqual(argv[argv.index("--led-gpio-mapping") + 1], "adafruit-hat-pwm")
+        _, status = self.request("/api/v1/status")
+        self.assertEqual(status["matrix_settings"]["led_brightness"], 40)
+        self.assertEqual(status["last_visualization_id"], "sorts")
+        self.save_matrix(led_brightness=70)
+        _, status = self.request("/api/v1/status")
+        self.assertEqual(status["matrix_settings"]["led_brightness"], 40)  # running keeps its values
+        self.request("/api/v1/run", payload={"visualization_id": "sorts", "parameters": {}})
+        argv = self.factory.calls[-1]
+        self.assertEqual(argv[argv.index("--led-brightness") + 1], "70")
+
+    def test_visualization_list_carries_no_matrix_settings(self) -> None:
+        _, body = self.request("/api/v1/visualizations")
+        by_id = {item["id"]: item for item in body["visualizations"]}
+        self.assertEqual(by_id["system_info"]["parameters"], [])
+        for item in body["visualizations"]:
+            for parameter in item["parameters"]:
+                with self.subTest(program=item["id"], parameter=parameter["name"]):
+                    self.assertFalse(parameter["name"].startswith("led_"))
+                    self.assertTrue(parameter["cli_flag"].startswith("--"))
 
 
 if __name__ == "__main__":

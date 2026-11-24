@@ -80,11 +80,31 @@ def _with_defaults(
     )
 
 
+_MATRIX_NAMES = frozenset(parameter.name for parameter in MATRIX_PARAMETERS)
+
+
+def _program_parameters(
+    parameters: tuple[ParameterSpec, ...],
+    defaults: Mapping[str, Any],
+) -> tuple[ParameterSpec, ...]:
+    """Return a program's own options with configured defaults (D-035).
+
+    The shared matrix parameters are carried separately as ``matrix_parameters``.
+    """
+
+    own = tuple(parameter for parameter in parameters if parameter.name not in _MATRIX_NAMES)
+    return _with_defaults(own, defaults)
+
+
 def build_default_registry(
     workspace_root: Path | None = None,
     parameter_defaults: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> Registry:
-    """Build the initial product allowlist without importing either application."""
+    """Build the initial product allowlist without importing either application.
+
+    ``parameter_defaults`` holds each program's own configured defaults. Matrix
+    values never come from here; a launch supplies them (D-035).
+    """
 
     root = workspace_root or Path(__file__).resolve().parent.parent
     defaults = parameter_defaults or {}
@@ -96,11 +116,9 @@ def build_default_registry(
                 description="Shows the Wi-Fi name, controller address, and pairing code.",
                 script_path=root / "my_programs" / "system_info.py",
                 working_directory=root / "my_programs",
-                parameters=_with_defaults(
-                    MATRIX_PARAMETERS,
-                    defaults.get("system_info", {}),
-                ),
+                parameters=_program_parameters((), defaults.get("system_info", {})),
                 supports_live_control=False,
+                matrix_parameters=MATRIX_PARAMETERS,
             ),
             VisualizationSpec(
                 visualization_id="fft",
@@ -108,9 +126,10 @@ def build_default_registry(
                 description="Real-time audio spectrum visualization.",
                 script_path=root / "my_programs" / "fft_program" / "main.py",
                 working_directory=root / "my_programs" / "fft_program",
-                parameters=_with_defaults(FFT_PARAMETERS, defaults.get("fft", {})),
+                parameters=_program_parameters(FFT_PARAMETERS, defaults.get("fft", {})),
                 requires_audio=True,
                 supports_live_control=True,
+                matrix_parameters=MATRIX_PARAMETERS,
             ),
             VisualizationSpec(
                 visualization_id="sorts",
@@ -118,8 +137,9 @@ def build_default_registry(
                 description="Animated insertion, selection, bubble, and quick sorts.",
                 script_path=root / "my_programs" / "visualize_sorts.py",
                 working_directory=root / "my_programs",
-                parameters=_with_defaults(SORT_PARAMETERS, defaults.get("sorts", {})),
+                parameters=_program_parameters(SORT_PARAMETERS, defaults.get("sorts", {})),
                 supports_live_control=False,
+                matrix_parameters=MATRIX_PARAMETERS,
             ),
             VisualizationSpec(
                 visualization_id="graph_traversal",
@@ -132,12 +152,13 @@ def build_default_registry(
                     root / "my_programs" / "dsa_visualizations" / "graph_traversal.py"
                 ),
                 working_directory=root / "my_programs" / "dsa_visualizations",
-                parameters=_with_defaults(
+                parameters=_program_parameters(
                     GRAPH_TRAVERSAL_PARAMETERS,
                     defaults.get("graph_traversal", {}),
                 ),
                 supports_live_control=False,
                 parameter_validator=_validate_graph_traversal,
+                matrix_parameters=MATRIX_PARAMETERS,
             ),
             VisualizationSpec(
                 visualization_id="master_theorem",
@@ -147,11 +168,12 @@ def build_default_registry(
                     root / "my_programs" / "dsa_visualizations" / "master_theorem.py"
                 ),
                 working_directory=root / "my_programs" / "dsa_visualizations",
-                parameters=_with_defaults(
+                parameters=_program_parameters(
                     MASTER_THEOREM_PARAMETERS,
                     defaults.get("master_theorem", {}),
                 ),
                 supports_live_control=False,
+                matrix_parameters=MATRIX_PARAMETERS,
             ),
         )
     )

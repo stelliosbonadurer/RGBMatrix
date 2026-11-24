@@ -129,8 +129,16 @@ class PresetStoreTests(unittest.TestCase):
             {"name": "Defaults", "structure": structure_document()}
         )
         self.assertEqual(created["parameters"], {})
-        created = self._create("Two", parameters={"led_brightness": 60, "gradient": True})
-        self.assertEqual(created["parameters"], {"led_brightness": 60, "gradient": True})
+        created = self._create("Two", parameters={"theme": "warm", "gradient": True})
+        self.assertEqual(created["parameters"], {"theme": "warm", "gradient": True})
+
+    def test_matrix_settings_are_not_preset_parameters(self) -> None:
+        # web-control-refactor D-035: presets hold FFT launch options only.
+        with self.assertRaises(PresetError) as caught:
+            self._create("Bright", parameters={"led_brightness": 60})
+        self.assertEqual(caught.exception.code, "invalid_preset")
+        self.assertIn("led_brightness", str(caught.exception))
+        self.assertFalse(self.path.exists())
 
     def test_store_survives_a_new_instance_with_mode_0600(self) -> None:
         created = self._create()
