@@ -23,7 +23,6 @@ if str(FFT_ROOT) not in sys.path:
     sys.path.insert(0, str(FFT_ROOT))
 
 from config import Settings  # noqa: E402
-from config.presets import get_preset  # noqa: E402
 from config.settings import SensitivitySettings, load_settings  # noqa: E402
 from config.weighting import WeightPointsError, legacy_weight_points  # noqa: E402
 from runtime_control import FftRuntimeController  # noqa: E402
@@ -260,17 +259,6 @@ class SettingsFileTests(unittest.TestCase):
         self.assertIn("low_freq_weight key(s) were ignored", output)
         with self.assertRaises(WeightPointsError):
             self._load({"weight_points": []})
-
-    def test_built_in_presets_use_points(self) -> None:
-        # Only "default" constructs today: the others set the read-only
-        # zoom_min_freq property (pre-existing, parked in the M2 log).
-        self.assertEqual(
-            get_preset("default").sensitivity.weight_points, legacy_weight_points()
-        )
-        source = (FFT_ROOT / "config" / "presets.py").read_text()
-        self.assertNotIn(".low_freq_weight", source)
-        self.assertNotIn(".high_freq_weight", source)
-        self.assertEqual(source.count("weight_points = legacy_weight_points("), 4)
 
 
 if __name__ == "__main__":

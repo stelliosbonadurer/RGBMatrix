@@ -12,7 +12,7 @@ fft_program/
 ├── structural_control.py   # structure.set validation, compile, and activation
 ├── config/
 │   ├── settings.py         # Typed application settings
-│   └── presets.py          # Named preset configurations
+│   └── weighting.py        # Per-layer weight-point helpers
 ├── core/
 │   ├── analysis_plan.py   # Immutable FFT/projection plan compilation
 │   ├── audio.py            # Capture and bounded analysis worker

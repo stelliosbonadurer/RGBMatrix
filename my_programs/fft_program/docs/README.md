@@ -92,7 +92,7 @@ to quit a direct run.
 ```text
 fft_program/
 ├── main.py              # Entry point, launch structure, and render loop
-├── config/              # Settings and presets
+├── config/              # Settings and weight-point helpers
 │   └── settings.py      # Typed application settings
 ├── core/                # Audio processing, scaling, matrix control
 │   ├── audio.py         # Capture and bounded FFT-analysis worker

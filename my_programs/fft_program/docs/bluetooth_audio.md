@@ -27,6 +27,37 @@ When configuration changes, WirePlumber restarts. That restart normally drops th
 phone's A2DP stream for roughly 5–50 seconds. If it does not return, reselect the Pi
 as the phone's active media output; do not restart the matrix service.
 
+## Pair and manage phones from the web service
+
+The web service can do the pairing below without SSH. A paired phone session can
+call these routes; the Music FFT page gets controls for them in a later
+web-control-refactor milestone (M5). Until then, use the API directly or the SSH
+procedure.
+
+- `GET /api/v1/bluetooth` returns the adapter state, the pairing window, any pending
+  pairing request, and the paired phones under opaque `device_id`s. Addresses are
+  never shown.
+- `POST /api/v1/bluetooth/actions` with `{"action": "window.open"}` makes the Pi
+  discoverable and pairable for 120 seconds. When a phone asks to pair,
+  `pending_request` shows its name and six-digit code. Check that the code matches
+  the phone, then send `request.confirm` (or `request.reject`) with its
+  `request_id`.
+- Then send `device.trust` and `device.connect` with the phone's `device_id`.
+  `device.disconnect`, `device.untrust`, and `device.forget` (with
+  `"confirm": true`) undo them. `window.close` ends the window early. Closing
+  leaves the adapter's pairable setting and BlueZ timeouts as the window found
+  them.
+- `GET /api/v1/audio/sources` reports whether the loopback bridge is loaded, whether
+  a paired phone is connected and streaming, and which source the running FFT uses.
+  To change the source, relaunch FFT with `audio_source`.
+
+A phone stays untrusted until you trust it. While the window is open, the
+service's agent refuses media connections from untrusted phones; outside the window,
+whatever agent the Pi already had (for example the desktop panel's) answers. If the
+service can't reach BlueZ, the status says why and the
+actions return 503; the rest of the web service keeps working. This path has not yet
+been tested on the Pi.
+
 ## Pair one phone over SSH
 
 Keep identifiers on screen only. Do not paste the phone alias or address into

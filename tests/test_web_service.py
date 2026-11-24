@@ -2,16 +2,31 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import tempfile
 import threading
 import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 from types import SimpleNamespace
 
+from matrix_controller.bluetooth import (
+    BluetoothController,
+    BluetoothDevice,
+    FakeBluetoothBackend,
+)
+from matrix_controller.presets import MAX_PRESETS, PresetStore
+from matrix_controller.registry import build_default_registry
 from matrix_controller.runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
-from matrix_controller.web_service import _is_loopback_address, build_handler
+from matrix_controller.web_service import (
+    _is_loopback_address,
+    build_handler,
+    validate_launch_structure,
+)
 from matrix_controller.pairing import PairingManager
 
 
@@ -673,6 +688,521 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 202)
         self.assertEqual(body["job_id"], "job-1")
         self.assertEqual(self.network.requests[-1], ("provision", payload, "setup-token"))
+
+    def test_preset_routes_without_a_store_are_unavailable(self) -> None:
+        for method, path in (("GET", "/api/v1/presets"), ("POST", "/api/v1/presets")):
+            with self.subTest(method=method), self.assertRaises(urllib.error.HTTPError) as caught:
+                self.request(
+                    path,
+                    payload={} if method == "POST" else None,
+                    method=method,
+                    token="secret-token",
+                )
+            self.assertEqual(caught.exception.code, 503)
+            self.assertEqual(json.load(caught.exception)["code"], "preset_store_unavailable")
+            caught.exception.close()
+
+    def test_endpoint_list_names_the_preset_and_bluetooth_routes(self) -> None:
+        _, body = self.request("/api/v1")
+        for endpoint in (
+            "GET /api/v1/presets",
+            "GET /api/v1/presets/{preset_id}",
+            "POST /api/v1/presets",
+            "PUT /api/v1/presets/{preset_id}",
+            "DELETE /api/v1/presets/{preset_id}",
+            "GET /api/v1/bluetooth",
+            "POST /api/v1/bluetooth/actions",
+            "GET /api/v1/audio/sources",
+        ):
+            self.assertIn(endpoint, body["endpoints"])
+
+    def test_bluetooth_without_a_controller_is_unavailable(self) -> None:
+        status, body = self.request("/api/v1/bluetooth", token="secret-token")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["available"], False)
+        self.assertEqual(body["reason"], "Bluetooth control is not configured")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(
+                "/api/v1/bluetooth/actions",
+                payload={"action": "window.open"},
+                token="secret-token",
+            )
+        self.assertEqual(caught.exception.code, 503)
+        self.assertEqual(json.load(caught.exception)["code"], "bluetooth_unavailable")
+        caught.exception.close()
+        status, body = self.request("/api/v1/audio/sources", token="secret-token")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["sources"][1]["connected"], None)
+
+
+class PresetApiTests(unittest.TestCase):
+    """M3 criteria 2-4 and 9 over HTTP, with a real store in a temp directory."""
+
+    request = WebServiceTests.request
+    _structure_document = staticmethod(WebServiceTests._structure_document)
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.preset_path = Path(self.directory.name) / "fft-presets.json"
+        self.fft = build_default_registry().get("fft")
+        self.store = PresetStore(
+            self.preset_path,
+            validate_parameters=self.fft.validate_parameters,
+            validate_structure=validate_launch_structure,
+        )
+        self.supervisor = FakeSupervisor()
+        self.pairing = PairingManager(
+            "012345",
+            token_factory=lambda: "temporary-session-token-with-128-bits",
+        )
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            build_handler(
+                self.supervisor,
+                api_token="secret-token",
+                network_client=FakeNetworkClient(),
+                pairing_manager=self.pairing,
+                preset_store=self.store,
+            ),
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        self.base_url = f"http://{host}:{port}"
+        _, paired = self.request("/api/v1/pairing/exchange", payload={"code": "012345"})
+        self.session = paired["token"]
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        self.directory.cleanup()
+
+    def error(self, path: str, **kwargs) -> tuple[int, dict]:
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request(path, **kwargs)
+        try:
+            return caught.exception.code, json.load(caught.exception)
+        finally:
+            caught.exception.close()
+
+    def preset_payload(self, name: str = "Warm bass") -> dict:
+        return {
+            "name": name,
+            "parameters": {"theme": "warm", "audio_source": "bluetooth"},
+            "structure": self._structure_document(),
+        }
+
+    def test_paired_session_saves_loads_launches_edits_and_deletes(self) -> None:
+        status, created = self.request(
+            "/api/v1/presets", payload=self.preset_payload(), token=self.session
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(created["revision"], 1)
+        preset_id = created["preset_id"]
+
+        status, listing = self.request("/api/v1/presets", token=self.session)
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            listing["presets"],
+            [{"preset_id": preset_id, "name": "Warm bass", "revision": 1}],
+        )
+        self.assertEqual(listing["limits"]["max_presets"], MAX_PRESETS)
+
+        status, loaded = self.request(f"/api/v1/presets/{preset_id}", token=self.session)
+        self.assertEqual(status, 200)
+        self.assertEqual(loaded["parameters"], {"theme": "warm", "audio_source": "bluetooth"})
+
+        # The loaded pair goes to launch unchanged.
+        status, _ = self.request(
+            "/api/v1/run",
+            payload={
+                "visualization_id": "fft",
+                "parameters": loaded["parameters"],
+                "structure": loaded["structure"],
+            },
+            token=self.session,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(self.supervisor.started[-1], ("fft", loaded["parameters"]))
+        self.assertEqual(self.supervisor.start_kwargs[-1], {"structure": loaded["structure"]})
+
+        replacement = dict(self.preset_payload("Renamed"), expected_revision=1)
+        status, replaced = self.request(
+            f"/api/v1/presets/{preset_id}",
+            payload=replacement,
+            method="PUT",
+            token=self.session,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual((replaced["name"], replaced["revision"]), ("Renamed", 2))
+
+        before = self.preset_path.read_bytes()
+        for method, payload in (
+            ("PUT", replacement),
+            ("DELETE", {"expected_revision": 1}),
+        ):
+            with self.subTest(method=method):
+                status, body = self.error(
+                    f"/api/v1/presets/{preset_id}",
+                    payload=payload,
+                    method=method,
+                    token=self.session,
+                )
+                self.assertEqual(status, 409)
+                self.assertEqual(body["code"], "revision_conflict")
+                self.assertEqual(body["current_revision"], 2)
+        self.assertEqual(self.preset_path.read_bytes(), before)
+
+        status, deleted = self.request(
+            f"/api/v1/presets/{preset_id}",
+            payload={"expected_revision": 2},
+            method="DELETE",
+            token=self.session,
+        )
+        self.assertEqual((status, deleted), (200, {"deleted": True, "preset_id": preset_id}))
+        status, body = self.error(f"/api/v1/presets/{preset_id}", token=self.session)
+        self.assertEqual((status, body["code"]), (404, "preset_not_found"))
+
+    def test_rejections_carry_codes_and_leave_the_file_unchanged(self) -> None:
+        self.request("/api/v1/presets", payload=self.preset_payload(), token=self.session)
+        before = self.preset_path.read_bytes()
+        oversize = self._structure_document()
+        oversize["layers"][0]["settings"]["pad"] = ["x" * 250 for _ in range(32)]
+        # About 40 KB: over the 32 KB structure cap, under the 64 KB request cap.
+        oversize["layers"] = [oversize["layers"][0]] * 5
+        self.assertGreater(len(json.dumps(oversize)), MAX_LAUNCH_STRUCTURE_BYTES)
+        cases = {
+            "duplicate name": (dict(self.preset_payload("WARM BASS")), 409, "name_conflict"),
+            "empty name": (dict(self.preset_payload(" ")), 400, "invalid_preset"),
+            "unknown parameter": (
+                dict(self.preset_payload("x"), parameters={"zoom": 2}),
+                400,
+                "invalid_preset",
+            ),
+            "structure list": (dict(self.preset_payload("x"), structure=[]), 400, "invalid_preset"),
+            "structure over 32 KB": (
+                dict(self.preset_payload("x"), structure=oversize),
+                400,
+                "invalid_preset",
+            ),
+        }
+        for label, (payload, expected_status, code) in cases.items():
+            with self.subTest(label):
+                status, body = self.error("/api/v1/presets", payload=payload, token=self.session)
+                self.assertEqual((status, body["code"]), (expected_status, code))
+        for method, path in (
+            ("GET", "/api/v1/presets/0000000000000000"),
+            ("PUT", "/api/v1/presets/0000000000000000"),
+            ("DELETE", "/api/v1/presets/0000000000000000"),
+        ):
+            with self.subTest(method=method):
+                payload = None
+                if method == "PUT":
+                    payload = dict(self.preset_payload("y"), expected_revision=1)
+                elif method == "DELETE":
+                    payload = {"expected_revision": 1}
+                status, body = self.error(path, payload=payload, method=method, token=self.session)
+                self.assertEqual((status, body["code"]), (404, "preset_not_found"))
+        status, _ = self.error("/api/v1/presets/a/b", token=self.session)
+        self.assertEqual(status, 404)
+        self.assertEqual(self.preset_path.read_bytes(), before)
+
+    def test_the_33rd_preset_returns_limit_exceeded(self) -> None:
+        for index in range(MAX_PRESETS):
+            self.store.create({"name": f"Preset {index}", "structure": {}})
+        before = self.preset_path.read_bytes()
+        status, body = self.error(
+            "/api/v1/presets", payload=self.preset_payload("Extra"), token=self.session
+        )
+        self.assertEqual((status, body["code"]), (400, "limit_exceeded"))
+        self.assertEqual(self.preset_path.read_bytes(), before)
+
+    def test_a_corrupt_file_makes_every_route_unavailable(self) -> None:
+        self.preset_path.write_bytes(b'{"version": 9, "presets": []}')
+        for method, path, payload in (
+            ("GET", "/api/v1/presets", None),
+            ("GET", "/api/v1/presets/0000000000000000", None),
+            ("POST", "/api/v1/presets", self.preset_payload()),
+            ("PUT", "/api/v1/presets/0000000000000000", dict(self.preset_payload(), expected_revision=1)),
+            ("DELETE", "/api/v1/presets/0000000000000000", {"expected_revision": 1}),
+        ):
+            with self.subTest(method=method, path=path):
+                status, body = self.error(path, payload=payload, method=method, token=self.session)
+                self.assertEqual((status, body["code"]), (503, "preset_store_unavailable"))
+        self.assertEqual(self.preset_path.read_bytes(), b'{"version": 9, "presets": []}')
+
+    def test_authorization_and_cookie_origin(self) -> None:
+        for method, path, payload in (
+            ("GET", "/api/v1/presets", None),
+            ("GET", "/api/v1/presets/0000000000000000", None),
+            ("POST", "/api/v1/presets", self.preset_payload()),
+            ("PUT", "/api/v1/presets/0000000000000000", {}),
+            ("DELETE", "/api/v1/presets/0000000000000000", {}),
+        ):
+            with self.subTest(method=method, path=path):
+                status, _ = self.error(path, payload=payload, method=method)
+                self.assertEqual(status, 401)
+                status, _ = self.error(path, payload=payload, method=method, token="wrong")
+                self.assertEqual(status, 401)
+        self.assertFalse(self.preset_path.exists())
+
+        # The admin bearer token also passes control authorization.
+        status, created = self.request(
+            "/api/v1/presets", payload=self.preset_payload(), token="secret-token"
+        )
+        self.assertEqual(status, 201)
+
+        _, _, headers = self.request(
+            "/api/v1/pairing/exchange",
+            payload={"code": "012345"},
+            headers={"X-RGB-Matrix-Session": "cookie"},
+            include_headers=True,
+        )
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        path = f"/api/v1/presets/{created['preset_id']}"
+        status, _ = self.request(path, headers={"Cookie": cookie})
+        self.assertEqual(status, 200)  # reads need no Origin
+
+        replacement = dict(self.preset_payload("Cookie edit"), expected_revision=1)
+        for method, payload in (
+            ("POST", self.preset_payload("Other")),
+            ("PUT", replacement),
+            ("DELETE", {"expected_revision": 1}),
+        ):
+            target = "/api/v1/presets" if method == "POST" else path
+            for origin in (None, "http://example.invalid"):
+                with self.subTest(method=method, origin=origin):
+                    extra = {"Cookie": cookie}
+                    if origin:
+                        extra["Origin"] = origin
+                    status, _ = self.error(target, payload=payload, method=method, headers=extra)
+                    self.assertEqual(status, 403)
+        status, edited = self.request(
+            path,
+            payload=replacement,
+            method="PUT",
+            headers={"Cookie": cookie, "Origin": self.base_url},
+        )
+        self.assertEqual((status, edited["revision"]), (200, 2))
+        status, _ = self.request(
+            path,
+            payload={"expected_revision": 2},
+            method="DELETE",
+            headers={"Cookie": cookie, "Origin": self.base_url},
+        )
+        self.assertEqual(status, 200)
+
+        # Pairing still doesn't grant network administration.
+        status, _ = self.error(
+            "/api/v1/network/forget", payload={"profile": "x"}, token=self.session
+        )
+        self.assertEqual(status, 403)
+
+
+class BluetoothApiTests(unittest.TestCase):
+    """M3 criteria 5-9 over HTTP, with the fake backend."""
+
+    request = WebServiceTests.request
+    error = PresetApiTests.error
+
+    def setUp(self) -> None:
+        self.backend = FakeBluetoothBackend(
+            [
+                BluetoothDevice(
+                    "AA:BB:CC:DD:EE:01", "Pixel", paired=True, trusted=False, connected=False
+                )
+            ]
+        )
+        self.bluetooth = BluetoothController(self.backend, timer_factory=None)
+        self.supervisor = FakeSupervisor()
+        self.pairing = PairingManager(
+            "012345",
+            token_factory=lambda: "temporary-session-token-with-128-bits",
+        )
+        self.server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            build_handler(
+                self.supervisor,
+                api_token="secret-token",
+                network_client=FakeNetworkClient(),
+                pairing_manager=self.pairing,
+                bluetooth=self.bluetooth,
+            ),
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        self.base_url = f"http://{host}:{port}"
+        _, paired = self.request("/api/v1/pairing/exchange", payload={"code": "012345"})
+        self.session = paired["token"]
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+
+    def act(self, **payload) -> dict:
+        _, body = self.request("/api/v1/bluetooth/actions", payload=payload, token=self.session)
+        return body
+
+    def test_paired_session_pairs_trusts_and_forgets_a_phone(self) -> None:
+        status, body = self.request("/api/v1/bluetooth", token=self.session)
+        self.assertEqual((status, body["available"], body["window"]["open"]), (200, True, False))
+        phone_id = body["devices"][0]["device_id"]
+
+        body = self.act(action="window.open")
+        self.assertTrue(body["window"]["open"])
+        decision = self.backend.request_confirmation("AA:BB:CC:DD:EE:04", "New phone", 4321)
+        _, body = self.request("/api/v1/bluetooth", token=self.session)
+        pending = body["pending_request"]
+        self.assertEqual((pending["code"], pending["name"]), ("004321", "New phone"))
+        self.act(action="request.confirm", request_id=pending["request_id"])
+        self.assertEqual(decision.outcome, "accepted")
+
+        status, error = self.error(
+            "/api/v1/bluetooth/actions",
+            payload={"action": "request.confirm", "request_id": pending["request_id"]},
+            token=self.session,
+        )
+        self.assertEqual((status, error["code"]), (409, "stale_request"))
+
+        body = self.act(action="device.trust", device_id=phone_id)
+        self.assertEqual(body["devices"][0]["trusted"], True)
+        status, error = self.error(
+            "/api/v1/bluetooth/actions",
+            payload={"action": "device.forget", "device_id": phone_id, "confirm": False},
+            token=self.session,
+        )
+        self.assertEqual((status, error["code"]), (400, "confirmation_required"))
+        status, error = self.error(
+            "/api/v1/bluetooth/actions",
+            payload={"action": "device.connect", "device_id": "0" * 16},
+            token=self.session,
+        )
+        self.assertEqual((status, error["code"]), (404, "device_not_found"))
+        body = self.act(action="device.forget", device_id=phone_id, confirm=True)
+        self.assertEqual(body["devices"], [])
+        body = self.act(action="window.close")
+        self.assertFalse(body["window"]["open"])
+        self.assertNotIn("AA:BB", json.dumps(body))
+
+    def test_unavailable_backend(self) -> None:
+        self.backend.unavailable_reason = "BlueZ is not running"
+        status, body = self.request("/api/v1/bluetooth", token=self.session)
+        self.assertEqual((status, body["available"], body["reason"]), (200, False, "BlueZ is not running"))
+        status, error = self.error(
+            "/api/v1/bluetooth/actions", payload={"action": "window.open"}, token=self.session
+        )
+        self.assertEqual((status, error["code"]), (503, "bluetooth_unavailable"))
+        # Other routes still work.
+        status, _ = self.request("/api/v1/status")
+        self.assertEqual(status, 200)
+
+    def test_the_service_log_carries_no_address_code_name_or_id(self) -> None:
+        # Criterion 6: the access log (journald) sees every request line.
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            self.act(action="window.open")
+            self.backend.request_confirmation("AA:BB:CC:DD:EE:04", "New phone", 987123)
+            _, body = self.request("/api/v1/bluetooth", token=self.session)
+            request_id = body["pending_request"]["request_id"]
+            phone_id = next(d["device_id"] for d in body["devices"] if d["name"] == "Pixel")
+            self.act(action="request.confirm", request_id=request_id)
+            self.act(action="device.trust", device_id=phone_id)
+            self.error(
+                "/api/v1/bluetooth/actions",
+                payload={"action": "device.connect", "device_id": "0" * 16},
+                token=self.session,
+            )
+            self.backend.fail_with = "Failed"
+            self.error(
+                "/api/v1/bluetooth/actions",
+                payload={"action": "device.disconnect", "device_id": phone_id},
+                token=self.session,
+            )
+            self.backend.fail_with = None
+            self.act(action="window.close")
+        text = log.getvalue()
+        self.assertIn("POST /api/v1/bluetooth/actions", text)  # the log was captured
+        for secret in (
+            "AA:BB:CC:DD:EE",
+            "aa:bb:cc:dd:ee",
+            "AA_BB_CC_DD_EE",
+            "987123",
+            "New phone",
+            "Pixel",
+            phone_id,
+            request_id,
+        ):
+            self.assertNotIn(secret, text)
+
+    def test_unexpected_errors_return_a_fixed_body(self) -> None:
+        def broken():
+            raise KeyError("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_01")
+
+        self.backend.devices = broken
+        for method, path, payload in (
+            ("GET", "/api/v1/bluetooth", None),
+            ("GET", "/api/v1/audio/sources", None),
+            ("POST", "/api/v1/bluetooth/actions", {"action": "device.trust", "device_id": "0" * 16}),
+        ):
+            with self.subTest(path=path):
+                status, body = self.error(path, payload=payload, method=method, token=self.session)
+                self.assertEqual(
+                    (status, body),
+                    (500, {"error": "Bluetooth request failed", "code": "bluetooth_failed"}),
+                )
+
+    def test_source_catalog_reports_the_running_fft_source(self) -> None:
+        status, body = self.request("/api/v1/audio/sources", token=self.session)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["sources"][0], {"source_id": "usb-mic", "availability": "checked_at_launch"})
+        self.assertEqual(body["sources"][1]["connected"], False)
+        self.assertIsNone(body["active_source"])
+        self.supervisor.status = lambda: {
+            "state": "running",
+            "visualization_id": "fft",
+            "parameters": {"audio_source": "bluetooth"},
+        }
+        _, body = self.request("/api/v1/audio/sources", token=self.session)
+        self.assertEqual(body["active_source"], "bluetooth")
+
+    def test_authorization_and_cookie_origin(self) -> None:
+        for method, path, payload in (
+            ("GET", "/api/v1/bluetooth", None),
+            ("GET", "/api/v1/audio/sources", None),
+            ("POST", "/api/v1/bluetooth/actions", {"action": "window.open"}),
+        ):
+            with self.subTest(path=path):
+                status, _ = self.error(path, payload=payload, method=method)
+                self.assertEqual(status, 401)
+        _, _, headers = self.request(
+            "/api/v1/pairing/exchange",
+            payload={"code": "012345"},
+            headers={"X-RGB-Matrix-Session": "cookie"},
+            include_headers=True,
+        )
+        cookie = headers["Set-Cookie"].split(";", 1)[0]
+        status, _ = self.request("/api/v1/bluetooth", headers={"Cookie": cookie})
+        self.assertEqual(status, 200)
+        status, _ = self.error(
+            "/api/v1/bluetooth/actions",
+            payload={"action": "window.open"},
+            headers={"Cookie": cookie},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(self.backend.calls, [])
+        _, body = self.request(
+            "/api/v1/bluetooth/actions",
+            payload={"action": "window.open"},
+            headers={"Cookie": cookie, "Origin": self.base_url},
+        )
+        self.assertTrue(body["window"]["open"])
+        status, _ = self.error(
+            "/api/v1/network/forget", payload={"profile": "x"}, token=self.session
+        )
+        self.assertEqual(status, 403)
 
 
 if __name__ == "__main__":

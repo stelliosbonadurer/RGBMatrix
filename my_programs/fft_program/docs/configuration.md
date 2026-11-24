@@ -195,15 +195,12 @@ Then run with:
 sudo python main.py --settings=my_settings.json --led-rows=64 ...
 ```
 
-## Using Presets
+## Saved Presets
 
-Built-in presets are available in `config/presets.py`:
-
-- `default` - Balanced settings
-- `bluegrass` - Warm colors, acoustic frequency range
-- `edm` - Intense fire theme, heavy bass, overflow enabled
-- `classical` - Ocean theme, smooth movement, wide dynamics
-- `podcast` - Voice frequencies, simple green theme
+There are no built-in presets. The web control service stores named FFT presets on
+the Pi, each holding launch parameters and a full layer structure, and launches one
+through the normal `POST /api/v1/run`. See the controller's web-service operations
+guide for the `/api/v1/presets` contract.
 
 ## Multiple Standard Views
 

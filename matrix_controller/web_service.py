@@ -20,10 +20,19 @@ from urllib.parse import urlsplit
 
 from matrix_network import NetworkClient, NetworkClientError
 
+from .bluetooth import (
+    BluetoothController,
+    BluetoothError,
+    DbusBluetoothBackend,
+    audio_source_catalog,
+    unavailable_status,
+)
 from .boot_code import DEFAULT_CODE_FILE, ensure_boot_code
 from .controller_config import ControllerConfigError, load_controller_config
 from .pairing import PairingError, PairingManager
+from .presets import DEFAULT_PRESET_FILE, PresetError, PresetStore
 from .registry import build_default_registry
+from .runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
 from .schema import ValidationError
 from .supervisor import VisualizationSupervisor
 
@@ -159,6 +168,25 @@ def _bounded_runtime_value(value: Any, *, label: str, depth: int = 0) -> Any:
     raise ValidationError(f"{label} contains an unsupported JSON value")
 
 
+def validate_launch_structure(structure: Any) -> dict[str, Any]:
+    """Apply the launch bounds to a layer structure and return a bounded copy.
+
+    ``POST /api/v1/run`` and the preset store share this, so a saved preset can't
+    hold a structure that launch would refuse (web-control-refactor D-025). The
+    supervisor repeats the byte cap at its own boundary.
+    """
+
+    if not isinstance(structure, dict):
+        raise ValidationError("structure must be a JSON object")
+    bounded = _bounded_runtime_value(structure, label="structure")
+    encoded = json.dumps(bounded, separators=(",", ":"), allow_nan=False)
+    if len(encoded.encode("utf-8")) > MAX_LAUNCH_STRUCTURE_BYTES:
+        raise ValidationError(
+            f"structure must be at most {MAX_LAUNCH_STRUCTURE_BYTES} bytes"
+        )
+    return bounded
+
+
 def _parse_runtime_patch(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate the public atomic patch envelope without knowing visualization IDs."""
 
@@ -281,8 +309,14 @@ def build_handler(
     api_token: str | None,
     network_client: NetworkClient | None = None,
     pairing_manager: PairingManager,
+    preset_store: PresetStore | None = None,
+    bluetooth: BluetoothController | None = None,
 ) -> type[BaseHTTPRequestHandler]:
-    """Bind one supervisor and token policy to an HTTP handler class."""
+    """Bind one supervisor and token policy to an HTTP handler class.
+
+    Without ``preset_store`` the preset routes answer 503. Without ``bluetooth``
+    the Bluetooth status reports ``available: false`` and its actions answer 503.
+    """
 
     pairing = pairing_manager
 
@@ -330,6 +364,29 @@ def build_handler(
                     self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
                 else:
                     self._handle_runtime_snapshot()
+            elif path == "/api/v1/presets" or path.startswith("/api/v1/presets/"):
+                preset_id = self._preset_id_from_path(path)
+                if path != "/api/v1/presets" and preset_id is None:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                elif not self._is_control_authorized():
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                elif preset_id is None:
+                    self._handle_preset_request("list")
+                else:
+                    self._handle_preset_request("get", preset_id=preset_id)
+            elif path in {"/api/v1/bluetooth", "/api/v1/audio/sources"}:
+                if not self._is_control_authorized():
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                elif path == "/api/v1/bluetooth":
+                    self._send_bluetooth_result(
+                        lambda: bluetooth.status()
+                        if bluetooth is not None
+                        else unavailable_status("Bluetooth control is not configured")
+                    )
+                else:
+                    self._send_bluetooth_result(
+                        lambda: audio_source_catalog(supervisor.status(), bluetooth=bluetooth)
+                    )
             elif path == "/api/v1/pairing/status":
                 supplied_token = self._control_session_token()
                 self._send_json(
@@ -353,12 +410,20 @@ def build_handler(
                             "GET /api/v1/runtime",
                             "PATCH /api/v1/runtime",
                             "POST /api/v1/runtime/actions",
+                            "GET /api/v1/presets",
+                            "GET /api/v1/presets/{preset_id}",
+                            "GET /api/v1/bluetooth",
+                            "GET /api/v1/audio/sources",
                             "GET /api/v1/pairing/status",
                             "GET /api/v1/network/status",
                             "GET /setup",
                             "GET /config/fft",
                             "POST /api/v1/run",
                             "POST /api/v1/stop",
+                            "POST /api/v1/presets",
+                            "PUT /api/v1/presets/{preset_id}",
+                            "DELETE /api/v1/presets/{preset_id}",
+                            "POST /api/v1/bluetooth/actions",
                             "POST /api/v1/pairing/exchange",
                             "POST /api/v1/pairing/logout",
                             "POST /api/v1/network/provision",
@@ -464,6 +529,18 @@ def build_handler(
                     self._handle_runtime_command(command)
                     return
 
+                if path == "/api/v1/presets":
+                    self._handle_preset_request(
+                        "create",
+                        payload=self._read_json_object(),
+                        success_status=HTTPStatus.CREATED,
+                    )
+                    return
+
+                if path == "/api/v1/bluetooth/actions":
+                    self._handle_bluetooth_action(self._read_json_object())
+                    return
+
                 if path == "/api/v1/run":
                     payload = self._read_json_object()
                     visualization_id = payload.get("visualization_id")
@@ -476,15 +553,10 @@ def build_handler(
                             f"unknown run fields: {', '.join(sorted(unknown))}"
                         )
                     if "structure" in payload:
-                        structure = payload["structure"]
-                        if not isinstance(structure, dict):
-                            raise ValidationError("structure must be a JSON object")
                         result = supervisor.start(
                             visualization_id,
                             parameters,
-                            structure=_bounded_runtime_value(
-                                structure, label="structure"
-                            ),
+                            structure=validate_launch_structure(payload["structure"]),
                         )
                     else:
                         result = supervisor.start(visualization_id, parameters)
@@ -540,6 +612,120 @@ def build_handler(
                 self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
             except ValueError as exc:
                 self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+
+        def do_PUT(self) -> None:  # noqa: N802 - HTTP handler API name
+            """Replace one whole preset (D-025)."""
+
+            preset_id = self._preset_id_from_path(urlsplit(self.path).path)
+            if preset_id is None:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                return
+            if not self._authorize_control_mutation():
+                return
+            try:
+                payload = self._read_json_object()
+            except ValueError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._handle_preset_request("replace", preset_id=preset_id, payload=payload)
+
+        def do_DELETE(self) -> None:  # noqa: N802 - HTTP handler API name
+            """Delete one preset at its expected revision (D-025)."""
+
+            preset_id = self._preset_id_from_path(urlsplit(self.path).path)
+            if preset_id is None:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                return
+            if not self._authorize_control_mutation():
+                return
+            try:
+                payload = self._read_json_object()
+            except ValueError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._handle_preset_request("delete", preset_id=preset_id, payload=payload)
+
+        def _authorize_control_mutation(self) -> bool:
+            """Send 401/403 and return False unless this mutation may proceed."""
+
+            if not self._is_control_authorized():
+                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                return False
+            if not self._cookie_mutation_is_same_origin():
+                self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
+                return False
+            return True
+
+        @staticmethod
+        def _preset_id_from_path(path: str) -> str | None:
+            prefix = "/api/v1/presets/"
+            if not path.startswith(prefix):
+                return None
+            preset_id = path[len(prefix) :]
+            if not preset_id or "/" in preset_id:
+                return None
+            return preset_id
+
+        def _handle_preset_request(
+            self,
+            operation: str,
+            *,
+            preset_id: str | None = None,
+            payload: dict[str, Any] | None = None,
+            success_status: HTTPStatus = HTTPStatus.OK,
+        ) -> None:
+            if preset_store is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "preset store is unavailable", "code": "preset_store_unavailable"},
+                )
+                return
+            try:
+                if operation == "list":
+                    result = preset_store.list()
+                elif operation == "get":
+                    result = preset_store.get(preset_id)
+                elif operation == "create":
+                    result = preset_store.create(payload)
+                elif operation == "replace":
+                    result = preset_store.replace(preset_id, payload)
+                elif operation == "delete":
+                    result = preset_store.delete(preset_id, payload)
+                else:  # pragma: no cover - code-owned operation names
+                    raise RuntimeError(f"unknown preset operation: {operation}")
+            except PresetError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            self._send_json(success_status, result)
+
+        def _handle_bluetooth_action(self, payload: dict[str, Any]) -> None:
+            if bluetooth is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "Bluetooth control is not configured", "code": "bluetooth_unavailable"},
+                )
+                return
+            self._send_bluetooth_result(lambda: bluetooth.perform(payload))
+
+        def _send_bluetooth_result(self, produce: Any) -> None:
+            """Send a Bluetooth result; never let an exception reach the log.
+
+            The server would print an escaped traceback to journald, and a D-Bus
+            message there can name a device path, which embeds the address (D-030).
+            """
+
+            try:
+                result = produce()
+            except BluetoothError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            except Exception:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "Bluetooth request failed", "code": "bluetooth_failed"},
+                )
+                return
+            self._send_json(HTTPStatus.OK, result)
 
         def _handle_runtime_snapshot(self) -> None:
             try:
@@ -861,6 +1047,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="State file holding the pairing code for the current boot",
     )
     parser.add_argument(
+        "--preset-file",
+        type=Path,
+        default=DEFAULT_PRESET_FILE,
+        help="State file holding the FFT presets saved from the web pages",
+    )
+    parser.add_argument(
         "--network-socket",
         default="/run/rgb-matrix-network/control.sock",
         help="Unix socket for the privileged NetworkManager helper",
@@ -939,13 +1131,17 @@ def main() -> int:
         visualization_id: controller_config.defaults_for(visualization_id)
         for visualization_id in ("system_info", "fft", "sorts", "master_theorem")
     }
+    registry = build_default_registry(parameter_defaults=registry_defaults)
     supervisor = VisualizationSupervisor(
-        build_default_registry(parameter_defaults=registry_defaults),
+        registry,
         python_executable=python_executable,
         command_prefix=command_prefix,
         stop_timeout=stop_timeout,
         runtime_dir=os.environ.get("RGBMATRIX_RUNTIME_DIR"),
     )
+    # Nothing touches D-Bus until the first Bluetooth request; a missing binding or
+    # bus only makes those routes report unavailable (M3 criterion 8).
+    bluetooth = BluetoothController(DbusBluetoothBackend())
     server = ThreadingHTTPServer(
         (args.host, args.port),
         build_handler(
@@ -956,6 +1152,12 @@ def main() -> int:
                 boot_code,
                 additional_codes=(TEMPORARY_FALLBACK_PAIRING_CODE,),
             ),
+            preset_store=PresetStore(
+                args.preset_file,
+                validate_parameters=registry.get("fft").validate_parameters,
+                validate_structure=validate_launch_structure,
+            ),
+            bluetooth=bluetooth,
         ),
     )
 
@@ -986,6 +1188,10 @@ def main() -> int:
     finally:
         server.server_close()
         supervisor.stop()
+        try:
+            bluetooth.shutdown()  # closes a pairing window left open
+        except Exception:
+            pass
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)
     return 0
