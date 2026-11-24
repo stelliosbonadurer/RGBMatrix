@@ -21,9 +21,13 @@ from matrix_controller.bluetooth import (
 )
 from matrix_controller.matrix_settings import MatrixSettingsStore, config_matrix_values
 from matrix_controller.presets import MAX_PRESETS, PresetStore
+from matrix_controller.program_files import ProgramFileStore
 from matrix_controller.registry import build_default_registry
 from matrix_controller.supervisor import VisualizationSupervisor
-from matrix_controller.runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
+from matrix_controller.runtime_transport import (
+    MAX_LAUNCH_STRUCTURE_BYTES,
+    PROGRAM_CONFIG_ENVIRONMENT,
+)
 from matrix_controller.web_service import (
     PAGE_CONTENT_SECURITY_POLICY,
     STATIC_ASSETS,
@@ -1246,11 +1250,13 @@ class _SleepingProcess:
 class _ProcessFactory:
     def __init__(self):
         self.calls: list[list[str]] = []
+        self.environments: list[dict[str, str]] = []
         self.processes: list[_SleepingProcess] = []
 
-    def __call__(self, argv, **_kwargs):
+    def __call__(self, argv, **kwargs):
         process = _SleepingProcess(2000 + len(self.processes))
         self.calls.append(list(argv))
+        self.environments.append(kwargs.get("env") or {})
         self.processes.append(process)
         return process
 
@@ -1463,6 +1469,8 @@ class OpenAccessTests(unittest.TestCase):
             ("POST", "/api/v1/pairing/exchange", {"code": "012345"}),
             ("POST", "/api/v1/network/provision", {"ssid": "home"}),
             ("PUT", "/api/v1/matrix-settings", {"expected_revision": 0, "values": {}}),
+            ("PUT", "/api/v1/programs/graph_traversal/files/render", {"expected_revision": 0, "document": {}}),
+            ("DELETE", "/api/v1/programs/graph_traversal/files/render", None),
             ("PUT", "/api/v1/presets/0000000000000000", {}),
             ("DELETE", "/api/v1/presets/0000000000000000", {}),
             ("PATCH", "/api/v1/runtime", {}),
@@ -1527,6 +1535,144 @@ class OpenAccessTests(unittest.TestCase):
                 with self.subTest(program=item["id"], parameter=parameter["name"]):
                     self.assertFalse(parameter["name"].startswith("led_"))
                     self.assertTrue(parameter["cli_flag"].startswith("--"))
+
+
+class ProgramFilesApiTests(unittest.TestCase):
+    """M4b criteria 1, 3, and 4 over HTTP with a real supervisor (D-044, D-047)."""
+
+    request = WebServiceTests.request
+    error = PresetApiTests.error
+    PATH = "/api/v1/programs/graph_traversal/files/render"
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        registry = build_default_registry()
+        self.files = ProgramFileStore(registry, Path(self.directory.name) / "program-files")
+        self.factory = _ProcessFactory()
+        self.supervisor = VisualizationSupervisor(
+            registry,
+            python_executable="/fixed/python",
+            process_factory=self.factory,
+            group_signaler=self.factory.signal,
+            process_group_lookup=lambda pid: pid,
+            program_files=self.files.launch_files,
+        )
+        self.addCleanup(self.supervisor.stop)
+        self.serve(self.files, require_pairing=False)
+
+    def serve(self, store, *, require_pairing):
+        server = ThreadingHTTPServer(
+            ("127.0.0.1", 0),
+            build_handler(
+                self.supervisor,
+                api_token="secret-token",
+                network_client=FakeNetworkClient(),
+                pairing_manager=PairingManager("012345"),
+                program_files=store,
+                require_pairing=require_pairing,
+            ),
+        )
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def stop() -> None:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+        self.addCleanup(stop)
+        host, port = server.server_address
+        self.base_url = f"http://{host}:{port}"
+
+    def edited(self, document, **changes):
+        return {**document, **changes}
+
+    def test_save_then_every_launch_gets_the_override(self) -> None:
+        status, snapshot = self.request(self.PATH)
+        self.assertEqual((status, snapshot["revision"], snapshot["source"]), (200, 0, "default"))
+        self.assertEqual(snapshot["document"], snapshot["default"])
+        self.assertIn("fields", snapshot)
+        document = self.edited(snapshot["document"], node_size=2)
+        status, saved = self.request(
+            self.PATH, payload={"expected_revision": 0, "document": document}, method="PUT"
+        )
+        self.assertEqual((status, saved["revision"], saved["source"]), (200, 1, "stored"))
+        status, body = self.error(
+            self.PATH, payload={"expected_revision": 0, "document": document}, method="PUT"
+        )
+        self.assertEqual((status, body["code"], body["current_revision"]), (409, "revision_conflict", 1))
+        status, body = self.error(
+            self.PATH,
+            payload={"expected_revision": 1, "document": self.edited(document, node_size=9)},
+            method="PUT",
+        )
+        self.assertEqual((status, body["code"]), (400, "invalid_program_file"))
+        self.assertIn("node_size", body["error"])
+        # /run is unchanged: the launch reads the store itself.
+        self.request("/api/v1/run", payload={"visualization_id": "graph_traversal", "parameters": {}})
+        self.assertEqual(json.loads(self.factory.environments[-1][PROGRAM_CONFIG_ENVIRONMENT]), document)
+        _, status_body = self.request("/api/v1/status")
+        self.assertEqual(status_body["program_files"], {"render": 1})
+        self.request("/api/v1/run", payload={"visualization_id": "sorts", "parameters": {}})
+        self.assertNotIn(PROGRAM_CONFIG_ENVIRONMENT, self.factory.environments[-1])
+        self.assertEqual(self.request("/api/v1/status")[1]["program_files"], {})
+
+    def test_an_unusable_file_launches_the_default_and_can_be_removed(self) -> None:
+        status, body = self.error(self.PATH, method="DELETE")
+        self.assertEqual((status, body["code"]), (409, "program_file_usable"))
+        path = self.files.directory / "graph_traversal.render.json"
+        path.parent.mkdir()
+        path.write_text("not json")
+        status, snapshot = self.request(self.PATH)
+        self.assertEqual((status, snapshot["revision"]), (200, None))
+        self.assertIn("not valid JSON", snapshot["error"])
+        status, body = self.error(
+            self.PATH, payload={"expected_revision": 0, "document": snapshot["default"]}, method="PUT"
+        )
+        self.assertEqual((status, body["code"]), (503, "program_file_unavailable"))
+        self.request("/api/v1/run", payload={"visualization_id": "graph_traversal", "parameters": {}})
+        self.assertNotIn(PROGRAM_CONFIG_ENVIRONMENT, self.factory.environments[-1])
+        self.assertEqual(self.request("/api/v1/status")[1]["program_files"], {"render": None})
+        self.assertEqual(path.read_text(), "not json")
+        # Like /stop, a body is optional but must be JSON when sent (review finding 5).
+        request = urllib.request.Request(self.base_url + self.PATH, data=b"x", method="DELETE")
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            urllib.request.urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 400)
+        caught.exception.close()
+        self.assertTrue(path.exists())
+        status, snapshot = self.request(self.PATH, payload={}, method="DELETE")
+        self.assertEqual((status, snapshot["revision"], snapshot["error"]), (200, 0, None))
+        self.assertFalse(path.exists())
+
+    def test_unknown_paths_are_not_found(self) -> None:
+        for path in (
+            "/api/v1/programs/sorts/files/render",
+            "/api/v1/programs/graph_traversal/files/other",
+            "/api/v1/programs/graph_traversal/files",
+            "/api/v1/programs/graph_traversal/files/render/extra",
+            "/api/v1/programs/../files/render",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(self.error(path)[0], 404)
+
+    def test_saving_needs_control_access_when_pairing_is_on(self) -> None:
+        self.serve(self.files, require_pairing=True)
+        self.assertEqual(self.request(self.PATH)[0], 200)
+        _, snapshot = self.request(self.PATH)
+        for method, payload in (
+            ("PUT", {"expected_revision": 0, "document": snapshot["default"]}),
+            ("DELETE", None),
+        ):
+            with self.subTest(method=method):
+                self.assertEqual(self.error(self.PATH, payload=payload, method=method)[0], 401)
+        self.assertFalse(self.files.directory.exists())
+
+    def test_without_a_store_the_routes_are_unavailable(self) -> None:
+        self.serve(None, require_pairing=False)
+        status, body = self.error(self.PATH)
+        self.assertEqual((status, body["code"]), (503, "program_file_unavailable"))
 
 
 if __name__ == "__main__":

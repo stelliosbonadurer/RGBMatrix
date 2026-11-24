@@ -44,6 +44,11 @@ MAX_TIMEOUT_SECONDS = 10.0
 # into this variable; the child alone validates its contents.
 LAUNCH_STRUCTURE_ENVIRONMENT = "RGB_MATRIX_LAUNCH_STRUCTURE"
 MAX_LAUNCH_STRUCTURE_BYTES = 32 * 1024
+# A program with a registered config file (web-control-refactor D-039) receives the
+# validated override saved on the Pi as compact JSON in this variable, and reads its
+# tracked file when the variable is absent (D-043). The supervisor always strips an
+# inherited value, so only the store can supply one.
+PROGRAM_CONFIG_ENVIRONMENT = "RGB_MATRIX_PROGRAM_CONFIG"
 # The RGB matrix native library initializes GPIO as root, then deliberately drops
 # the visualization to the system ``daemon`` account. That child must be able to
 # traverse to and connect to the supervisor-owned endpoint after the UID change.

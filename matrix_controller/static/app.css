@@ -356,6 +356,7 @@ h1 {
 }
 
 .field input[aria-invalid="true"] { border-color: var(--danger); }
+.field input[type="text"]:disabled, .field select:disabled { opacity: .55; }
 .field-help { color: var(--muted); font-size: 13px; }
 .field-range { color: var(--faint); white-space: nowrap; }
 .field-error { color: var(--danger); font-size: 13px; font-weight: 600; }
@@ -538,4 +539,84 @@ details.panel[open] > summary { margin-bottom: 12px; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+}
+
+/* ---- Program config files (M4b) ----------------------------------------- */
+
+.program-files { display: grid; gap: 14px; min-width: 0; }
+.program-files:empty { display: none; }
+
+.section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-bottom: 10px;
+}
+.section-head .section-title { margin-bottom: 0; }
+.section-hint { color: var(--faint); font-size: 13px; }
+.file-section .note { margin: 0 0 10px; }
+
+.subsection-title {
+  margin: 14px 0 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 15px;
+  font-weight: 650;
+}
+.subsection-title + .field-help { margin: -4px 0 8px; }
+
+.color-input {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.color-input::-webkit-color-swatch-wrapper { padding: 0; }
+.color-input::-webkit-color-swatch { border: 0; border-radius: 5px; }
+.color-input::-moz-color-swatch { border: 0; border-radius: 5px; }
+.color-input:disabled { opacity: .45; cursor: not-allowed; }
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 6px 10px;
+}
+.color-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+}
+.color-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.color-field.changed .color-name { color: var(--pink); font-weight: 650; }
+
+.component-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+}
+.component-swatch {
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.component-swatch .color-input { width: 100%; max-width: 34px; }
+.component-swatch.changed { color: var(--pink); font-weight: 700; }
+.component-swatch.changed .color-input { border-color: var(--pink); }
+
+.file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
 }

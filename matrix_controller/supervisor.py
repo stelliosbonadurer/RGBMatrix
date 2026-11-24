@@ -16,6 +16,7 @@ from .registry import Registry
 from .runtime_transport import (
     LAUNCH_STRUCTURE_ENVIRONMENT,
     MAX_LAUNCH_STRUCTURE_BYTES,
+    PROGRAM_CONFIG_ENVIRONMENT,
     RuntimeControlServer,
     RuntimeRunMismatch,
     RuntimeUnavailable,
@@ -37,6 +38,9 @@ ProcessFactory = Callable[..., ManagedProcess]
 GroupSignaler = Callable[[int, int], None]
 ProcessGroupLookup = Callable[[int], int]
 Clock = Callable[[], float]
+# ``{file name: (revision, document)}`` for one program's launch; document None
+# means the tracked default (web-control-refactor D-043, D-047).
+ProgramFilesProvider = Callable[[str], Mapping[str, tuple[Any, Any]]]
 
 
 @dataclass(frozen=True)
@@ -76,9 +80,12 @@ class VisualizationSupervisor:
         runtime_dir: str | os.PathLike[str] | None = None,
         runtime_request_timeout: float = 1.0,
         matrix_settings: Callable[[], Mapping[str, Any]] | None = None,
+        program_files: ProgramFilesProvider | None = None,
     ):
         """``matrix_settings`` returns the shared panel values for each launch
         (web-control-refactor D-035); without it, launches use the code defaults.
+        ``program_files`` returns a program's saved config overrides for each
+        launch (D-043); without it, every program reads its tracked file.
         """
 
         self.registry = registry
@@ -92,6 +99,7 @@ class VisualizationSupervisor:
         self._runtime_dir = runtime_dir
         self._runtime_request_timeout = runtime_request_timeout
         self._matrix_settings = matrix_settings
+        self._program_files = program_files
         self._lock = threading.RLock()
 
         self._state = "idle"
@@ -99,6 +107,9 @@ class VisualizationSupervisor:
         self._visualization_id: str | None = None
         self._parameters: dict[str, Any] = {}
         self._matrix_values: dict[str, Any] = {}
+        # The revision of each program file this run started with (0: the tracked
+        # default; None: a saved file that couldn't be used).
+        self._program_file_revisions: dict[str, int | None] = {}
         # The program most recently launched, kept after it stops or fails so a
         # page can tell whose failure ``last_error`` describes.
         self._last_visualization_id: str | None = None
@@ -160,6 +171,7 @@ class VisualizationSupervisor:
             command_prefix=self.command_prefix,
             matrix_values=matrix_values,
         )
+        program_file_revisions, encoded_program_config = self._launch_program_files(spec)
 
         if not spec.script_path.is_file():
             raise ValidationError(
@@ -197,6 +209,10 @@ class VisualizationSupervisor:
                 child_environment.pop(LAUNCH_STRUCTURE_ENVIRONMENT, None)
                 if encoded_structure is not None:
                     child_environment[LAUNCH_STRUCTURE_ENVIRONMENT] = encoded_structure
+                # Likewise a program config override comes only from the store.
+                child_environment.pop(PROGRAM_CONFIG_ENVIRONMENT, None)
+                if encoded_program_config is not None:
+                    child_environment[PROGRAM_CONFIG_ENVIRONMENT] = encoded_program_config
                 if runtime_control is not None:
                     child_environment.update(runtime_control.endpoint.environment())
                 # stdin is closed so a missed non-interactive adapter fails instead of
@@ -223,6 +239,7 @@ class VisualizationSupervisor:
             self._visualization_id = visualization_id
             self._parameters = dict(normalized)
             self._matrix_values = dict(matrix_values)
+            self._program_file_revisions = program_file_revisions
             self._argv = tuple(argv)
             self._started_at = self._clock()
 
@@ -246,6 +263,27 @@ class VisualizationSupervisor:
                 pid=process.pid,
                 run_id=self._run_id,
             )
+
+    def _launch_program_files(
+        self, spec: Any
+    ) -> tuple[dict[str, int | None], str | None]:
+        """Return this launch's file revisions and the encoded override, if any.
+
+        A program registers at most one file, so the variable holds that file's
+        document. Without a usable override the variable stays unset.
+        """
+
+        if not spec.program_files or self._program_files is None:
+            return {program_file.name: 0 for program_file in spec.program_files}, None
+        files = self._program_files(spec.visualization_id)
+        revisions: dict[str, int | None] = {}
+        encoded: str | None = None
+        for program_file in spec.program_files:
+            revision, document = files.get(program_file.name, (0, None))
+            revisions[program_file.name] = revision
+            if document is not None:
+                encoded = json.dumps(document, separators=(",", ":"), allow_nan=False)
+        return revisions, encoded
 
     def stop(self) -> dict[str, Any]:
         """Idempotently stop and reap the active process group."""
@@ -370,6 +408,7 @@ class VisualizationSupervisor:
         self._visualization_id = None
         self._parameters = {}
         self._matrix_values = {}
+        self._program_file_revisions = {}
         self._argv = ()
         self._started_at = None
         self._state = "idle"
@@ -390,6 +429,7 @@ class VisualizationSupervisor:
         self._visualization_id = None
         self._parameters = {}
         self._matrix_values = {}
+        self._program_file_revisions = {}
         self._argv = ()
         self._started_at = None
 
@@ -412,6 +452,7 @@ class VisualizationSupervisor:
             "visualization_id": self._visualization_id,
             "parameters": dict(self._parameters),
             "matrix_settings": dict(self._matrix_values),
+            "program_files": dict(self._program_file_revisions),
             "last_visualization_id": self._last_visualization_id,
             "pid": process.pid if process is not None else None,
             "started_at": self._started_at,

@@ -179,6 +179,26 @@ class ParameterSpec:
 
 
 @dataclass(frozen=True)
+class ProgramFileSpec:
+    """A program config file the pages can edit (web-control-refactor D-039).
+
+    ``default_path`` is the tracked file, never written. ``validate`` raises
+    ``ValidationError`` for a document the program can't use; it is the store's
+    only check (D-047). ``fields`` describes the editor and is read only by the
+    page.
+    """
+
+    name: str
+    label: str
+    default_path: Path
+    validate: Callable[[Any], None]
+    fields: tuple[Mapping[str, Any], ...]
+
+    def as_public_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "label": self.label}
+
+
+@dataclass(frozen=True)
 class VisualizationSpec:
     """A single code-owned, web-launchable visualization definition.
 
@@ -197,6 +217,19 @@ class VisualizationSpec:
     supports_live_control: bool = False
     parameter_validator: Callable[[Mapping[str, Any]], None] | None = None
     matrix_parameters: tuple[ParameterSpec, ...] = ()
+    # At most one: the override reaches the child in a single environment
+    # variable whose value is the document itself (web-control-refactor D-043).
+    program_files: tuple[ProgramFileSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        if len(self.program_files) > 1:
+            raise ValueError(f"{self.visualization_id} may register at most one program file")
+
+    def program_file(self, name: str) -> ProgramFileSpec:
+        for program_file in self.program_files:
+            if program_file.name == name:
+                return program_file
+        raise KeyError(name)
 
     def parameter(self, name: str) -> ParameterSpec:
         for parameter in self.parameters:
@@ -288,4 +321,5 @@ class VisualizationSpec:
             "requires_audio": self.requires_audio,
             "supports_live_control": self.supports_live_control,
             "parameters": [parameter.as_public_dict() for parameter in self.parameters],
+            "files": [program_file.as_public_dict() for program_file in self.program_files],
         }

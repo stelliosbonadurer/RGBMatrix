@@ -1,7 +1,7 @@
 // DOM helpers shared by the home and program pages: an element builder, the
 // labelled field with its help text, messages, and status polling.
 
-import {displayTokens, humanize, parseValue, rangeText} from './model.js';
+import {displayTokens, fieldLabel, humanize, parseValue, rangeText} from './model.js';
 
 export function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -34,7 +34,7 @@ export function createField(parameter, value, {onInput, readOnly = false} = {}) 
   const id = `field-${parameter.name.replaceAll('_', '-')}-${++fieldCounter}`;
   const defaultHelp = parameter.description || '';
   const range = rangeText(parameter);
-  const label = h('label', {className: 'field-label', for: id}, humanize(parameter.name));
+  const label = h('label', {className: 'field-label', for: id}, fieldLabel(parameter));
   const marker = h('span', {className: 'changed-marker', title: 'Unsent change', hidden: true}, '●');
   const helpText = h('span', {}, defaultHelp);
   const rangeNote = range ? h('span', {className: 'field-range'}, range) : null;

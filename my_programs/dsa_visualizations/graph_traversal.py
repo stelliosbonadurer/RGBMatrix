@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import sys
 import time
 from pathlib import Path
+from typing import Mapping
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -23,9 +25,16 @@ from dsa_visualizations.graph_model import (
     traversal_frames,
     validate_options,
 )
-from dsa_visualizations.graph_rendering import GraphRenderer, Viewport, load_render_config
+from dsa_visualizations.graph_rendering import (
+    GraphRenderer,
+    RenderConfig,
+    Viewport,
+    load_render_config,
+    parse_render_config_text,
+)
 from dsa_visualizations.native_matrix import NativeMatrixApp
 from matrix_controller.definitions import application_parameters
+from matrix_controller.runtime_transport import PROGRAM_CONFIG_ENVIRONMENT
 
 
 def build_options(args) -> GraphOptions:
@@ -46,6 +55,19 @@ def build_options(args) -> GraphOptions:
     )
 
 
+def resolve_render_config(environ: Mapping[str, str]) -> RenderConfig:
+    """The web service's saved override when it passed one, else the tracked file.
+
+    The supervisor sets ``RGB_MATRIX_PROGRAM_CONFIG`` only for a validated
+    override (web-control-refactor D-043); a standalone run reads the file.
+    """
+
+    override = environ.get(PROGRAM_CONFIG_ENVIRONMENT)
+    if override is None:
+        return load_render_config()
+    return parse_render_config_text(override)
+
+
 def _request_exit(_signum, _frame) -> None:
     raise KeyboardInterrupt
 
@@ -58,7 +80,7 @@ def main() -> int:
     options = build_options(args)
     try:
         resolved_edges = validate_options(options)
-        render_config = load_render_config()
+        render_config = resolve_render_config(os.environ)
     except ValueError as exc:
         app.parser.error(str(exc))
 

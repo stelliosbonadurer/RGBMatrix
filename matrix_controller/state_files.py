@@ -1,9 +1,10 @@
 """Atomic replacement of the web service's small JSON state files.
 
-Presets (D-025) and the shared matrix settings (web-control-refactor D-035) both
-keep one file in the service's state directory. A change is written to a 0600 temp
-file in the same directory, flushed, and renamed over the old file, so a reader
-sees either the old document or the new one.
+Presets (D-025), the shared matrix settings (web-control-refactor D-035), and
+program config overrides (D-039) each keep their files in the service's state
+directory. A change is written to a 0600 temp file in the same directory, flushed,
+and renamed over the old file, so a reader sees either the old document or the new
+one.
 """
 
 from __future__ import annotations

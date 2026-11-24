@@ -36,6 +36,7 @@ from .matrix_settings import (
     config_matrix_values,
 )
 from .pairing import PairingError, PairingManager
+from .program_files import DEFAULT_PROGRAM_FILES_DIRECTORY, ProgramFileError, ProgramFileStore
 from .presets import DEFAULT_PRESET_FILE, PresetError, PresetStore
 from .registry import Registry, build_default_registry
 from .runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
@@ -56,6 +57,7 @@ TEMPORARY_FALLBACK_PAIRING_CODE = "000000"
 
 PROGRAM_PAGE_PREFIX = "/programs/"
 MATRIX_SETTINGS_PATH = "/api/v1/matrix-settings"
+PROGRAM_FILES_PREFIX = "/api/v1/programs/"
 PAGE_CONTENT_SECURITY_POLICY = (
     "default-src 'self'; connect-src 'self'; script-src 'self'; "
     "style-src 'self'; img-src 'self' data:; object-src 'none'; "
@@ -71,6 +73,7 @@ STATIC_ASSETS: dict[str, tuple[str, str]] = {
     "/static/js/ui.js": ("js/ui.js", _JAVASCRIPT),
     "/static/js/home.js": ("js/home.js", _JAVASCRIPT),
     "/static/js/program.js": ("js/program.js", _JAVASCRIPT),
+    "/static/js/file_editor.js": ("js/file_editor.js", _JAVASCRIPT),
     "/static/js/programs/graph_traversal.js": (
         "js/programs/graph_traversal.js",
         _JAVASCRIPT,
@@ -341,13 +344,15 @@ def build_handler(
     preset_store: PresetStore | None = None,
     bluetooth: BluetoothController | None = None,
     matrix_settings: MatrixSettingsStore | None = None,
+    program_files: ProgramFileStore | None = None,
     require_pairing: bool = True,
 ) -> type[BaseHTTPRequestHandler]:
     """Bind one supervisor and token policy to an HTTP handler class.
 
     Without ``preset_store`` the preset routes answer 503. Without ``bluetooth``
     the Bluetooth status reports ``available: false`` and its actions answer 503.
-    Without ``matrix_settings`` the matrix-settings routes answer 503.
+    Without ``matrix_settings`` the matrix-settings routes answer 503, and
+    without ``program_files`` the program-file routes do.
     ``require_pairing=False`` opens visualization control to every request
     (web-control-refactor D-036); network administration still needs the token.
     """
@@ -398,6 +403,9 @@ def build_handler(
                 # Public like the visualization list: the values aren't secret, and
                 # a page without control access can still show them (D-008).
                 self._handle_matrix_settings_request("get")
+            elif path.startswith(PROGRAM_FILES_PREFIX):
+                # Public like the matrix settings: colors aren't secret (D-044).
+                self._handle_program_file_request("get", path)
             elif path == "/api/v1/runtime":
                 if not self._is_control_authorized():
                     self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
@@ -450,6 +458,7 @@ def build_handler(
                             "GET /api/v1/visualizations",
                             "GET /api/v1/status",
                             "GET /api/v1/matrix-settings",
+                            "GET /api/v1/programs/{visualization_id}/files/{name}",
                             "GET /api/v1/runtime",
                             "PATCH /api/v1/runtime",
                             "POST /api/v1/runtime/actions",
@@ -466,6 +475,8 @@ def build_handler(
                             "PUT /api/v1/presets/{preset_id}",
                             "DELETE /api/v1/presets/{preset_id}",
                             "PUT /api/v1/matrix-settings",
+                            "PUT /api/v1/programs/{visualization_id}/files/{name}",
+                            "DELETE /api/v1/programs/{visualization_id}/files/{name}",
                             "POST /api/v1/bluetooth/actions",
                             "POST /api/v1/pairing/exchange",
                             "POST /api/v1/pairing/logout",
@@ -661,11 +672,22 @@ def build_handler(
                 self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
 
         def do_PUT(self) -> None:  # noqa: N802 - HTTP handler API name
-            """Replace one whole preset (D-025) or the matrix settings (D-035)."""
+            """Replace one whole preset (D-025), the matrix settings (D-035), or a
+            program file (D-044)."""
 
             if self._refuse_cross_site_mutation():
                 return
             path = urlsplit(self.path).path
+            if path.startswith(PROGRAM_FILES_PREFIX):
+                if not self._authorize_control_mutation():
+                    return
+                try:
+                    payload = self._read_json_object()
+                except ValueError as exc:
+                    self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                    return
+                self._handle_program_file_request("replace", path, payload=payload)
+                return
             if path == MATRIX_SETTINGS_PATH:
                 if not self._authorize_control_mutation():
                     return
@@ -690,11 +712,25 @@ def build_handler(
             self._handle_preset_request("replace", preset_id=preset_id, payload=payload)
 
         def do_DELETE(self) -> None:  # noqa: N802 - HTTP handler API name
-            """Delete one preset at its expected revision (D-025)."""
+            """Delete one preset at its expected revision (D-025), or clear an
+            unusable program file (D-047; no body)."""
 
             if self._refuse_cross_site_mutation():
                 return
-            preset_id = self._preset_id_from_path(urlsplit(self.path).path)
+            path = urlsplit(self.path).path
+            if path.startswith(PROGRAM_FILES_PREFIX):
+                if not self._authorize_control_mutation():
+                    return
+                # Like /stop: no body needed, but one that is sent must be JSON.
+                if self.headers.get("Content-Length", "0") != "0":
+                    try:
+                        self._read_json_object()
+                    except ValueError as exc:
+                        self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                        return
+                self._handle_program_file_request("remove", path)
+                return
+            preset_id = self._preset_id_from_path(path)
             if preset_id is None:
                 self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
                 return
@@ -781,6 +817,41 @@ def build_handler(
                 else:
                     result = matrix_settings.replace(payload)
             except MatrixSettingsError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            self._send_json(HTTPStatus.OK, result)
+
+        def _handle_program_file_request(
+            self,
+            operation: str,
+            path: str,
+            *,
+            payload: dict[str, Any] | None = None,
+        ) -> None:
+            # ``/api/v1/programs/<id>/files/<name>``. Both parts are only looked
+            # up in the registry; neither reaches a file path.
+            parts = path.removeprefix(PROGRAM_FILES_PREFIX).split("/")
+            if len(parts) != 3 or parts[1] != "files" or not parts[0] or not parts[2]:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                return
+            program_id, _files, name = parts
+            if program_files is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "error": "program files are unavailable",
+                        "code": "program_file_unavailable",
+                    },
+                )
+                return
+            try:
+                if operation == "get":
+                    result = program_files.snapshot(program_id, name)
+                elif operation == "replace":
+                    result = program_files.replace(program_id, name, payload)
+                else:
+                    result = program_files.remove_unusable(program_id, name)
+            except ProgramFileError as exc:
                 self._send_json(exc.status, exc.as_body())
                 return
             self._send_json(HTTPStatus.OK, result)
@@ -1179,6 +1250,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="State file holding the shared matrix settings saved from the web pages",
     )
     parser.add_argument(
+        "--program-files-dir",
+        type=Path,
+        default=DEFAULT_PROGRAM_FILES_DIRECTORY,
+        help="State directory holding program config files saved from the web pages",
+    )
+    parser.add_argument(
         "--network-socket",
         default="/run/rgb-matrix-network/control.sock",
         help="Unix socket for the privileged NetworkManager helper",
@@ -1258,6 +1335,7 @@ def main() -> int:
         args.matrix_settings_file,
         config_values=config_matrix_values(controller_config.matrix_defaults),
     )
+    program_files = ProgramFileStore(registry, args.program_files_dir)
     supervisor = VisualizationSupervisor(
         registry,
         python_executable=python_executable,
@@ -1265,6 +1343,7 @@ def main() -> int:
         stop_timeout=stop_timeout,
         runtime_dir=os.environ.get("RGBMATRIX_RUNTIME_DIR"),
         matrix_settings=matrix_settings.effective_values,
+        program_files=program_files.launch_files,
     )
     # Nothing touches D-Bus until the first Bluetooth request; a missing binding or
     # bus only makes those routes report unavailable (M3 criterion 8).
@@ -1286,6 +1365,7 @@ def main() -> int:
             ),
             bluetooth=bluetooth,
             matrix_settings=matrix_settings,
+            program_files=program_files,
             require_pairing=controller_config.require_pairing,
         ),
     )

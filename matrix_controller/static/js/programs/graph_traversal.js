@@ -5,6 +5,18 @@
 
 export const id = 'graph_traversal';
 
+// Wording for the render config editor (M4b): `noun` builds "Colors changed since
+// launch" and the unusable-file message. program.js falls back to the file's
+// label for a program without its own.
+export const fileText = {
+  render: {
+    noun: 'colors',
+    restore: 'Restore default colors',
+    load: 'Load saved colors',
+    outsideChange: 'The colors were changed on another device. Your edits are kept.',
+  },
+};
+
 // The old page listed n and e last, after the options that decide their limits.
 export function orderParameters(parameters) {
   const last = ['n', 'e'];

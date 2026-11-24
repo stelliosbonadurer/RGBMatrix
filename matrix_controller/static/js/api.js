@@ -40,12 +40,20 @@ async function request(method, path, body) {
   return data;
 }
 
+const filePath = (visualizationId, name) =>
+  `/api/v1/programs/${encodeURIComponent(visualizationId)}/files/${encodeURIComponent(name)}`;
+
 export const api = {
   visualizations: () => request('GET', '/api/v1/visualizations'),
   status: () => request('GET', '/api/v1/status'),
   matrixSettings: () => request('GET', '/api/v1/matrix-settings'),
   saveMatrixSettings: (expectedRevision, values) =>
     request('PUT', '/api/v1/matrix-settings', {expected_revision: expectedRevision, values}),
+  programFile: (visualizationId, name) => request('GET', filePath(visualizationId, name)),
+  saveProgramFile: (visualizationId, name, expectedRevision, document) =>
+    request('PUT', filePath(visualizationId, name), {expected_revision: expectedRevision, document}),
+  // Only clears a saved file the program can't use (D-047).
+  removeProgramFile: (visualizationId, name) => request('DELETE', filePath(visualizationId, name)),
   run: (visualizationId, parameters) =>
     request('POST', '/api/v1/run', {visualization_id: visualizationId, parameters}),
   stop: () => request('POST', '/api/v1/stop', {}),

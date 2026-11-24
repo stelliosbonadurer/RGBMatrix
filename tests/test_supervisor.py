@@ -14,6 +14,7 @@ from matrix_controller.registry import build_default_registry
 from matrix_controller.runtime_transport import (
     LAUNCH_STRUCTURE_ENVIRONMENT,
     MAX_LAUNCH_STRUCTURE_BYTES,
+    PROGRAM_CONFIG_ENVIRONMENT,
 )
 from matrix_controller.schema import ValidationError
 from matrix_controller.supervisor import VisualizationSupervisor
@@ -121,6 +122,53 @@ class SupervisorTests(unittest.TestCase):
         )
         # Never inherited from the service's own environment.
         self.assertNotIn(LAUNCH_STRUCTURE_ENVIRONMENT, without)
+
+    def test_program_config_override_reaches_only_its_program(self) -> None:
+        """M4b criterion 4: the store's override, never an inherited value."""
+
+        reads: list[str] = []
+        files = {"render": (3, {"node_size": 2})}
+
+        def launch_files(visualization_id: str):
+            reads.append(visualization_id)
+            return files
+
+        supervisor = VisualizationSupervisor(
+            build_default_registry(),
+            python_executable="/fixed/python",
+            process_factory=self.factory,
+            group_signaler=lambda group, signum: setattr(
+                next(p for p in self.factory.processes if p.pid == group), "returncode", 0
+            ),
+            process_group_lookup=lambda pid: pid,
+            program_files=launch_files,
+        )
+        self.addCleanup(supervisor.stop)
+        with unittest.mock.patch.dict(os.environ, {PROGRAM_CONFIG_ENVIRONMENT: "inherited"}):
+            supervisor.start("graph_traversal")
+            self.assertEqual(supervisor.status()["program_files"], {"render": 3})
+            supervisor.start("sorts")
+            self.assertEqual(supervisor.status()["program_files"], {})
+            files = {"render": (None, None)}  # an unusable saved file
+            supervisor.start("graph_traversal")
+            self.assertEqual(supervisor.status()["program_files"], {"render": None})
+            files = {"render": (0, None)}  # no saved file
+            supervisor.start("graph_traversal")
+            self.assertEqual(supervisor.status()["program_files"], {"render": 0})
+        environments = [kwargs["env"] for _argv, kwargs in self.factory.calls]
+        self.assertEqual(environments[0][PROGRAM_CONFIG_ENVIRONMENT], '{"node_size":2}')
+        for environment in environments[1:]:
+            self.assertNotIn(PROGRAM_CONFIG_ENVIRONMENT, environment)
+        # Only programs with a registered file read the store.
+        self.assertEqual(reads, ["graph_traversal"] * 3)
+        supervisor.stop()
+        self.assertEqual(supervisor.status()["program_files"], {})
+
+    def test_without_a_store_programs_read_their_tracked_file(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {PROGRAM_CONFIG_ENVIRONMENT: "inherited"}):
+            self.supervisor.start("graph_traversal")
+        self.assertNotIn(PROGRAM_CONFIG_ENVIRONMENT, self.factory.calls[0][1]["env"])
+        self.assertEqual(self.supervisor.status()["program_files"], {"render": 0})
 
     def test_bad_launch_structure_keeps_current_child_running(self) -> None:
         self.supervisor.start("fft", {})

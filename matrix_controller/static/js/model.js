@@ -24,6 +24,11 @@ export function humanize(name) {
     .join(' ');
 }
 
+// A field's label: its own (program file fields carry one) or the humanized name.
+export function fieldLabel(parameter) {
+  return parameter.label || humanize(parameter.name);
+}
+
 function formatBound(value) {
   return String(value);
 }
@@ -100,7 +105,7 @@ export function formatArgv(argv) {
 // Turns a field's raw input into a typed value plus an error (or null). Mirrors
 // ParameterSpec.normalize so the page can refuse a submit the server would reject.
 export function parseValue(parameter, raw) {
-  const label = humanize(parameter.name);
+  const label = fieldLabel(parameter);
   let value;
   if (parameter.type === 'bool') {
     return {value: Boolean(raw), error: null};
@@ -171,6 +176,85 @@ export function matrixChangedSinceLaunch(status, storedValues) {
   return Object.keys(storedValues).some(name => !sameValue(used[name], storedValues[name]));
 }
 
+// Program config files (M4b, D-039). A file's editor is drawn from the field
+// descriptor the server sends; each size, named color, and list slot is one
+// "slot" for change counting and markers.
+
+const hexDigits = channel => channel.toString(16).padStart(2, '0');
+
+export function colorToHex(color) {
+  return `#${color.map(hexDigits).join('')}`;
+}
+
+export function hexToColor(hex) {
+  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex));
+  if (!match) return null;
+  return match.slice(1).map(part => Number.parseInt(part, 16));
+}
+
+// {slot key: comparable value} for a document: numbers as-is, colors as hex.
+export function fileSlots(fields, document) {
+  const slots = {};
+  for (const field of fields) {
+    const value = document?.[field.key];
+    if (field.kind === 'int') {
+      slots[field.key] = value;
+    } else if (field.kind === 'color_map') {
+      for (const name of field.names) {
+        const color = value?.[name];
+        slots[`${field.key}.${name}`] = Array.isArray(color) ? colorToHex(color) : null;
+      }
+    } else if (field.kind === 'color_list') {
+      for (let index = 0; index < field.length; index += 1) {
+        const color = value?.[index];
+        slots[`${field.key}.${index}`] = Array.isArray(color) ? colorToHex(color) : null;
+      }
+    }
+  }
+  return slots;
+}
+
+// The slot keys where the draft differs from the saved document.
+export function fileChanges(fields, draft, saved) {
+  const draftSlots = fileSlots(fields, draft);
+  const savedSlots = fileSlots(fields, saved);
+  return Object.keys(draftSlots).filter(key => !sameValue(draftSlots[key], savedSlots[key]));
+}
+
+// True when the active run of this program started with a different revision of
+// a file than the one saved now. Revision null (an unusable saved file) and 0 (no
+// saved file) both mean the tracked default.
+export function filesChangedSinceLaunch(status, programId, savedRevisions) {
+  if (!status || status.visualization_id !== programId) return false;
+  if (status.state !== 'running' && status.state !== 'starting') return false;
+  const used = status.program_files || {};
+  return Object.entries(savedRevisions).some(([name, revision]) =>
+    Object.prototype.hasOwnProperty.call(used, name) && (used[name] ?? 0) !== (revision ?? 0));
+}
+
+// What the page does with a polled program file (M4b criterion 8). `current` and
+// `next` are snapshots ({revision, error}); `dirty` means unsent edits.
+//   none:   nothing changed.
+//   follow: load the saved document (a clean editor, or an unusable file shown
+//           as the default).
+//   keep:   keep the edits and offer the saved version in a banner (as D-038).
+//   reset:  the file became unusable under unsent edits, which can't be saved
+//           until it is removed: load the default and say so (review finding 1).
+export function fileUpdateAction(current, next, dirty) {
+  if (next.revision === current.revision && next.error === current.error) return 'none';
+  if (next.error) return dirty ? 'reset' : 'follow';
+  return dirty ? 'keep' : 'follow';
+}
+
+// "Matrix settings and colors changed since launch", or '' when nothing did.
+// `fileNouns` names each program file whose saved revision differs from the run's.
+export function changedSinceLaunchText(matrixChanged, fileNouns) {
+  const parts = [...(matrixChanged ? ['matrix settings'] : []), ...fileNouns];
+  if (!parts.length) return '';
+  const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`;
+  return `${joined.charAt(0).toUpperCase()}${joined.slice(1)} changed since launch`;
+}
+
 // Identifies "this program's current run" so the page notices a relaunch.
 export function runKey(status, programId) {
   if (!status || status.visualization_id !== programId) return null;
@@ -179,7 +263,7 @@ export function runKey(status, programId) {
 }
 
 // The D-037 state table: what the top toggle and the bottom button do.
-export function buttonModel({status, programId, programName, otherName, dirty, matrixChanged, valid, pending}) {
+export function buttonModel({status, programId, programName, otherName, dirty, matrixChanged, filesChanged = false, valid, pending}) {
   const state = status?.state || 'unknown';
   const active = status?.visualization_id === programId;
   const running = active && state === 'running';
@@ -220,7 +304,7 @@ export function buttonModel({status, programId, programName, otherName, dirty, m
     bottom = {
       label: 'Send update',
       action: 'update',
-      disabled: Boolean(pending) || !valid || !(dirty || matrixChanged),
+      disabled: Boolean(pending) || !valid || !(dirty || matrixChanged || filesChanged),
     };
   } else if (transitioning) {
     bottom = {label: 'Send update', action: null, disabled: true};

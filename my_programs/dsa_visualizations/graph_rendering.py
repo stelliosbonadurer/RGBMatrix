@@ -57,12 +57,35 @@ class Viewport:
 
 
 def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
+    """Read and parse the tracked render config (or another file)."""
+
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError(f"could not read graph rendering config: {path}") from exc
+    return parse_render_config_text(text)
+
+
+def parse_render_config_text(text: str) -> RenderConfig:
+    """Parse render config JSON text, such as the override the supervisor passes
+    in ``RGB_MATRIX_PROGRAM_CONFIG`` (web-control-refactor D-043)."""
+
+    try:
+        data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid JSON in graph rendering config: {exc}") from exc
+    return parse_render_config(data)
+
+
+def parse_render_config(data: object) -> RenderConfig:
+    """Validate a decoded render config document and return it typed.
+
+    This is the only check the web service applies to a saved override
+    (web-control-refactor D-047), so each message names the failing field.
+    """
+
+    if not isinstance(data, dict):
+        raise ValueError("graph rendering config must be a JSON object")
     if set(data) != {
         "node_size",
         "endpoint_node_size",
@@ -94,6 +117,8 @@ def load_render_config(path: Path = DEFAULT_CONFIG_PATH) -> RenderConfig:
         for index, value in enumerate(raw_component_colors)
     )
 
+    if not isinstance(data["colors"], dict):
+        raise ValueError("colors must be an object of named colors")
     expected = set(GraphColors.__dataclass_fields__)
     supplied = set(data["colors"])
     if supplied != expected:
