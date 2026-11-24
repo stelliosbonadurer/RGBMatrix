@@ -752,9 +752,11 @@ class DbusBluetoothBackend:
     imported until the first call, and any import, bus, or adapter failure becomes
     ``BluetoothUnavailable``. The next call retries.
 
-    No local test runs this class (M3 criterion 11). Unverified until M6: that GLib
-    is installed on the Pi, that the web unit's user can reach ``org.bluez``, and
-    that the agent can become the default agent.
+    No local test talks to BlueZ (M3 criterion 11); a stand-in proxy checks the call
+    shapes. The M3 Pi check (``b28e31d``) showed that the web unit's user reaches
+    ``org.bluez``, that the window opens and closes with the agent registered as the
+    default, and that close leaves the adapter as found. Pairing a real phone and
+    streaming are M6.
     """
 
     AGENT_PATH = "/org/rgbmatrix/bluetooth_agent"
