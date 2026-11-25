@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "access": {
+    "require_pairing": false
+  },
   "runtime": {
     "python_executable": "~/rpi-rgb-led-matrix/bindings/python/samples/fftdemo/.venv/bin/python3",
     "use_sudo": true,
@@ -30,11 +33,7 @@
   },
   "visualizations": {
     "fft": {
-      "audio_source": "usb-mic",
-      "theme": "ocean",
-      "gradient": false,
-      "overflow": true,
-      "non_interactive": true
+      "audio_source": "usb-mic"
     },
     "master_theorem": {
       "example": "custom",

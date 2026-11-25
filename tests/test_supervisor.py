@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 import unittest
+import unittest.mock
 from pathlib import Path
 from typing import Any
 
 from matrix_controller.registry import build_default_registry
+from matrix_controller.runtime_transport import (
+    LAUNCH_STRUCTURE_ENVIRONMENT,
+    MAX_LAUNCH_STRUCTURE_BYTES,
+    PROGRAM_CONFIG_ENVIRONMENT,
+)
 from matrix_controller.schema import ValidationError
 from matrix_controller.supervisor import VisualizationSupervisor
 
@@ -75,10 +82,10 @@ class SupervisorTests(unittest.TestCase):
             pass
 
     def test_start_passes_vector_and_service_safety_options(self) -> None:
-        result = self.supervisor.start("fft", {"theme": "warm"})
+        result = self.supervisor.start("fft", {"audio_source": "bluetooth"})
         argv, kwargs = self.factory.calls[0]
         self.assertEqual(argv[:4], ["sudo", "-n", "-E", "/fixed/python"])
-        self.assertEqual(result.parameters["theme"], "warm")
+        self.assertEqual(result.parameters["audio_source"], "bluetooth")
         self.assertTrue(kwargs["start_new_session"])
         self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(self.supervisor.status()["state"], "running")
@@ -99,6 +106,86 @@ class SupervisorTests(unittest.TestCase):
         status = self.supervisor.status()
         self.assertEqual(status["pid"], running.pid)
         self.assertEqual(self.signals, [])
+
+    def test_launch_structure_reaches_child_environment_compactly(self) -> None:
+        structure = {"output_backend": "direct", "layers": []}
+        with unittest.mock.patch.dict(
+            os.environ, {LAUNCH_STRUCTURE_ENVIRONMENT: "inherited"}
+        ):
+            self.supervisor.start("fft", {}, structure=structure)
+            self.supervisor.start("fft", {})
+        with_structure = self.factory.calls[0][1]["env"]
+        without = self.factory.calls[1][1]["env"]
+        self.assertEqual(
+            with_structure[LAUNCH_STRUCTURE_ENVIRONMENT],
+            '{"output_backend":"direct","layers":[]}',
+        )
+        # Never inherited from the service's own environment.
+        self.assertNotIn(LAUNCH_STRUCTURE_ENVIRONMENT, without)
+
+    def test_program_config_override_reaches_only_its_program(self) -> None:
+        """M4b criterion 4: the store's override, never an inherited value."""
+
+        reads: list[str] = []
+        files = {"render": (3, {"node_size": 2})}
+
+        def launch_files(visualization_id: str):
+            reads.append(visualization_id)
+            return files
+
+        supervisor = VisualizationSupervisor(
+            build_default_registry(),
+            python_executable="/fixed/python",
+            process_factory=self.factory,
+            group_signaler=lambda group, signum: setattr(
+                next(p for p in self.factory.processes if p.pid == group), "returncode", 0
+            ),
+            process_group_lookup=lambda pid: pid,
+            program_files=launch_files,
+        )
+        self.addCleanup(supervisor.stop)
+        with unittest.mock.patch.dict(os.environ, {PROGRAM_CONFIG_ENVIRONMENT: "inherited"}):
+            supervisor.start("graph_traversal")
+            self.assertEqual(supervisor.status()["program_files"], {"render": 3})
+            supervisor.start("sorts")
+            self.assertEqual(supervisor.status()["program_files"], {})
+            files = {"render": (None, None)}  # an unusable saved file
+            supervisor.start("graph_traversal")
+            self.assertEqual(supervisor.status()["program_files"], {"render": None})
+            files = {"render": (0, None)}  # no saved file
+            supervisor.start("graph_traversal")
+            self.assertEqual(supervisor.status()["program_files"], {"render": 0})
+        environments = [kwargs["env"] for _argv, kwargs in self.factory.calls]
+        self.assertEqual(environments[0][PROGRAM_CONFIG_ENVIRONMENT], '{"node_size":2}')
+        for environment in environments[1:]:
+            self.assertNotIn(PROGRAM_CONFIG_ENVIRONMENT, environment)
+        # Only programs with a registered file read the store.
+        self.assertEqual(reads, ["graph_traversal"] * 3)
+        supervisor.stop()
+        self.assertEqual(supervisor.status()["program_files"], {})
+
+    def test_without_a_store_programs_read_their_tracked_file(self) -> None:
+        with unittest.mock.patch.dict(os.environ, {PROGRAM_CONFIG_ENVIRONMENT: "inherited"}):
+            self.supervisor.start("graph_traversal")
+        self.assertNotIn(PROGRAM_CONFIG_ENVIRONMENT, self.factory.calls[0][1]["env"])
+        self.assertEqual(self.supervisor.status()["program_files"], {"render": 0})
+
+    def test_bad_launch_structure_keeps_current_child_running(self) -> None:
+        self.supervisor.start("fft", {})
+        cases = (
+            ("sorts", {"layers": []}, "does not accept a launch structure"),
+            ("fft", ["layers"], "must be a JSON object"),
+            ("fft", {"bad": float("nan")}, "plain JSON"),
+            ("fft", {"pad": "x" * MAX_LAUNCH_STRUCTURE_BYTES}, "at most"),
+        )
+        for visualization_id, structure, message in cases:
+            with self.subTest(message=message), self.assertRaisesRegex(
+                ValidationError, message
+            ):
+                self.supervisor.start(visualization_id, {}, structure=structure)
+        self.assertEqual(len(self.factory.calls), 1)
+        self.assertEqual(self.signals, [])
+        self.assertEqual(self.supervisor.status()["state"], "running")
 
     def test_stop_is_idempotent(self) -> None:
         running = self.supervisor.start("fft")
@@ -132,6 +219,67 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual(status["state"], "failed")
         self.assertEqual(status["last_exit_code"], 7)
         self.assertLessEqual(len(status["last_error"]), 500)
+
+    def test_launches_take_matrix_values_from_the_shared_settings(self) -> None:
+        # web-control-refactor D-035: every launch, the boot display included,
+        # reads the provider; status reports the values this run used.
+        stored = build_default_registry().get("sorts").validate_matrix_values(None)
+        stored["led_brightness"] = 40
+        reads: list[int] = []
+
+        def provider() -> dict:
+            reads.append(1)
+            return dict(stored)
+
+        self.supervisor._matrix_settings = provider
+        self.supervisor.start("system_info")
+        argv, _kwargs = self.factory.calls[0]
+        self.assertEqual(argv[argv.index("--led-brightness") + 1], "40")
+        self.assertEqual(self.supervisor.status()["matrix_settings"], stored)
+        stored["led_brightness"] = 70
+        self.supervisor.start("sorts")
+        argv, _kwargs = self.factory.calls[1]
+        self.assertEqual(argv[argv.index("--led-brightness") + 1], "70")
+        self.assertEqual(len(reads), 2)
+        self.supervisor.stop()
+        self.assertEqual(self.supervisor.status()["matrix_settings"], {})
+
+    def test_without_a_provider_launches_use_the_code_defaults(self) -> None:
+        self.supervisor.start("sorts")
+        argv, _kwargs = self.factory.calls[0]
+        self.assertEqual(argv[argv.index("--led-gpio-mapping") + 1], "adafruit-hat")
+
+    def test_an_incomplete_provider_value_set_refuses_the_launch(self) -> None:
+        self.supervisor._matrix_settings = lambda: {"led_rows": 64}
+        with self.assertRaisesRegex(ValidationError, "missing matrix settings"):
+            self.supervisor.start("sorts")
+        self.assertEqual(self.factory.calls, [])
+
+    def test_last_visualization_survives_stop_and_failure(self) -> None:
+        status = self.supervisor.status()
+        self.assertIsNone(status["last_visualization_id"])
+        self.supervisor.start("sorts")
+        self.factory.processes[0].returncode = 3
+        failed = self.supervisor.status()
+        self.assertEqual(failed["state"], "failed")
+        self.assertIsNone(failed["visualization_id"])
+        self.assertEqual(failed["last_visualization_id"], "sorts")
+        self.supervisor.stop()
+        self.assertEqual(self.supervisor.status()["last_visualization_id"], "sorts")
+
+    def test_a_spawn_failure_is_reported_against_the_new_program(self) -> None:
+        # Review finding 1: the pages read last_visualization_id to place a failure.
+        self.supervisor.start("graph_traversal")
+
+        def refuse(*_args, **_kwargs):
+            raise FileNotFoundError("no interpreter")
+
+        self.supervisor._process_factory = refuse
+        with self.assertRaisesRegex(RuntimeError, "launch failed"):
+            self.supervisor.start("sorts")
+        status = self.supervisor.status()
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(status["last_visualization_id"], "sorts")
 
     def test_unreaped_child_is_retained_as_owner(self) -> None:
         running = self.supervisor.start("fft")

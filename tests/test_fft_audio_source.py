@@ -93,6 +93,27 @@ class AudioSourceResolutionTests(unittest.TestCase):
         self.assertEqual(calls, [("hw:10,1", "input")])
         self.assertEqual(resolved.device, "hw:10,1")
         self.assertEqual(resolved.source_id, "bluetooth")
+        self.assertEqual(resolved.capture_channels, 1)
+        self.assertEqual(resolved.capture_dtype, "int32")
+
+    def test_bluetooth_capture_matches_the_bridge_playback_format(self):
+        # snd-aloop makes the second side to open match the first, so the FFT
+        # must ask for the bridge's own format, or a launch before the phone
+        # plays leaves PipeWire's sink failing to start.
+        rule = (
+            Path(__file__).resolve().parent.parent
+            / "deploy" / "bluetooth-audio" / "files"
+            / "60-rgb-matrix-bluetooth-audio.lua"
+        ).read_text(encoding="utf-8")
+        self.assertIn('["audio.format"] = "S32LE"', rule)
+        self.assertIn('["audio.channels"] = 1', rule)
+        resolved = resolve_audio_source(
+            "bluetooth",
+            AudioSettings(),
+            query_devices=lambda *_args: device("Loopback capture"),
+        )
+        self.assertEqual(resolved.capture_dtype, "int32")  # S32LE
+        self.assertEqual(resolved.capture_channels, 1)
 
     def test_missing_or_ambiguous_bluetooth_is_a_public_bounded_error(self):
         def query(_selector, _kind):

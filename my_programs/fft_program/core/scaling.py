@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np  # type: ignore
 from typing import Optional
 
-from config.settings import ScalingSettings, SensitivitySettings, SmoothingSettings
+from config.settings import ScalingSettings, SmoothingSettings
 
 
 class ScalingProcessor:
@@ -26,7 +26,6 @@ class ScalingProcessor:
     def __init__(
         self,
         scaling_settings: ScalingSettings,
-        sensitivity_settings: SensitivitySettings,
         smoothing_settings: SmoothingSettings,
         num_bins: int,
         frame_rate: float = 250  # Approximate frames per second
@@ -36,13 +35,11 @@ class ScalingProcessor:
         
         Args:
             scaling_settings: Scaling mode and parameters
-            sensitivity_settings: Silence threshold
             smoothing_settings: Rise/fall smoothing
             num_bins: Number of frequency bins
             frame_rate: Approximate frame rate for buffer sizing
         """
         self.scaling = scaling_settings
-        self.sensitivity = sensitivity_settings
         self.smoothing = smoothing_settings
         self.num_bins = num_bins
         
@@ -81,11 +78,8 @@ class ScalingProcessor:
         Returns:
             Tuple of (normalized_bars, smoothed_bars, peak_heights)
         """
-        # Apply silence threshold fade
         peak = np.max(bars)
-        if self.sensitivity.silence_threshold > 0 and peak < self.sensitivity.silence_threshold:
-            bars = bars * (peak / self.sensitivity.silence_threshold)
-        
+
         # Get normalization scale
         max_val = self._calculate_scale(peak)
         

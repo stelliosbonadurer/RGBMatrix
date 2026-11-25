@@ -16,6 +16,7 @@ from matrix_controller.runtime_transport import (
     RuntimeControlClient,
     RuntimeControlError,
     RuntimeControlServer,
+    RuntimeOperationTimeout,
     RuntimeProtocolError,
     RuntimeRemoteError,
     RuntimeTimeout,
@@ -206,6 +207,57 @@ class FrameBoundaryBridgeTests(unittest.TestCase):
             bridge.handle("expired", {}, timeout=0)
         self.assertEqual(expired.exception.code, "timeout")
         self.assertEqual(bridge.process_pending(lambda _operation, _payload: {}), 0)
+
+    def test_started_item_returns_its_real_outcome_after_wait_expires(self) -> None:
+        # Hardening item 1: the render thread claims an item just as the
+        # listener's wait expires. The listener must report the applied result,
+        # not a timeout.
+        bridge = FrameBoundaryRuntimeBridge(response_timeout=0.02, started_grace=1.0)
+        result: dict[str, object] = {}
+        claimed = threading.Event()
+        listener = threading.Thread(
+            target=lambda: result.setdefault("value", self._capture(bridge, "apply")),
+        )
+        listener.start()
+        while bridge._pending.empty():
+            time.sleep(0.001)
+
+        def slow_handler(_operation: str, _payload: object) -> str:
+            claimed.set()
+            time.sleep(0.1)  # longer than response_timeout
+            return "applied"
+
+        bridge.process_pending(slow_handler)
+        listener.join(timeout=2)
+        self.assertTrue(claimed.is_set())
+        self.assertEqual(result["value"], "applied")
+
+    def test_started_item_past_grace_reports_started_timeout(self) -> None:
+        bridge = FrameBoundaryRuntimeBridge(response_timeout=0.02, started_grace=0.02)
+        result: dict[str, object] = {}
+        release = threading.Event()
+        listener = threading.Thread(
+            target=lambda: result.setdefault("value", self._capture(bridge, "apply")),
+        )
+        listener.start()
+        while bridge._pending.empty():
+            time.sleep(0.001)
+        render = threading.Thread(
+            target=lambda: bridge.process_pending(lambda _o, _p: release.wait(2)),
+        )
+        render.start()
+        listener.join(timeout=2)
+        release.set()
+        render.join(timeout=2)
+        error = result["value"]
+        self.assertIsInstance(error, RuntimeOperationTimeout)
+        self.assertTrue(error.started)
+
+        # A never-claimed item reports started=False and is skipped.
+        with self.assertRaises(RuntimeOperationTimeout) as caught:
+            bridge.handle("never", {}, timeout=0.01)
+        self.assertFalse(caught.exception.started)
+        self.assertEqual(bridge.process_pending(lambda _o, _p: self.fail("ran")), 1)
 
     @staticmethod
     def _capture(bridge: FrameBoundaryRuntimeBridge, operation: str) -> object:

@@ -100,7 +100,7 @@ def samples_lines(topology, *, cpu=None, pss_kb=None, extra=(), renderer=None,
                               "resource_tracker": 5_000})
     renderer = (topology == "candidate") if renderer is None else renderer
     procs = [(100, 1, ["sudo", "-n", "-E", PYTHON, MAIN], "sudo"),
-             (101, 100, [PYTHON, MAIN, "--non-interactive"], "parent")]
+             (101, 100, [PYTHON, MAIN, "--audio-source", "usb-mic"], "parent")]
     if renderer:
         procs.append((102, 101, RENDERER_CMD, "renderer"))
     if topology == "candidate" and tracker:
@@ -718,7 +718,7 @@ class MeasureHelperTests(unittest.TestCase):
         first = json.loads(lines[1])
         for row in first["procs"]:
             if row["pid"] == 102:
-                row["cmd"] = [PYTHON, MAIN, "--non-interactive"]  # fork, before exec
+                row["cmd"] = [PYTHON, MAIN, "--audio-source", "usb-mic"]  # fork, before exec
         lines[1] = json.dumps(first)
         header, samples = (json.loads(lines[0])["header"],
                            [json.loads(line) for line in lines[1:]])

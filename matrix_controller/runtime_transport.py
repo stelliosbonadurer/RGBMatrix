@@ -39,6 +39,16 @@ MAX_OPERATION_LENGTH = 64
 MAX_REQUEST_ID_LENGTH = 128
 DEFAULT_TIMEOUT_SECONDS = 1.0
 MAX_TIMEOUT_SECONDS = 10.0
+# A visualization with live control may receive an initial structure document at
+# launch (web-control-refactor D-016). The supervisor serializes it as compact JSON
+# into this variable; the child alone validates its contents.
+LAUNCH_STRUCTURE_ENVIRONMENT = "RGB_MATRIX_LAUNCH_STRUCTURE"
+MAX_LAUNCH_STRUCTURE_BYTES = 32 * 1024
+# A program with a registered config file (web-control-refactor D-039) receives the
+# validated override saved on the Pi as compact JSON in this variable, and reads its
+# tracked file when the variable is absent (D-043). The supervisor always strips an
+# inherited value, so only the store can supply one.
+PROGRAM_CONFIG_ENVIRONMENT = "RGB_MATRIX_PROGRAM_CONFIG"
 # The RGB matrix native library initializes GPIO as root, then deliberately drops
 # the visualization to the system ``daemon`` account. That child must be able to
 # traverse to and connect to the supervisor-owned endpoint after the UID change.
@@ -103,6 +113,20 @@ class RuntimeControlError(RuntimeTransportError):
         super().__init__(self.message)
 
 
+class RuntimeOperationTimeout(RuntimeControlError):
+    """A frame-boundary wait expired.
+
+    ``started`` is false when the operation was cancelled before the render thread
+    claimed it, which guarantees it never ran. It is true when the render thread
+    had already started it and the outcome is unknown to the waiter; the render
+    thread then owns any cleanup.
+    """
+
+    def __init__(self, message: str, *, started: bool):
+        super().__init__("timeout", message)
+        self.started = started
+
+
 RuntimeRequestHandler = Callable[[str, Any], Mapping[str, Any] | Any]
 
 
@@ -116,6 +140,7 @@ class _PendingRuntimeOperation:
     result: Any = None
     error: RuntimeControlError | None = None
     cancelled: bool = False
+    started: bool = False
 
 
 class FrameBoundaryRuntimeBridge:
@@ -130,13 +155,22 @@ class FrameBoundaryRuntimeBridge:
     The queue has a fixed capacity and each wait has a timeout.  A slow or
     disconnected client therefore cannot accumulate work or hold the render loop
     hostage.  Commands that time out before the frame thread picks them up are
-    marked cancelled and skipped.
+    marked cancelled and skipped.  Claiming and cancelling happen under one lock,
+    so an item either never runs or is waited on (for ``started_grace`` more) for
+    its real outcome; a timeout never hides an applied command.
     """
 
-    def __init__(self, *, max_pending: int = 32, response_timeout: float = 1.0):
+    def __init__(
+        self,
+        *,
+        max_pending: int = 32,
+        response_timeout: float = 1.0,
+        started_grace: float = 0.2,
+    ):
         if max_pending <= 0:
             raise ValueError("max_pending must be greater than zero")
         self._response_timeout = _timeout(response_timeout)
+        self._started_grace = _timeout(started_grace)
         self._pending: queue.Queue[_PendingRuntimeOperation] = queue.Queue(maxsize=max_pending)
         self._lock = threading.RLock()
         self._closed = False
@@ -172,8 +206,17 @@ class FrameBoundaryRuntimeBridge:
 
         if not item.completed.wait(wait):
             with self._lock:
-                item.cancelled = True
-            raise RuntimeControlError("timeout", "runtime command was not applied in time")
+                started = item.started
+                if not started:
+                    item.cancelled = True
+            if not started:
+                raise RuntimeOperationTimeout(
+                    "runtime command was not applied in time", started=False
+                )
+            if not item.completed.wait(self._started_grace):
+                raise RuntimeOperationTimeout(
+                    "runtime command is still being applied", started=True
+                )
         if item.error is not None:
             raise item.error
         return item.result
@@ -200,6 +243,8 @@ class FrameBoundaryRuntimeBridge:
             try:
                 with self._lock:
                     cancelled = item.cancelled or self._closed
+                    if not cancelled:
+                        item.started = True
                 if cancelled:
                     continue
                 item.result = handler(item.operation, item.payload)

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090b12">
+  <title>Program · RGB Matrix</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+  <script type="module" src="/static/js/program.js"></script>
+</head>
+<body class="has-action-bar">
+  <header class="topbar">
+    <a class="back-link" href="/">‹ Programs</a>
+    <a class="brand compact" href="/" aria-label="RGB Matrix home">
+      <span class="pixel-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+    </a>
+  </header>
+
+  <main class="page">
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+
+    <section class="panel program-head" aria-labelledby="program-name">
+      <h1 id="program-name">Loading…</h1>
+      <p id="program-description" class="lede"></p>
+      <div class="status-row">
+        <span class="status-dot" id="status-dot" data-tone="unknown" aria-hidden="true"></span>
+        <p id="status-text" aria-live="polite">Checking the matrix…</p>
+        <button id="top-action" class="button primary" type="button" disabled>Launch</button>
+      </div>
+      <p id="matrix-note" class="note" hidden></p>
+    </section>
+
+    <div id="changed-banner" class="banner" hidden></div>
+
+    <!-- A program module's own editor (Music FFT, M5), drawn by program.js. -->
+    <div id="program-editor" class="program-editor"></div>
+
+    <section id="options-panel" class="panel" aria-labelledby="options-title">
+      <h2 class="section-title" id="options-title">Options</h2>
+      <form id="options" class="fields" novalidate></form>
+      <p id="no-options" class="meta" hidden>This program has no options of its own.</p>
+      <button id="reset-defaults" class="button ghost small" type="button">Reset to defaults</button>
+    </section>
+
+    <!-- A program's config file editors (M4b, D-039), drawn by program.js. -->
+    <div id="program-files" class="program-files"></div>
+
+    <details class="panel matrix-summary">
+      <summary>
+        <span class="summary-title">Matrix settings</span>
+        <span class="summary-hint">shared · read-only here</span>
+      </summary>
+      <dl id="matrix-table" class="value-table"></dl>
+      <a class="button secondary small" href="/#matrix-settings">Edit on home ›</a>
+    </details>
+
+    <section class="flags-panel" aria-label="Launch flags">
+      <div class="flags">
+        <span class="flags-label">Runs with</span>
+        <code id="program-flags"></code>
+      </div>
+      <label class="inline-toggle"><input type="checkbox" id="show-matrix-flags"> Show matrix flags</label>
+    </section>
+  </main>
+
+  <div class="action-bar">
+    <p id="action-reason" class="action-reason" hidden></p>
+    <div class="action-bar-inner">
+      <span id="dirty-count" class="dirty-count" aria-live="polite"></span>
+      <button id="discard" class="link-button" type="button" hidden>Discard</button>
+      <button id="bottom-action" class="button primary" type="button" disabled>Launch with these settings</button>
+    </div>
+  </div>
+</body>
+</html>

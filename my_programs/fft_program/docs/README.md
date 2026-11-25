@@ -8,8 +8,8 @@ A real-time audio spectrum visualizer for RGB LED matrix panels on Raspberry Pi.
 # Basic usage
 sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2
 
-# With specific theme
-sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2 --theme=ocean
+# With a settings file for the default layer
+sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2 --settings my_settings.json
 
 # List available themes
 python main.py --list-themes
@@ -17,11 +17,32 @@ python main.py --list-themes
 
 ## Runtime Controls
 
-The managed service exposes live presentation controls plus a declarative
-`structure` snapshot. Authenticated clients can use the revision-checked
-`structure.apply` action to add, remove, reorder, hide, or reconfigure up to eight
-layers and to select `direct` or `pillow-bulk`. The normal startup remains one
-`current-bars` layer using `direct`.
+The layer structure is the only runtime configuration. There are no keyboard
+controls and no per-setting live controls, and nothing is saved between runs.
+
+The managed service publishes the current `structure` in its runtime snapshot:
+the output backend, the ordered layers with all of their settings, the analyzer's
+launch settings, and a capability catalog of every setting's type, bounds, and
+default. To change anything, an authenticated client sends the whole desired
+structure with the revision-checked `structure.set` action:
+
+```json
+{"output_backend": "direct",
+ "layers": [{"layer_id": "bass", "layer_type": "current-bars",
+             "analyzer_id": "main-audio", "visible": true,
+             "settings": {"theme": "ocean", "min_freq": 40.0, "...": "..."}}]}
+```
+
+The child validates the whole document. It then activates it between two frames
+or rejects it whole, with a path such as `structure.layers[2].settings.max_freq`.
+Up to eight layers are allowed. Each submit resets every layer's smoothing and
+peak history. A launch through `POST /api/v1/run` may carry the same document as
+`structure`. If that document is invalid, the program runs the default single
+`current-bars` layer and reports the reason as `structure.launch_error` in the
+snapshot. Without a launch structure, startup is one `current-bars` layer using
+`direct`, built from the settings file (or the `config/settings.py` defaults). Of the
+options shared with the web controller, only `--audio-source` remains; each layer's
+theme, gradient, and overflow are settings in the structure.
 
 For a reusable client of that same web-facing contract, run from the repository
 root:
@@ -31,23 +52,8 @@ python3 tools/fft_layers.py --layers 4 --dry-run
 python3 tools/fft_layers.py --layers 8 --backend pillow-bulk
 ```
 
-Applying a generated structure resets layer-owned presentation history. See the
-tool's `--help` for controller URL and token-file options.
-
-### Basic Controls
-
-| Key | Action |
-| --- | ------ |
-| `t` / `T` | Cycle themes forward / backward |
-| `g` | Toggle gradient mode (per-pixel vs uniform color) |
-| `o` | Toggle overflow mode (bars can exceed height) |
-| `b` | Toggle bars (OFF = peaks only) |
-| `f` | Toggle full mode (full screen with crossfade) |
-| `s` | Toggle shadow mode |
-| `p` | Toggle peak mode |
-| `P` | Cycle peak color: white → bar → contrast → peak |
-| `r` / `R` | Cycle zoom presets (frequency range) |
-| `Ctrl+C` | Quit |
+See the tool's `--help` for controller URL and token-file options. Press `Ctrl+C`
+to quit a direct run.
 
 ## Documentation
 
@@ -86,8 +92,8 @@ tool's `--help` for controller URL and token-file options.
 
 ```text
 fft_program/
-├── main.py              # Entry point and key handling
-├── config/              # Settings and presets
+├── main.py              # Entry point, launch structure, and render loop
+├── config/              # Settings and weight-point helpers
 │   └── settings.py      # Typed application settings
 ├── core/                # Audio processing, scaling, matrix control
 │   ├── audio.py         # Capture and bounded FFT-analysis worker
@@ -101,8 +107,9 @@ fft_program/
 ```
 
 The modular runtime supports multiple ordered instances of the standard bars layer.
-Every layer's complete settings include `min_freq`, `max_freq`, `noise_floor`,
-`low_freq_weight`, and `high_freq_weight`. Equivalent settings share one projected
+Every layer's complete settings include `min_freq`, `max_freq`, `noise_floor`, and
+`weight_points` (see [configuration](configuration.md#sensitivitysettings)).
+Equivalent settings share one projected
 result; different ranges are projected from the same microphone block and the same
 full FFT instead of opening another capture stream. Every layer retains independent
 presentation state. Layer structure is runtime-only; restarting the visualization

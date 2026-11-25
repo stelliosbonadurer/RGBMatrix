@@ -16,11 +16,10 @@ Themes control the colors used to render the visualization.
 
 ## Selecting a Theme
 
-### Via Command Line
+### Per Layer
 
-```bash
-sudo python main.py --theme=ocean ...
-```
+Each layer's `theme` setting picks its theme: the Theme field on the FFT page, or
+`settings.theme` in a `structure.set` document. There is no `--theme` option.
 
 ### Via Settings File
 
@@ -52,7 +51,7 @@ Add to `themes/gradients.py` (or create a new file):
 class MyCustomTheme(BaseTheme):
     """Description of your theme."""
 
-    name = "my_custom"  # Used in --theme=my_custom
+    name = "my_custom"  # The value of a layer's theme setting
     description = "My custom color scheme"
 
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:

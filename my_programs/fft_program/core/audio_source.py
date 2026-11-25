@@ -19,6 +19,14 @@ AUDIO_SOURCE_IDS = (USB_MIC_SOURCE, BLUETOOTH_SOURCE)
 _BLUETOOTH_DEVICE_SELECTOR = "hw:10,1"
 _CAPTURE_CHANNELS = 1
 _CAPTURE_DTYPE = "float32"
+# snd-aloop gives both halves of the cable one format: whichever side opens first
+# sets it and the other must match. The bridge pins its playback side to mono
+# 44.1 kHz S32LE (deploy/bluetooth-audio), so the FFT captures int32 too (mono, at
+# the device's default rate, which PortAudio reports as 44100 for the loopback). A
+# float32 capture opened before the phone plays made PipeWire's sink fail to
+# start ("Invalid argument") and the panel stayed dark. AudioProcessor scales
+# int32 to the same float32 range as USB.
+_BLUETOOTH_CAPTURE_DTYPE = "int32"
 
 
 class AudioSourceResolutionError(RuntimeError):
@@ -82,5 +90,7 @@ def resolve_audio_source(
         resolved_device=device_name,
         resolved_sample_rate=sample_rate,
         capture_channels=_CAPTURE_CHANNELS,
-        capture_dtype=_CAPTURE_DTYPE,
+        capture_dtype=(
+            _CAPTURE_DTYPE if source_id == USB_MIC_SOURCE else _BLUETOOTH_CAPTURE_DTYPE
+        ),
     )

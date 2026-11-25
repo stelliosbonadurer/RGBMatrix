@@ -43,6 +43,9 @@ try:
         compile_current_bars_graph,
         compile_current_bars_layer_plan,
         compile_ordered_layer_plan,
+        current_bars_settings_descriptor,
+        current_bars_settings_from_runtime,
+        normalize_current_bars_settings,
     )
     from core.output import (  # noqa: E402
         DIRECT_OUTPUT_PATH,
@@ -410,7 +413,6 @@ def _visualizer(width: int, height: int, settings: Settings):
 def _scaler(settings: Settings, width: int) -> ScalingProcessor:
     return ScalingProcessor(
         settings.scaling,
-        settings.sensitivity,
         settings.smoothing,
         width,
         frame_rate=1.0 / settings.audio.sleep_delay,
@@ -419,7 +421,6 @@ def _scaler(settings: Settings, width: int) -> ScalingProcessor:
 
 def _current_plan(
     settings: Settings,
-    visualizer,
     analyzer: RecordingAnalyzer,
     backend: str,
     width: int,
@@ -431,6 +432,9 @@ def _current_plan(
         sensitivity_settings=settings.sensitivity,
         num_bins=width,
         output_backend=backend,
+        # The layer definition is authoritative for presentation, so it must be
+        # built from the same settings the legacy reference pipeline uses.
+        settings=settings,
     )
     registry = AnalyzerRegistry(
         graph,
@@ -439,7 +443,6 @@ def _current_plan(
     return compile_current_bars_layer_plan(
         graph,
         registry,
-        visualizer=visualizer,
         settings=settings,
         width=width,
         height=height,
@@ -452,7 +455,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         legacy_settings = _direct_settings()
         planned_settings = copy.deepcopy(legacy_settings)
         legacy_visualizer = _visualizer(width, height, legacy_settings)
-        planned_visualizer = _visualizer(width, height, planned_settings)
         legacy_scaler = _scaler(legacy_settings, width)
         raw_frames = (
             np.linspace(0.0, 0.7, width, dtype=np.float32),
@@ -461,7 +463,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         analyzer = RecordingAnalyzer(raw_frames[0])
         plan = _current_plan(
             planned_settings,
-            planned_visualizer,
             analyzer,
             DIRECT_OUTPUT_PATH,
             width,
@@ -495,8 +496,9 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         self.assertEqual(planned_canvas.clear_calls, len(raw_frames))
         self.assertEqual(analyzer.get_calls, len(raw_frames))
         self.assertEqual(analyzer.release_calls, len(raw_frames))
+        # The compiler builds every layer's own presentation objects.
         presentation = plan.layers[0].presentation_state
-        self.assertIs(presentation.visualizer, planned_visualizer)
+        self.assertIsNot(presentation.visualizer, legacy_visualizer)
         self.assertIsNot(presentation.scaler, legacy_scaler)
 
     @unittest.skipUnless(_PillowImage is not None, "requires Pillow")
@@ -505,7 +507,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         legacy_settings = _bulk_settings()
         planned_settings = copy.deepcopy(legacy_settings)
         legacy_visualizer = _visualizer(width, height, legacy_settings)
-        planned_visualizer = _visualizer(width, height, planned_settings)
         legacy_scaler = _scaler(legacy_settings, width)
         legacy_output = compile_pillow_bulk_bars_output(
             legacy_visualizer, width, height
@@ -514,7 +515,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         analyzer = RecordingAnalyzer(raw)
         plan = _current_plan(
             planned_settings,
-            planned_visualizer,
             analyzer,
             PILLOW_BULK_OUTPUT_PATH,
             width,
@@ -535,10 +535,6 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         np.testing.assert_array_equal(planned_canvas.pixels, legacy_canvas.pixels)
         self.assertEqual(planned_canvas.set_image_calls, 1)
         self.assertEqual(len(planned_canvas.images), 1)
-        self.assertEqual(
-            plan.incompatible_runtime_paths,
-            legacy_output.incompatible_runtime_paths,
-        )
 
 
 class LayerPlanHotPathTests(unittest.TestCase):
@@ -552,6 +548,12 @@ class LayerPlanHotPathTests(unittest.TestCase):
         self.assertIn("ActiveLayerPlan(initial_layer_plan)", setup)
         self.assertIn("frame_plan.prepare_frame()", loop)
         self.assertIn("frame_plan.draw_frame(app.canvas)", loop)
+        # D-016: the launch structure is applied after audio setup, before the
+        # control listener can start a transaction and before the first frame.
+        launch = setup.index("apply_launch_structure(")
+        self.assertLess(setup.index("with ShutdownSignalHandler(), capture:"), launch)
+        self.assertLess(launch, setup.index("runtime_thread.start()"))
+        self.assertNotIn("apply_launch_structure(", loop)
         for forbidden in (
             "current_bars_runtime_definition(",
             "compile_runtime_graph(",
@@ -581,6 +583,99 @@ class LayerPlanHotPathTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, prepare_source)
             self.assertNotIn(forbidden, draw_source)
+
+
+class CurrentBarsDescriptorTests(unittest.TestCase):
+    def test_every_field_has_help_and_the_defaults_normalize(self) -> None:
+        descriptor = current_bars_settings_descriptor()
+        fields = descriptor["fields"]
+        for field in fields:
+            with self.subTest(field=field["name"]):
+                self.assertIsInstance(field.get("help"), str)
+                self.assertTrue(field["help"].strip())
+        defaults = {field["name"]: field["default"] for field in fields}
+        self.assertEqual(normalize_current_bars_settings(defaults, DIRECT_OUTPUT_PATH), defaults)
+        self.assertEqual(defaults, current_bars_settings_from_runtime(Settings()))
+
+    def test_every_field_has_a_known_group_and_a_label(self) -> None:
+        # M5 slice 1 criterion 4 (D-053): the page draws headings and names from
+        # the descriptor alone.
+        descriptor = current_bars_settings_descriptor()
+        group_ids = [group["id"] for group in descriptor["groups"]]
+        self.assertEqual(group_ids, ["range", "look", "peaks", "motion", "dynamic"])
+        self.assertTrue(all(group["label"].strip() for group in descriptor["groups"]))
+        labels = []
+        for field in descriptor["fields"]:
+            with self.subTest(field=field["name"]):
+                self.assertIn(field["group"], group_ids)
+                self.assertTrue(field["label"].strip())
+                labels.append(field["label"])
+        self.assertEqual(len(labels), len(set(labels)))
+        used = {field["group"] for field in descriptor["fields"]}
+        self.assertEqual(used, set(group_ids))
+
+    def test_show_conditions_name_real_fields_and_allowed_values(self) -> None:
+        fields = {
+            field["name"]: field
+            for field in current_bars_settings_descriptor()["fields"]
+        }
+        conditional = {
+            name: field["shown_when"]
+            for name, field in fields.items()
+            if "shown_when" in field
+        }
+        self.assertEqual(
+            {name: condition["field"] for name, condition in conditional.items()},
+            {
+                "overflow_multiplier": "overflow",
+                "peak_color_mode": "peak_enabled",
+                "peak_fall_speed": "peak_enabled",
+                "peak_hold_frames": "peak_enabled",
+                "dynamic_cycle_speed": "theme",
+                "dynamic_frozen": "theme",
+            },
+        )
+        for name, condition in conditional.items():
+            with self.subTest(field=name):
+                self.assertEqual(set(condition), {"field", "values"})
+                target = fields[condition["field"]]
+                self.assertNotEqual(condition["field"], name)
+                self.assertNotIn("shown_when", target)
+                self.assertTrue(condition["values"])
+                if target["type"] == "boolean":
+                    allowed = [True, False]
+                elif target["type"] == "choice":
+                    allowed = target["choices"]
+                else:
+                    self.fail(f"{name} depends on a {target['type']} field")
+                for value in condition["values"]:
+                    self.assertIn(value, allowed)
+        self.assertEqual(
+            fields["dynamic_frozen"]["shown_when"]["values"],
+            ["dynamic", "dynamic_lateral_gradient"],
+        )
+
+    def test_weight_points_field_describes_its_items(self) -> None:
+        fields = {
+            field["name"]: field
+            for field in current_bars_settings_descriptor()["fields"]
+        }
+        self.assertNotIn("low_freq_weight", fields)
+        self.assertNotIn("high_freq_weight", fields)
+        points = fields["weight_points"]
+        self.assertEqual(points["type"], "points")
+        self.assertEqual((points["min_items"], points["max_items"]), (1, 16))
+        self.assertEqual(
+            [
+                (item["name"], item["min"], item["max"], bool(item["help"]))
+                for item in points["item_fields"]
+            ],
+            [("position", 0.0, 1.0, True), ("weight", 0.0, 100.0, True)],
+        )
+        self.assertEqual(
+            [point["position"] for point in points["default"]],
+            [0.0, 0.1, 0.3, 0.6, 1.0],
+        )
 
 
 if __name__ == "__main__":

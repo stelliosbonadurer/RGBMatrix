@@ -8,10 +8,11 @@ layered-mode branch has been removed.
 ```text
 fft_program/
 ├── main.py                 # Application lifecycle and render loop
-├── runtime_control.py      # Validated frame-boundary live controls
+├── runtime_control.py      # Run identity, revision, and runtime snapshot
+├── structural_control.py   # structure.set validation, compile, and activation
 ├── config/
 │   ├── settings.py         # Typed application settings
-│   └── presets.py          # Named preset configurations
+│   └── weighting.py        # Per-layer weight-point helpers
 ├── core/
 │   ├── analysis_plan.py   # Immutable FFT/projection plan compilation
 │   ├── audio.py            # Capture and bounded analysis worker
@@ -104,16 +105,22 @@ The peak overlay remains separate and is drawn after the bars. The main loop the
 
 ## Controls and Configuration
 
-`runtime_control.py` is the source of truth for typed values, semantic actions,
-snapshots, and keyboard mappings. Live requests are queued and applied at a render-frame
-boundary, so request threads do not mutate the worker or renderer directly.
+The only runtime configuration path is the declarative layer structure.
+`structural_control.py` validates a complete `structure.set` document (or the launch
+structure), compiles the candidate plan and its projections off the frame path, and
+activates it at a render-frame boundary, so request threads never mutate the worker
+or renderer directly. `runtime_control.py` owns only the run identity, the revision,
+and the snapshot, and rejects every other command. There are no keyboard controls,
+and no state is saved between runs.
 
-Settings use grouped Python dataclasses. When adding a setting:
+Layer settings are declared in `core/layer_plan.py`
+(`current_bars_settings_descriptor()` and `normalize_current_bars_settings()`).
+Startup settings use grouped Python dataclasses in `config/settings.py`. When adding
+a layer setting:
 
-1. Add it to the appropriate dataclass.
-2. Extend `load_settings()` when the group is persisted.
-3. Decide whether it belongs in the smaller crash-resume runtime state.
-4. Update runtime controls and user documentation together.
+1. Add it to the descriptor, the normalizer, and `CURRENT_BARS_SETTING_NAMES`.
+2. Apply it when the layer's presentation objects are compiled.
+3. Update the user documentation.
 
 ## Lifecycle and Failure Handling
 

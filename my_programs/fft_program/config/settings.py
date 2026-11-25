@@ -6,6 +6,13 @@ All user-configurable parameters are defined here as dataclasses.
 from dataclasses import dataclass, field
 from typing import Tuple, Literal
 
+from config.weighting import (
+    DEFAULT_HIGH_FREQ_WEIGHT,
+    DEFAULT_LOW_FREQ_WEIGHT,
+    legacy_weight_points,
+    weight_points_document,
+)
+
 
 @dataclass
 class AudioSettings:
@@ -101,9 +108,39 @@ class ColorSettings:
 class SensitivitySettings:
     """Audio sensitivity configuration."""
     noise_floor: float = 0.3      # Subtract from signal (0 = sensitive, 0.5 = cut noise)
-    low_freq_weight: float = 0.45  # Multiplier for bass frequencies *.55 is good)
-    high_freq_weight: float = 10.0 # Multiplier for treble frequencies
-    silence_threshold: float = 0.0 # Below this peak = fade to black
+    # Frequency weighting: {"position": 0-1 along the log range, "weight": 0-100}.
+    # Linear between points, flat beyond the ends. The default approximates the
+    # retired low_freq_weight=0.45 / high_freq_weight=10.0 curve.
+    weight_points: list = field(default_factory=legacy_weight_points)
+
+
+_LEGACY_WEIGHT_KEYS = ("low_freq_weight", "high_freq_weight")
+
+
+def _sensitivity_from_json(data: dict) -> SensitivitySettings:
+    """Build sensitivity settings, converting retired keys (D-022)."""
+    data = dict(data)
+    if "silence_threshold" in data:
+        data.pop("silence_threshold")
+        print("Settings note: ignored retired sensitivity.silence_threshold")
+    legacy = {name: data.pop(name) for name in _LEGACY_WEIGHT_KEYS if name in data}
+    if "weight_points" in data:
+        if legacy:
+            print(
+                "Settings note: sensitivity.weight_points is set, so the retired "
+                f"{', '.join(sorted(legacy))} key(s) were ignored"
+            )
+        data["weight_points"] = weight_points_document(data["weight_points"])
+    elif legacy:
+        data["weight_points"] = legacy_weight_points(
+            legacy.get("low_freq_weight", DEFAULT_LOW_FREQ_WEIGHT),
+            legacy.get("high_freq_weight", DEFAULT_HIGH_FREQ_WEIGHT),
+        )
+        print(
+            "Settings note: converted retired "
+            f"{', '.join(sorted(legacy))} to sensitivity.weight_points"
+        )
+    return SensitivitySettings(**data)
 
 
 @dataclass
@@ -198,7 +235,7 @@ def load_settings(path: str = None) -> Settings:
         if 'color' in data:
             settings.color = ColorSettings(**data['color'])
         if 'sensitivity' in data:
-            settings.sensitivity = SensitivitySettings(**data['sensitivity'])
+            settings.sensitivity = _sensitivity_from_json(data['sensitivity'])
         if 'scaling' in data:
             settings.scaling = ScalingSettings(**data['scaling'])
         if 'smoothing' in data:

@@ -20,6 +20,20 @@ from core.analysis_plan import (
 )
 
 
+# What a capture dtype's samples are multiplied by to reach float32 in [-1, 1].
+# float32 arrives scaled; int32 is the Bluetooth loopback's S32LE (see
+# core/audio_source.py), scaled by 2**-31 as PortAudio's own conversion does.
+_CAPTURE_SCALES = {"float32": None, "int32": 1.0 / 2_147_483_648}
+
+
+def _capture_scale(capture_dtype: str) -> Optional[float]:
+    """Return the int-to-float scale for a capture dtype, or None for float32."""
+    try:
+        return _CAPTURE_SCALES[capture_dtype]
+    except KeyError:
+        raise ValueError(f"unsupported capture dtype: {capture_dtype!r}") from None
+
+
 @dataclass
 class FFTData:
     """Processed FFT data passed to visualizers."""
@@ -251,6 +265,7 @@ class AudioProcessor:
             num_bins: Number of frequency bins (typically matrix width)
         """
         self.audio_settings = audio_settings
+        self._capture_scale = _capture_scale(audio_settings.capture_dtype)
         self.freq_settings = freq_settings
         self.sensitivity_settings = sensitivity_settings
         self.num_bins = num_bins
@@ -410,26 +425,6 @@ class AudioProcessor:
         
         return self.sample_rate
     
-    def update_frequency_range(self) -> None:
-        """
-        Update frequency bins after changing frequency settings.
-        
-        Call this after modifying freq_settings (e.g., changing zoom preset).
-        """
-        candidate = StandardAnalysisCandidate.from_settings(
-            self.audio_settings,
-            self.freq_settings,
-            self.sensitivity_settings,
-            self.num_bins,
-        )
-        plan = self.compile_analysis_candidate(candidate)
-        self.activate_analysis_plan(candidate, plan)
-        
-        # Warn about empty bins
-        empty_count = sum(len(indices) == 0 for indices in plan.bin_indices)
-        if empty_count > 0:
-            print(f"Warning: {empty_count} bins have no frequency coverage.")
-
     def compile_analysis_candidate(
         self,
         candidate: StandardAnalysisCandidate,
@@ -438,30 +433,6 @@ class AudioProcessor:
         if self.sample_rate <= 0:
             raise RuntimeError("Call setup() before compiling an analysis candidate")
         return compile_standard_analysis_plan(candidate, self.sample_rate)
-
-    def activate_analysis_plan(
-        self,
-        candidate: StandardAnalysisCandidate,
-        plan: StandardAnalysisPlan,
-    ) -> None:
-        """Publish one complete standard-analysis plan between frames."""
-        self.analysis_candidate = candidate
-        self.active_plan = plan
-        primary = self._projection_record(self._primary_projection_token)
-        primary.candidate = candidate
-        primary.plan = plan
-        primary.noise_floor = float(self.sensitivity_settings.noise_floor)
-        self.activate_analysis_inputs()
-
-    def activate_analysis_inputs(self) -> None:
-        """Publish one coherent plan/noise-floor snapshot to the worker."""
-        plan = self.active_plan
-        if plan is None:
-            raise RuntimeError("Call setup() before activating analysis inputs")
-        primary = self._projection_record(self._primary_projection_token)
-        primary.plan = plan
-        primary.noise_floor = float(self.sensitivity_settings.noise_floor)
-        self._publish_worker_state({self._primary_projection_token})
 
     def _publish_worker_state(self, changed_tokens: set[object]) -> None:
         """Atomically expose one transform and every compiled projection."""
@@ -647,7 +618,13 @@ class AudioProcessor:
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Copy and publish only the newest input block, then wake analysis."""
-        samples = indata[:, self.audio_settings.channel].copy()
+        column = indata[:, self.audio_settings.channel]
+        if self._capture_scale is None:
+            samples = column.copy()
+        else:
+            # astype copies; the published block is float32 whatever the capture.
+            samples = column.astype(np.float32)
+            samples *= self._capture_scale
         with self._sample_lock:
             self.latest_samples = samples
             self.sample_generation += 1
@@ -658,6 +635,8 @@ class AudioProcessor:
     
     def start(self) -> None:
         """Start the audio input stream."""
+        # The stream opens with the settings' dtype; scale by the same one.
+        self._capture_scale = _capture_scale(self.audio_settings.capture_dtype)
         self._start_analysis_worker()
         try:
             self._stream = sd.InputStream(

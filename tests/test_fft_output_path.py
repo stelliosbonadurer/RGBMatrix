@@ -225,32 +225,6 @@ class PillowBulkBarsOutputTests(unittest.TestCase):
             self.assertEqual(canvas.set_image_calls, draw_number)
             self.assertIs(canvas.images[-1], plan.image)
 
-    def test_runtime_guard_covers_every_candidate_invalidating_control(self) -> None:
-        plan = compile_pillow_bulk_bars_output(
-            _qualification_visualizer(), WIDTH, HEIGHT
-        )
-
-        self.assertEqual(
-            plan.incompatible_runtime_paths,
-            frozenset({
-                "dynamic.adjust_speed",
-                "dynamic.cycle_speed",
-                "dynamic.freeze",
-                "dynamic.frozen",
-                "dynamic.reseed",
-                "settings.overflow_multiplier",
-                "settings.peak_enabled",
-                "settings.shadow_enabled",
-                "theme.next",
-                "theme.previous",
-                "visualizer.bars",
-                "visualizer.full",
-                "visualizer.gradient",
-                "visualizer.overflow",
-                "visualizer.theme",
-            }),
-        )
-
     def test_upload_failure_is_wrapped_once_without_retry_or_fallback(self) -> None:
         plan = compile_pillow_bulk_bars_output(
             _qualification_visualizer(), WIDTH, HEIGHT

@@ -21,7 +21,7 @@ All settings are defined in `config/settings.py` as dataclasses. You can modify 
 ### Application Arguments
 
 | Argument | Description |
-| `--theme` | Color theme name |
+| `--audio-source` | Audio input: `usb-mic` (default) or `bluetooth` |
 | `--visualizer` | Visualizer type (`bars`, `bars_overflow`) |
 | `--settings` | Path to JSON settings file |
 | `--list-themes` | Show available themes and exit |
@@ -65,17 +65,38 @@ zoom_max_freq: int = 6300   # Zoom maximum Hz
 ### SensitivitySettings
 
 ```python
-noise_floor: float = 0.3       # Subtract from signal (0=sensitive, 0.5=cut noise)
-low_freq_weight: float = 0.55  # Bass multiplier (<1=quieter, >1=louder)
-high_freq_weight: float = 10.0 # Treble multiplier
-silence_threshold: float = 0.0 # Fade to black below this
+noise_floor: float = 0.3   # Subtract from signal (0=sensitive, 0.5=cut noise)
+weight_points: list = [    # Frequency weighting curve
+    {"position": 0.0, "weight": 0.45},
+    {"position": 0.1, "weight": 0.752},
+    {"position": 0.3, "weight": 2.019},
+    {"position": 0.6, "weight": 4.888},
+    {"position": 1.0, "weight": 10.0},
+]
 ```
+
+These are the startup values for the default layer and the analyzer. At runtime each
+layer carries its own `noise_floor` and `weight_points` in its structure settings.
+
+`weight_points` has 1–16 points. `position` runs from 0 (the layer's `min_freq`) to
+1 (its `max_freq`) on the same log scale as the bars, and `weight` (0–100) multiplies
+the bars there. Between points the weight is linear in position; beyond the first
+and last point it stays flat. Points are sorted by position, and two points can't
+share a position. Each bar takes the curve's value at its center, and the weights are
+computed once when a layer is compiled, so they cost nothing per frame.
+
+The default approximates the retired `low_freq_weight=0.45`/`high_freq_weight=10.0`
+curve (`low + (high - low) * position ** 1.5`) within 9% at every bar. A settings file
+that still has `low_freq_weight` or `high_freq_weight` is converted the same way, by
+sampling that curve at positions 0, 0.1, 0.3, 0.6, and 1, with a printed note. If
+the file also has `weight_points`, those win and the old keys are ignored. The removed
+`silence_threshold` setting is dropped with a note.
 
 **Tips:**
 
 - Increase `noise_floor` if you see dancing bars with no audio
-- Increase `high_freq_weight` if treble is too quiet
-- Decrease `low_freq_weight` if bass dominates everything
+- Raise the weight of the last points if treble is too quiet
+- Lower the weight of the first points if bass dominates everything
 
 ### ScalingSettings
 
@@ -174,15 +195,12 @@ Then run with:
 sudo python main.py --settings=my_settings.json --led-rows=64 ...
 ```
 
-## Using Presets
+## Saved Presets
 
-Built-in presets are available in `config/presets.py`:
-
-- `default` - Balanced settings
-- `bluegrass` - Warm colors, acoustic frequency range
-- `edm` - Intense fire theme, heavy bass, overflow enabled
-- `classical` - Ocean theme, smooth movement, wide dynamics
-- `podcast` - Voice frequencies, simple green theme
+There are no built-in presets. The web control service stores named FFT presets on
+the Pi, each holding launch parameters and a full layer structure, and launches one
+through the normal `POST /api/v1/run`. See the controller's web-service operations
+guide for the `/api/v1/presets` contract.
 
 ## Multiple Standard Views
 

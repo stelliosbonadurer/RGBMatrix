@@ -38,14 +38,19 @@ class ControllerConfig:
     boot_visualization_id: str | None = "system_info"
     matrix_defaults: Mapping[str, Any] = field(default_factory=dict)
     visualization_defaults: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    # web-control-refactor D-036: False opens visualization control to every
+    # request until a later security update. The code default stays locked.
+    require_pairing: bool = True
 
     def defaults_for(self, visualization_id: str) -> dict[str, Any]:
-        """Merge shared matrix defaults with one visualization's defaults."""
+        """Return one program's own configured defaults.
 
-        return {
-            **self.matrix_defaults,
-            **self.visualization_defaults.get(visualization_id, {}),
-        }
+        The ``matrix`` block is no longer merged in: matrix values are shared and
+        supplied per launch (web-control-refactor D-035). ``matrix_defaults`` is the
+        fallback the matrix settings store starts from.
+        """
+
+        return dict(self.visualization_defaults.get(visualization_id, {}))
 
 
 def _require_object(value: Any, label: str) -> dict[str, Any]:
@@ -99,11 +104,17 @@ def load_controller_config(path: Path | None) -> ControllerConfig:
     root = _require_object(raw, "controller config")
     _reject_unknown(
         root,
-        {"version", "runtime", "boot", "matrix", "visualizations"},
+        {"version", "access", "runtime", "boot", "matrix", "visualizations"},
         "top-level",
     )
     if root.get("version") != 1:
         raise ControllerConfigError("controller config version must be 1")
+
+    access = _require_object(root.get("access", {}), "access")
+    _reject_unknown(access, {"require_pairing"}, "access")
+    require_pairing = access.get("require_pairing", True)
+    if type(require_pairing) is not bool:
+        raise ControllerConfigError("access.require_pairing must be a boolean")
 
     runtime = _require_object(root.get("runtime", {}), "runtime")
     _reject_unknown(
@@ -181,4 +192,5 @@ def load_controller_config(path: Path | None) -> ControllerConfig:
         boot_visualization_id=boot_visualization,
         matrix_defaults=matrix_defaults,
         visualization_defaults=visualization_defaults,
+        require_pairing=require_pairing,
     )

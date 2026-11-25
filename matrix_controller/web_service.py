@@ -20,10 +20,26 @@ from urllib.parse import urlsplit
 
 from matrix_network import NetworkClient, NetworkClientError
 
+from .bluetooth import (
+    BluetoothController,
+    BluetoothError,
+    DbusBluetoothBackend,
+    audio_source_catalog,
+    unavailable_status,
+)
 from .boot_code import DEFAULT_CODE_FILE, ensure_boot_code
-from .controller_config import ControllerConfigError, load_controller_config
+from .controller_config import ControllerConfig, ControllerConfigError, load_controller_config
+from .matrix_settings import (
+    DEFAULT_MATRIX_SETTINGS_FILE,
+    MatrixSettingsError,
+    MatrixSettingsStore,
+    config_matrix_values,
+)
 from .pairing import PairingError, PairingManager
-from .registry import build_default_registry
+from .program_files import DEFAULT_PROGRAM_FILES_DIRECTORY, ProgramFileError, ProgramFileStore
+from .presets import DEFAULT_PRESET_FILE, PresetError, PresetStore
+from .registry import Registry, build_default_registry
+from .runtime_transport import MAX_LAUNCH_STRUCTURE_BYTES
 from .schema import ValidationError
 from .supervisor import VisualizationSupervisor
 
@@ -38,6 +54,41 @@ BROWSER_SESSION_HEADER = "X-RGB-Matrix-Session"
 # Temporary trusted-LAN convenience requested during UI development. Keep this
 # explicit and easy to remove; it intentionally weakens possession-based pairing.
 TEMPORARY_FALLBACK_PAIRING_CODE = "000000"
+
+PROGRAM_PAGE_PREFIX = "/programs/"
+MATRIX_SETTINGS_PATH = "/api/v1/matrix-settings"
+PROGRAM_FILES_PREFIX = "/api/v1/programs/"
+PAGE_CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; connect-src 'self'; script-src 'self'; "
+    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+_JAVASCRIPT = "text/javascript; charset=utf-8"
+# Every page asset has a literal route (web-control-refactor D-042); request paths
+# are never joined into a filesystem path.
+STATIC_ASSETS: dict[str, tuple[str, str]] = {
+    "/static/app.css": ("app.css", "text/css; charset=utf-8"),
+    "/static/js/api.js": ("js/api.js", _JAVASCRIPT),
+    "/static/js/model.js": ("js/model.js", _JAVASCRIPT),
+    "/static/js/ui.js": ("js/ui.js", _JAVASCRIPT),
+    "/static/js/home.js": ("js/home.js", _JAVASCRIPT),
+    "/static/js/program.js": ("js/program.js", _JAVASCRIPT),
+    "/static/js/file_editor.js": ("js/file_editor.js", _JAVASCRIPT),
+    "/static/js/fft_editor.js": ("js/fft_editor.js", _JAVASCRIPT),
+    "/static/js/fft_graph.js": ("js/fft_graph.js", _JAVASCRIPT),
+    "/static/js/fft_preset_controls.js": ("js/fft_preset_controls.js", _JAVASCRIPT),
+    "/static/js/fft_bluetooth_controls.js": ("js/fft_bluetooth_controls.js", _JAVASCRIPT),
+    "/static/js/programs/fft.js": ("js/programs/fft.js", _JAVASCRIPT),
+    "/static/js/programs/fft_layout.js": ("js/programs/fft_layout.js", _JAVASCRIPT),
+    "/static/js/programs/fft_presets.js": ("js/programs/fft_presets.js", _JAVASCRIPT),
+    "/static/js/programs/fft_bluetooth.js": ("js/programs/fft_bluetooth.js", _JAVASCRIPT),
+    "/static/js/programs/graph_traversal.js": (
+        "js/programs/graph_traversal.js",
+        _JAVASCRIPT,
+    ),
+    # Generated from the FFT code by tests/test_fft_catalog.py (D-049).
+    "/static/fft_catalog.json": ("fft_catalog.json", "application/json; charset=utf-8"),
+}
 
 
 class _RuntimeResponseError(RuntimeError):
@@ -159,47 +210,23 @@ def _bounded_runtime_value(value: Any, *, label: str, depth: int = 0) -> Any:
     raise ValidationError(f"{label} contains an unsupported JSON value")
 
 
-def _parse_runtime_patch(payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate the public atomic patch envelope without knowing visualization IDs."""
+def validate_launch_structure(structure: Any) -> dict[str, Any]:
+    """Apply the launch bounds to a layer structure and return a bounded copy.
 
-    allowed = {"run_id", "expected_revision", "changes"}
-    unknown = set(payload) - allowed
-    if unknown:
-        raise ValidationError(f"unknown runtime fields: {', '.join(sorted(unknown))}")
-    run_id = payload.get("run_id")
-    if type(run_id) not in {str, int} or (isinstance(run_id, str) and not run_id):
-        raise ValidationError("run_id must be a non-empty string or integer")
-    expected_revision = payload.get("expected_revision")
-    if expected_revision is not None and (
-        type(expected_revision) is not int or expected_revision < 0
-    ):
-        raise ValidationError("expected_revision must be a non-negative integer")
-    changes = payload.get("changes")
-    if not isinstance(changes, list) or not changes or len(changes) > MAX_RUNTIME_CHANGES:
+    ``POST /api/v1/run`` and the preset store share this, so a saved preset can't
+    hold a structure that launch would refuse (web-control-refactor D-025). The
+    supervisor repeats the byte cap at its own boundary.
+    """
+
+    if not isinstance(structure, dict):
+        raise ValidationError("structure must be a JSON object")
+    bounded = _bounded_runtime_value(structure, label="structure")
+    encoded = json.dumps(bounded, separators=(",", ":"), allow_nan=False)
+    if len(encoded.encode("utf-8")) > MAX_LAUNCH_STRUCTURE_BYTES:
         raise ValidationError(
-            f"changes must contain between 1 and {MAX_RUNTIME_CHANGES} items"
+            f"structure must be at most {MAX_LAUNCH_STRUCTURE_BYTES} bytes"
         )
-    normalized_changes = []
-    for index, change in enumerate(changes):
-        if not isinstance(change, dict) or set(change) != {"path", "value"}:
-            raise ValidationError(f"changes[{index}] must contain path and value only")
-        path = change["path"]
-        if type(path) is not str or not path or len(path) > MAX_RUNTIME_PATH_LENGTH:
-            raise ValidationError(f"changes[{index}].path is invalid")
-        normalized_changes.append(
-            {
-                "path": path,
-                "value": _bounded_runtime_value(
-                    change["value"], label=f"changes[{index}].value"
-                ),
-            }
-        )
-    return {
-        "operation": "patch",
-        "run_id": run_id,
-        "expected_revision": expected_revision,
-        "changes": normalized_changes,
-    }
+    return bounded
 
 
 def _parse_runtime_action(payload: dict[str, Any]) -> dict[str, Any]:
@@ -281,8 +308,21 @@ def build_handler(
     api_token: str | None,
     network_client: NetworkClient | None = None,
     pairing_manager: PairingManager,
+    preset_store: PresetStore | None = None,
+    bluetooth: BluetoothController | None = None,
+    matrix_settings: MatrixSettingsStore | None = None,
+    program_files: ProgramFileStore | None = None,
+    require_pairing: bool = True,
 ) -> type[BaseHTTPRequestHandler]:
-    """Bind one supervisor and token policy to an HTTP handler class."""
+    """Bind one supervisor and token policy to an HTTP handler class.
+
+    Without ``preset_store`` the preset routes answer 503. Without ``bluetooth``
+    the Bluetooth status reports ``available: false`` and its actions answer 503.
+    Without ``matrix_settings`` the matrix-settings routes answer 503, and
+    without ``program_files`` the program-file routes do.
+    ``require_pairing=False`` opens visualization control to every request
+    (web-control-refactor D-036); network administration still needs the token.
+    """
 
     pairing = pairing_manager
 
@@ -292,15 +332,16 @@ def build_handler(
         def do_GET(self) -> None:  # noqa: N802 - HTTP handler API name
             path = urlsplit(self.path).path
             if path == "/":
-                self._send_control_page()
-            elif path == "/config/fft":
-                self._send_fft_config_page()
-            elif path == "/static/control.css":
-                self._send_static_file("control.css", "text/css; charset=utf-8")
-            elif path == "/static/control.js":
-                self._send_static_file("control.js", "text/javascript; charset=utf-8")
-            elif path == "/static/fft-config.js":
-                self._send_static_file("fft-config.js", "text/javascript; charset=utf-8")
+                self._send_page("home.html")
+            elif path.startswith(PROGRAM_PAGE_PREFIX):
+                # D-033: one shared page for every registered program. The ID is
+                # only compared with the registry; it never reaches a file path.
+                if path.removeprefix(PROGRAM_PAGE_PREFIX) in self._registered_ids():
+                    self._send_page("program.html")
+                else:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "program not found")
+            elif path in STATIC_ASSETS:
+                self._send_static_file(*STATIC_ASSETS[path])
             elif path == "/setup":
                 self._send_setup_page()
             elif path in {"/generate_204", "/hotspot-detect.html", "/connecttest.txt", "/ncsi.txt"}:
@@ -325,11 +366,41 @@ def build_handler(
                 self._send_json(HTTPStatus.OK, {"visualizations": supervisor.list_visualizations()})
             elif path == "/api/v1/status":
                 self._send_json(HTTPStatus.OK, supervisor.status())
+            elif path == MATRIX_SETTINGS_PATH:
+                # Public like the visualization list: the values aren't secret, and
+                # a page without control access can still show them (D-008).
+                self._handle_matrix_settings_request("get")
+            elif path.startswith(PROGRAM_FILES_PREFIX):
+                # Public like the matrix settings: colors aren't secret (D-044).
+                self._handle_program_file_request("get", path)
             elif path == "/api/v1/runtime":
                 if not self._is_control_authorized():
                     self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
                 else:
                     self._handle_runtime_snapshot()
+            elif path == "/api/v1/presets" or path.startswith("/api/v1/presets/"):
+                preset_id = self._preset_id_from_path(path)
+                if path != "/api/v1/presets" and preset_id is None:
+                    self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                elif not self._is_control_authorized():
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                elif preset_id is None:
+                    self._handle_preset_request("list")
+                else:
+                    self._handle_preset_request("get", preset_id=preset_id)
+            elif path in {"/api/v1/bluetooth", "/api/v1/audio/sources"}:
+                if not self._is_control_authorized():
+                    self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                elif path == "/api/v1/bluetooth":
+                    self._send_bluetooth_result(
+                        lambda: bluetooth.status()
+                        if bluetooth is not None
+                        else unavailable_status("Bluetooth control is not configured")
+                    )
+                else:
+                    self._send_bluetooth_result(
+                        lambda: audio_source_catalog(supervisor.status(), bluetooth=bluetooth)
+                    )
             elif path == "/api/v1/pairing/status":
                 supplied_token = self._control_session_token()
                 self._send_json(
@@ -337,6 +408,7 @@ def build_handler(
                     {
                         "authorized": self._is_control_authorized(),
                         "temporary_session": pairing.is_session_token(supplied_token),
+                        "pairing_required": require_pairing,
                     },
                 )
             elif path == "/healthz":
@@ -348,17 +420,30 @@ def build_handler(
                         "service": "rgb-matrix-control",
                         "api_version": "v1",
                         "endpoints": [
+                            "GET /",
+                            "GET /programs/{visualization_id}",
                             "GET /api/v1/visualizations",
                             "GET /api/v1/status",
+                            "GET /api/v1/matrix-settings",
+                            "GET /api/v1/programs/{visualization_id}/files/{name}",
                             "GET /api/v1/runtime",
-                            "PATCH /api/v1/runtime",
                             "POST /api/v1/runtime/actions",
+                            "GET /api/v1/presets",
+                            "GET /api/v1/presets/{preset_id}",
+                            "GET /api/v1/bluetooth",
+                            "GET /api/v1/audio/sources",
                             "GET /api/v1/pairing/status",
                             "GET /api/v1/network/status",
                             "GET /setup",
-                            "GET /config/fft",
                             "POST /api/v1/run",
                             "POST /api/v1/stop",
+                            "POST /api/v1/presets",
+                            "PUT /api/v1/presets/{preset_id}",
+                            "DELETE /api/v1/presets/{preset_id}",
+                            "PUT /api/v1/matrix-settings",
+                            "PUT /api/v1/programs/{visualization_id}/files/{name}",
+                            "DELETE /api/v1/programs/{visualization_id}/files/{name}",
+                            "POST /api/v1/bluetooth/actions",
                             "POST /api/v1/pairing/exchange",
                             "POST /api/v1/pairing/logout",
                             "POST /api/v1/network/provision",
@@ -370,6 +455,8 @@ def build_handler(
 
         def do_POST(self) -> None:  # noqa: N802 - HTTP handler API name
             path = urlsplit(self.path).path
+            if self._refuse_cross_site_mutation():
+                return
             try:
                 if path == "/api/v1/pairing/exchange":
                     payload = self._read_json_object()
@@ -464,13 +551,37 @@ def build_handler(
                     self._handle_runtime_command(command)
                     return
 
+                if path == "/api/v1/presets":
+                    self._handle_preset_request(
+                        "create",
+                        payload=self._read_json_object(),
+                        success_status=HTTPStatus.CREATED,
+                    )
+                    return
+
+                if path == "/api/v1/bluetooth/actions":
+                    self._handle_bluetooth_action(self._read_json_object())
+                    return
+
                 if path == "/api/v1/run":
                     payload = self._read_json_object()
                     visualization_id = payload.get("visualization_id")
                     if type(visualization_id) is not str or not visualization_id:
                         raise ValidationError("visualization_id must be a non-empty string")
                     parameters = payload.get("parameters", {})
-                    result = supervisor.start(visualization_id, parameters)
+                    unknown = set(payload) - {"visualization_id", "parameters", "structure"}
+                    if unknown:
+                        raise ValidationError(
+                            f"unknown run fields: {', '.join(sorted(unknown))}"
+                        )
+                    if "structure" in payload:
+                        result = supervisor.start(
+                            visualization_id,
+                            parameters,
+                            structure=validate_launch_structure(payload["structure"]),
+                        )
+                    else:
+                        result = supervisor.start(visualization_id, parameters)
                     self._send_json(
                         HTTPStatus.OK,
                         {
@@ -503,26 +614,226 @@ def build_handler(
             except RuntimeError as exc:
                 self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
 
-        def do_PATCH(self) -> None:  # noqa: N802 - HTTP handler API name
-            """Apply one authenticated atomic runtime patch."""
+        def do_PUT(self) -> None:  # noqa: N802 - HTTP handler API name
+            """Replace one whole preset (D-025), the matrix settings (D-035), or a
+            program file (D-044)."""
 
+            if self._refuse_cross_site_mutation():
+                return
             path = urlsplit(self.path).path
-            if path != "/api/v1/runtime":
+            if path.startswith(PROGRAM_FILES_PREFIX):
+                if not self._authorize_control_mutation():
+                    return
+                try:
+                    payload = self._read_json_object()
+                except ValueError as exc:
+                    self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                    return
+                self._handle_program_file_request("replace", path, payload=payload)
+                return
+            if path == MATRIX_SETTINGS_PATH:
+                if not self._authorize_control_mutation():
+                    return
+                try:
+                    payload = self._read_json_object()
+                except ValueError as exc:
+                    self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                    return
+                self._handle_matrix_settings_request("replace", payload=payload)
+                return
+            preset_id = self._preset_id_from_path(path)
+            if preset_id is None:
                 self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
                 return
-            if not self._is_control_authorized():
-                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
-                return
-            if not self._cookie_mutation_is_same_origin():
-                self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
+            if not self._authorize_control_mutation():
                 return
             try:
-                command = _parse_runtime_patch(self._read_json_object())
-                self._handle_runtime_command(command)
-            except ValidationError as exc:
-                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                payload = self._read_json_object()
             except ValueError as exc:
                 self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._handle_preset_request("replace", preset_id=preset_id, payload=payload)
+
+        def do_DELETE(self) -> None:  # noqa: N802 - HTTP handler API name
+            """Delete one preset at its expected revision (D-025), or clear an
+            unusable program file (D-047; no body)."""
+
+            if self._refuse_cross_site_mutation():
+                return
+            path = urlsplit(self.path).path
+            if path.startswith(PROGRAM_FILES_PREFIX):
+                if not self._authorize_control_mutation():
+                    return
+                # Like /stop: no body needed, but one that is sent must be JSON.
+                if self.headers.get("Content-Length", "0") != "0":
+                    try:
+                        self._read_json_object()
+                    except ValueError as exc:
+                        self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                        return
+                self._handle_program_file_request("remove", path)
+                return
+            preset_id = self._preset_id_from_path(path)
+            if preset_id is None:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                return
+            if not self._authorize_control_mutation():
+                return
+            try:
+                payload = self._read_json_object()
+            except ValueError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            self._handle_preset_request("delete", preset_id=preset_id, payload=payload)
+
+        def _authorize_control_mutation(self) -> bool:
+            """Send 401/403 and return False unless this mutation may proceed."""
+
+            if not self._is_control_authorized():
+                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
+                return False
+            if not self._cookie_mutation_is_same_origin():
+                self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
+                return False
+            return True
+
+        @staticmethod
+        def _preset_id_from_path(path: str) -> str | None:
+            prefix = "/api/v1/presets/"
+            if not path.startswith(prefix):
+                return None
+            preset_id = path[len(prefix) :]
+            if not preset_id or "/" in preset_id:
+                return None
+            return preset_id
+
+        def _handle_preset_request(
+            self,
+            operation: str,
+            *,
+            preset_id: str | None = None,
+            payload: dict[str, Any] | None = None,
+            success_status: HTTPStatus = HTTPStatus.OK,
+        ) -> None:
+            if preset_store is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "preset store is unavailable", "code": "preset_store_unavailable"},
+                )
+                return
+            try:
+                if operation == "list":
+                    result = preset_store.list()
+                elif operation == "get":
+                    result = preset_store.get(preset_id)
+                elif operation == "create":
+                    result = preset_store.create(payload)
+                elif operation == "replace":
+                    result = preset_store.replace(preset_id, payload)
+                elif operation == "delete":
+                    result = preset_store.delete(preset_id, payload)
+                else:  # pragma: no cover - code-owned operation names
+                    raise RuntimeError(f"unknown preset operation: {operation}")
+            except PresetError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            self._send_json(success_status, result)
+
+        def _handle_matrix_settings_request(
+            self,
+            operation: str,
+            *,
+            payload: dict[str, Any] | None = None,
+        ) -> None:
+            if matrix_settings is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "error": "matrix settings are unavailable",
+                        "code": "matrix_settings_unavailable",
+                    },
+                )
+                return
+            try:
+                if operation == "get":
+                    result = matrix_settings.snapshot()
+                else:
+                    result = matrix_settings.replace(payload)
+            except MatrixSettingsError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            self._send_json(HTTPStatus.OK, result)
+
+        def _handle_program_file_request(
+            self,
+            operation: str,
+            path: str,
+            *,
+            payload: dict[str, Any] | None = None,
+        ) -> None:
+            # ``/api/v1/programs/<id>/files/<name>``. Both parts are only looked
+            # up in the registry; neither reaches a file path.
+            parts = path.removeprefix(PROGRAM_FILES_PREFIX).split("/")
+            if len(parts) != 3 or parts[1] != "files" or not parts[0] or not parts[2]:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
+                return
+            program_id, _files, name = parts
+            if program_files is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {
+                        "error": "program files are unavailable",
+                        "code": "program_file_unavailable",
+                    },
+                )
+                return
+            try:
+                if operation == "get":
+                    result = program_files.snapshot(program_id, name)
+                elif operation == "replace":
+                    result = program_files.replace(program_id, name, payload)
+                else:
+                    result = program_files.remove_unusable(program_id, name)
+            except ProgramFileError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            self._send_json(HTTPStatus.OK, result)
+
+        def _registered_ids(self) -> set[str]:
+            return {
+                item["id"]
+                for item in supervisor.list_visualizations()
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
+
+        def _handle_bluetooth_action(self, payload: dict[str, Any]) -> None:
+            if bluetooth is None:
+                self._send_json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "Bluetooth control is not configured", "code": "bluetooth_unavailable"},
+                )
+                return
+            self._send_bluetooth_result(lambda: bluetooth.perform(payload))
+
+        def _send_bluetooth_result(self, produce: Any) -> None:
+            """Send a Bluetooth result; never let an exception reach the log.
+
+            The server would print an escaped traceback to journald, and a D-Bus
+            message there can name a device path, which embeds the address (D-030).
+            """
+
+            try:
+                result = produce()
+            except BluetoothError as exc:
+                self._send_json(exc.status, exc.as_body())
+                return
+            except Exception:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "Bluetooth request failed", "code": "bluetooth_failed"},
+                )
+                return
+            self._send_json(HTTPStatus.OK, result)
 
         def _handle_runtime_snapshot(self) -> None:
             try:
@@ -634,6 +945,14 @@ def build_handler(
             return supplied_token is not None and hmac.compare_digest(supplied_token, api_token)
 
         def _is_control_authorized(self) -> bool:
+            """Allow visualization control (never network administration).
+
+            With ``require_pairing`` off, every request counts as a paired session
+            (web-control-refactor D-036); the pairing code paths stay in place.
+            """
+
+            if not require_pairing:
+                return True
             supplied_token = self._control_session_token()
             return self._is_admin_authorized() or pairing.is_session_token(supplied_token)
 
@@ -660,7 +979,7 @@ def build_handler(
             """Require an exact Origin match only when a cookie grants access.
 
             Bearer clients remain usable from scripts and terminals without browser
-            headers. Browsers send Origin on fetch-based POST/PATCH requests, so an
+            headers. Browsers send Origin on fetch-based POST/PUT/DELETE requests, so an
             unrelated site cannot silently drive the controller with ambient cookies.
             """
 
@@ -672,9 +991,24 @@ def build_handler(
             cookie_token = self._cookie_token()
             if not pairing.is_session_token(cookie_token):
                 return True
-            host = self.headers.get("Host")
             origin = self.headers.get("Origin")
-            if not host or not origin:
+            return origin is not None and self._origin_matches_host(origin)
+
+        def _mutation_origin_is_allowed(self) -> bool:
+            """Refuse every cross-site mutation (web-control-refactor D-036).
+
+            With pairing off nothing else stops another site in the phone's browser
+            from posting here: bodies aren't checked for a JSON content type and
+            there is no preflight handler. Browsers send ``Origin`` on these
+            requests; scripts and curl usually don't, and stay allowed.
+            """
+
+            origin = self.headers.get("Origin")
+            return origin is None or self._origin_matches_host(origin)
+
+        def _origin_matches_host(self, origin: str) -> bool:
+            host = self.headers.get("Host")
+            if not host:
                 return False
             parsed = urlsplit(origin)
             return (
@@ -684,6 +1018,14 @@ def build_handler(
                 and not parsed.query
                 and not parsed.fragment
             )
+
+        def _refuse_cross_site_mutation(self) -> bool:
+            """Send 403 and return True when this mutation comes from another site."""
+
+            if self._mutation_origin_is_allowed():
+                return False
+            self._send_error_json(HTTPStatus.FORBIDDEN, "cross-site requests are refused")
+            return True
 
         def _is_loopback_client(self) -> bool:
             return _is_loopback_address(self.client_address[0])
@@ -720,28 +1062,11 @@ def build_handler(
             morsel["samesite"] = "Strict"
             return morsel.OutputString()
 
-        def _send_control_page(self) -> None:
+        def _send_page(self, filename: str) -> None:
             self._send_static_file(
-                "index.html",
+                filename,
                 "text/html; charset=utf-8",
-                content_security_policy=(
-                    "default-src 'self'; connect-src 'self'; script-src 'self'; "
-                    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
-                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-                ),
-            )
-
-        def _send_fft_config_page(self) -> None:
-            """Serve the focused music-control UI under an explicit route."""
-
-            self._send_static_file(
-                "fft-config.html",
-                "text/html; charset=utf-8",
-                content_security_policy=(
-                    "default-src 'self'; connect-src 'self'; script-src 'self'; "
-                    "style-src 'self'; img-src 'self' data:; object-src 'none'; "
-                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-                ),
+                content_security_policy=PAGE_CONTENT_SECURITY_POLICY,
             )
 
         def _send_setup_page(self) -> None:
@@ -813,6 +1138,18 @@ def build_handler(
     return ControlRequestHandler
 
 
+def registry_for_config(controller_config: ControllerConfig) -> Registry:
+    """Build the registry with every configured program's own defaults.
+
+    The service once listed four programs here and left Graph Traversal out, so
+    its config block never applied (fixed in web-control-refactor M4).
+    """
+
+    return build_default_registry(
+        parameter_defaults=dict(controller_config.visualization_defaults)
+    )
+
+
 def _read_token(token_file: str | None) -> str | None:
     env_token = os.environ.get("RGBMATRIX_API_TOKEN")
     if env_token:
@@ -842,6 +1179,24 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_CODE_FILE,
         help="State file holding the pairing code for the current boot",
+    )
+    parser.add_argument(
+        "--preset-file",
+        type=Path,
+        default=DEFAULT_PRESET_FILE,
+        help="State file holding the FFT presets saved from the web pages",
+    )
+    parser.add_argument(
+        "--matrix-settings-file",
+        type=Path,
+        default=DEFAULT_MATRIX_SETTINGS_FILE,
+        help="State file holding the shared matrix settings saved from the web pages",
+    )
+    parser.add_argument(
+        "--program-files-dir",
+        type=Path,
+        default=DEFAULT_PROGRAM_FILES_DIRECTORY,
+        help="State directory holding program config files saved from the web pages",
     )
     parser.add_argument(
         "--network-socket",
@@ -918,17 +1273,24 @@ def main() -> int:
         if args.stop_timeout is not None
         else controller_config.stop_timeout_seconds
     )
-    registry_defaults = {
-        visualization_id: controller_config.defaults_for(visualization_id)
-        for visualization_id in ("system_info", "fft", "sorts", "master_theorem")
-    }
+    registry = registry_for_config(controller_config)
+    matrix_settings = MatrixSettingsStore(
+        args.matrix_settings_file,
+        config_values=config_matrix_values(controller_config.matrix_defaults),
+    )
+    program_files = ProgramFileStore(registry, args.program_files_dir)
     supervisor = VisualizationSupervisor(
-        build_default_registry(parameter_defaults=registry_defaults),
+        registry,
         python_executable=python_executable,
         command_prefix=command_prefix,
         stop_timeout=stop_timeout,
         runtime_dir=os.environ.get("RGBMATRIX_RUNTIME_DIR"),
+        matrix_settings=matrix_settings.effective_values,
+        program_files=program_files.launch_files,
     )
+    # Nothing touches D-Bus until the first Bluetooth request; a missing binding or
+    # bus only makes those routes report unavailable (M3 criterion 8).
+    bluetooth = BluetoothController(DbusBluetoothBackend())
     server = ThreadingHTTPServer(
         (args.host, args.port),
         build_handler(
@@ -939,6 +1301,15 @@ def main() -> int:
                 boot_code,
                 additional_codes=(TEMPORARY_FALLBACK_PAIRING_CODE,),
             ),
+            preset_store=PresetStore(
+                args.preset_file,
+                validate_parameters=registry.get("fft").validate_parameters,
+                validate_structure=validate_launch_structure,
+            ),
+            bluetooth=bluetooth,
+            matrix_settings=matrix_settings,
+            program_files=program_files,
+            require_pairing=controller_config.require_pairing,
         ),
     )
 
@@ -969,6 +1340,10 @@ def main() -> int:
     finally:
         server.server_close()
         supervisor.stop()
+        try:
+            bluetooth.shutdown()  # closes a pairing window left open
+        except Exception:
+            pass
         signal.signal(signal.SIGTERM, previous_sigterm)
         signal.signal(signal.SIGINT, previous_sigint)
     return 0
