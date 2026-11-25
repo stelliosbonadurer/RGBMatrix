@@ -557,11 +557,16 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     return null;
   }
 
-  // The snapshot of the run this page expects, once its control channel connects.
+  // /status's runtime_control.connected turns true only after the supervisor has
+  // served a first runtime request (it accepts the child's connection lazily), so
+  // the page asks for the snapshot instead of waiting for that flag.
+  const mayHaveSnapshot = status => status?.visualization_id === fft.id && status.state === 'running' &&
+    status.runtime_control?.available !== false;
+
+  // The snapshot of the run this page expects, once its control channel answers.
   async function maybeLoadSnapshot(status) {
     if (fetching || !expectedRun || snapshot) return;
-    if (status?.visualization_id !== fft.id || String(status.run_id) !== expectedRun) return;
-    if (status.state !== 'running' || !status.runtime_control?.connected) return;
+    if (String(status?.run_id) !== expectedRun || !mayHaveSnapshot(status)) return;
     fetching = true;
     try {
       const reply = await fetchSnapshot();
@@ -595,10 +600,10 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     const launchError = reply.structure?.launch_error;
     if (launchError) {
       adopt(reply, {reloadDraft: false});
-      placeError(launchError.path, launchError.message, sentUids);
+      const placed = placeError(launchError.path, launchError.message, sentUids);
       refresh();
       requestReveal();
-      return {text: `Launched with the default layer: ${launchError.message}`, tone: 'error'};
+      return {text: `Launched with the default layer: ${launchError.message}`, tone: 'error', placed};
     }
     adopt(reply, {reloadDraft: true});
     return {
@@ -620,7 +625,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       if (status) {
         if (status.state === 'failed') return {failed: status.last_error || 'it stopped'};
         if (status.visualization_id !== fft.id || String(status.run_id) !== String(runId)) return {gone: true};
-        if (status.state === 'running' && status.runtime_control?.connected) {
+        if (mayHaveSnapshot(status)) {
           const reply = await fetchSnapshot();
           if (reply && String(reply.run_id) === String(runId)) return {reply};
         }
@@ -829,7 +834,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       setBaselineFrom(catalog.structure);
       if (running) {
         expectedRun = String(status.run_id);
-        if (status.state === 'running' && status.runtime_control?.connected) {
+        if (mayHaveSnapshot(status)) {
           const reply = await fetchSnapshot();
           if (reply && String(reply.run_id) === expectedRun) {
             snapshot = {run_id: reply.run_id, revision: reply.revision};
@@ -882,8 +887,9 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       loadDraft();
     },
 
-    // Returns {text, tone} for the page message. Throws only when /run itself
-    // fails, which program.js reports as a failed launch.
+    // Returns {text, tone, placed} for the page message; `placed` means the error
+    // is also shown on its field. Throws only when /run itself fails, which
+    // program.js reports as a failed launch.
     async submit(kind, status, {relaunch = false} = {}) {
       const draft = readDraft();
       const sentUids = draft.layers.map(layer => layer.uid);
@@ -899,10 +905,10 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
           reply = await api.runtimeAction(snapshot.run_id, snapshot.revision, 'structure.set', document);
         } catch (error) {
           if (error.status === 409) return {text: fft.STALE_MESSAGE, tone: 'error'};
-          placeError(error.body?.path, error.message, sentUids);
+          const placed = placeError(error.body?.path, error.message, sentUids);
           refresh();
           requestReveal();
-          return {text: `Nothing was sent: ${error.message}`, tone: 'error'};
+          return {text: `Nothing was sent: ${error.message}`, tone: 'error', placed};
         }
         adopt(reply, {reloadDraft: true});
         return {text: 'Sent. The panel shows your layers.'};

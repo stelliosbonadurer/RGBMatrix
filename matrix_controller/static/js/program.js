@@ -391,8 +391,11 @@ async function submitEditor(kind) {
   try {
     const result = await editor.submit(kind, status, {relaunch});
     showMessage(el.message, result.text, result.tone || 'info');
+    // The message sits at the top, far from the bottom bar on a long FFT page.
+    if (result.tone === 'error' && !result.placed) el.message.scrollIntoView({block: 'nearest'});
   } catch (error) {
     showMessage(el.message, `Could not ${kind === 'update' ? 'send the update' : 'launch'}: ${error.message}`, 'error');
+    el.message.scrollIntoView({block: 'nearest'});
   } finally {
     pending = null;
     await refreshStatus();
