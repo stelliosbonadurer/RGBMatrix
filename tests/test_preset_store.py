@@ -1,4 +1,4 @@
-"""Preset store tests (web-control-refactor D-024, D-025; M3 criteria 2-4).
+"""Preset store tests (web-control-refactor D-024, D-025, D-071; M3 criteria 2-4).
 
 The store gets the real FFT ``validate_parameters`` and the web layer's real
 launch-structure bounds, so these tests exercise the same rules as launch.
@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 from matrix_controller.presets import (
+    MAX_PRESET_DESCRIPTION_LENGTH,
     MAX_PRESET_NAME_LENGTH,
     MAX_PRESETS,
     PresetError,
@@ -82,7 +83,11 @@ class PresetStoreTests(unittest.TestCase):
         self.assertEqual(listing["presets"], [])
         self.assertEqual(
             listing["limits"],
-            {"max_presets": MAX_PRESETS, "max_name_length": MAX_PRESET_NAME_LENGTH},
+            {
+                "max_presets": MAX_PRESETS,
+                "max_name_length": MAX_PRESET_NAME_LENGTH,
+                "max_description_length": MAX_PRESET_DESCRIPTION_LENGTH,
+            },
         )
         self.assertFalse(self.path.exists())
 
@@ -95,7 +100,7 @@ class PresetStoreTests(unittest.TestCase):
 
         self.assertEqual(
             self.store.list()["presets"],
-            [{"preset_id": preset_id, "name": "Warm bass", "revision": 1}],
+            [{"preset_id": preset_id, "name": "Warm bass", "description": "", "revision": 1}],
         )
         loaded = self.store.get(preset_id)
         self.assertEqual(loaded, created)
@@ -123,6 +128,56 @@ class PresetStoreTests(unittest.TestCase):
         )
         self.assertEqual(self.store.list()["presets"], [])
         self.assertPresetError("preset_not_found", HTTPStatus.NOT_FOUND, self.store.get, preset_id)
+
+    def test_description_is_optional_trimmed_and_stored_only_when_set(self) -> None:
+        # D-071: line breaks are allowed; an empty description isn't stored, so a
+        # file without descriptions keeps the fields earlier versions require.
+        plain = self._create("Plain")
+        self.assertEqual(plain["description"], "")
+        described = self._create("Described", description="  Low end\nfor the kick  ")
+        self.assertEqual(described["description"], "Low end\nfor the kick")
+        self.assertEqual(self.store.get(described["preset_id"]), described)
+        self.assertEqual(
+            [entry["description"] for entry in self.store.list()["presets"]],
+            ["", "Low end\nfor the kick"],
+        )
+        stored = json.loads(self.path.read_text())["presets"]
+        self.assertEqual(
+            set(stored[0]), {"preset_id", "name", "revision", "parameters", "structure"}
+        )
+        self.assertEqual(stored[1]["description"], "Low end\nfor the kick")
+        at_limit = self._create("Long", description="x" * MAX_PRESET_DESCRIPTION_LENGTH)
+        self.assertEqual(len(at_limit["description"]), MAX_PRESET_DESCRIPTION_LENGTH)
+
+        # A replace is whole: no description clears it, and "  " is none.
+        cleared = self.store.replace(
+            described["preset_id"],
+            {"expected_revision": 1, "name": "Described", "structure": structure_document()},
+        )
+        self.assertEqual(cleared["description"], "")
+        renamed = self.store.replace(
+            plain["preset_id"],
+            {"expected_revision": 1, "name": "Plain", "description": "   ", "structure": structure_document()},
+        )
+        self.assertEqual(renamed["description"], "")
+        self.assertNotIn("description", json.loads(self.path.read_text())["presets"][1])
+
+        before = self.path.read_bytes()
+        for label, description in {
+            "not a string": 7,
+            "too long": "x" * (MAX_PRESET_DESCRIPTION_LENGTH + 1),
+            "bell": "ring\x07",
+            "carriage return": "one\rtwo",
+            "tab": "one\ttwo",
+            "C1 control": "one\x85two",
+        }.items():
+            with self.subTest(label):
+                self.assertPresetError(
+                    "invalid_preset",
+                    HTTPStatus.BAD_REQUEST,
+                    lambda: self._create(f"Bad {label}", description=description),
+                )
+        self.assertEqual(self.path.read_bytes(), before)
 
     def test_only_supplied_parameters_are_stored(self) -> None:
         created = self.store.create(
@@ -280,6 +335,18 @@ class PresetStoreTests(unittest.TestCase):
             "bad entry": json.dumps({"version": 1, "presets": [{"name": "x"}]}).encode(),
             "untrimmed name": json.dumps(
                 {"version": 1, "presets": [dict(valid_entry, name=" Kept")]}
+            ).encode(),
+            "empty description": json.dumps(
+                {"version": 1, "presets": [dict(valid_entry, description="")]}
+            ).encode(),
+            "untrimmed description": json.dumps(
+                {"version": 1, "presets": [dict(valid_entry, description="Kept ")]}
+            ).encode(),
+            "description not a string": json.dumps(
+                {"version": 1, "presets": [dict(valid_entry, description=["Kept"])]}
+            ).encode(),
+            "description with a tab": json.dumps(
+                {"version": 1, "presets": [dict(valid_entry, description="a\tb")]}
             ).encode(),
             "duplicate names": json.dumps(
                 {

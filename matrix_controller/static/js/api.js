@@ -42,6 +42,7 @@ async function request(method, path, body) {
 
 const filePath = (visualizationId, name) =>
   `/api/v1/programs/${encodeURIComponent(visualizationId)}/files/${encodeURIComponent(name)}`;
+const presetPath = presetId => `/api/v1/presets/${encodeURIComponent(presetId)}`;
 
 export const api = {
   visualizations: () => request('GET', '/api/v1/visualizations'),
@@ -65,5 +66,14 @@ export const api = {
   runtime: () => request('GET', '/api/v1/runtime'),
   runtimeAction: (runId, expectedRevision, action, args) =>
     request('POST', '/api/v1/runtime/actions', {run_id: runId, expected_revision: expectedRevision, action, args}),
+  // Music FFT presets saved on the Pi (D-063, D-071). Each change carries the
+  // revision the page last saw; a newer one answers 409.
+  presets: () => request('GET', '/api/v1/presets'),
+  preset: presetId => request('GET', presetPath(presetId)),
+  createPreset: body => request('POST', '/api/v1/presets', body),
+  replacePreset: (presetId, expectedRevision, body) =>
+    request('PUT', presetPath(presetId), {...body, expected_revision: expectedRevision}),
+  deletePreset: (presetId, expectedRevision) =>
+    request('DELETE', presetPath(presetId), {expected_revision: expectedRevision}),
   stop: () => request('POST', '/api/v1/stop', {}),
 };

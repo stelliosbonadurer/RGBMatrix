@@ -790,7 +790,7 @@ class PresetApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(
             listing["presets"],
-            [{"preset_id": preset_id, "name": "Warm bass", "revision": 1}],
+            [{"preset_id": preset_id, "name": "Warm bass", "description": "", "revision": 1}],
         )
         self.assertEqual(listing["limits"]["max_presets"], MAX_PRESETS)
 
@@ -812,7 +812,10 @@ class PresetApiTests(unittest.TestCase):
         self.assertEqual(self.supervisor.started[-1], ("fft", loaded["parameters"]))
         self.assertEqual(self.supervisor.start_kwargs[-1], {"structure": loaded["structure"]})
 
-        replacement = dict(self.preset_payload("Renamed"), expected_revision=1)
+        # D-071: an optional description, returned by get and list.
+        replacement = dict(
+            self.preset_payload("Renamed"), expected_revision=1, description="For the kick"
+        )
         status, replaced = self.request(
             f"/api/v1/presets/{preset_id}",
             payload=replacement,
@@ -820,7 +823,12 @@ class PresetApiTests(unittest.TestCase):
             token=self.session,
         )
         self.assertEqual(status, 200)
-        self.assertEqual((replaced["name"], replaced["revision"]), ("Renamed", 2))
+        self.assertEqual(
+            (replaced["name"], replaced["description"], replaced["revision"]),
+            ("Renamed", "For the kick", 2),
+        )
+        status, listing = self.request("/api/v1/presets", token=self.session)
+        self.assertEqual(listing["presets"][0]["description"], "For the kick")
 
         before = self.preset_path.read_bytes()
         for method, payload in (

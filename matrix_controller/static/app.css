@@ -743,6 +743,103 @@ details.panel[open] > summary { margin-bottom: 12px; }
 .point-row.selected { background: rgb(255 148 77 / 12%); outline: 1px solid rgb(255 148 77 / 45%); }
 .field-warning { color: var(--orange); font-size: 13px; font-weight: 600; }
 
+/* ---- Presets (M5 slice 3, D-063, D-070–D-072) ---------------------------- */
+
+.preset-panel { display: grid; gap: 8px; }
+.preset-panel .section-head { margin-bottom: 0; }
+.preset-panel .note { margin-top: 0; }
+/* One line, so ⋯ stays at the right end and its menu opens on screen. */
+.preset-row, .copy-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.preset-row > .button, .preset-row > .preset-menu { flex: none; }
+.preset-row select, .copy-head select {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+  font-size: 16px;
+}
+.preset-row select:disabled, .copy-head select:disabled { opacity: .55; }
+.preset-description { white-space: pre-line; overflow-wrap: anywhere; }
+.preset-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.preset-actions .button { max-width: 100%; min-width: 0; }
+.button-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.preset-menu { position: relative; flex: none; }
+.preset-menu > summary { display: grid; place-items: center; font-size: 20px; list-style: none; }
+.preset-menu > summary::-webkit-details-marker { display: none; }
+.menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  display: grid;
+  width: max-content;
+  min-width: 13rem;
+  max-width: calc(100vw - 2 * var(--gutter));
+  padding: 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface-raised);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 55%);
+}
+.menu-item {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item.danger-text { color: var(--danger); }
+.menu-item:hover:not(:disabled) { background: var(--surface); }
+.menu-item:disabled { opacity: .45; cursor: not-allowed; }
+
+.preset-form, .copy-panel {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+}
+.copy-panel { gap: 8px; }
+.preset-form-title { font-weight: 650; }
+.preset-form .field:first-of-type { border-top: 0; }
+.preset-form textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16px stops iOS from zooming into the field */
+  resize: vertical;
+}
+.preset-form textarea[aria-invalid="true"] { border-color: var(--danger); }
+.preset-form input:disabled, .preset-form textarea:disabled { opacity: .55; }
+.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; padding-top: 6px; }
+
+.copy-area { display: grid; gap: 8px; min-width: 0; }
+.copy-area:has(> .copy-panel[hidden]):has(> .note[hidden]) { display: none; }
+.copy-list { display: grid; margin: 0; padding: 0; list-style: none; }
+.copy-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 0; border-top: 1px solid var(--line); }
+.copy-item:first-child { border-top: 0; }
+.copy-name { display: grid; flex: 1; min-width: 0; }
+.copy-name > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.copy-name > span { color: var(--muted); font-size: 13px; }
+
+.layer-saver { display: grid; justify-items: start; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.layer-saver .preset-form-slot { justify-self: stretch; }
+.layer-saver .preset-form-slot:empty { display: none; }
+
 /* ---- Layer graph (M5 slice 2, D-058–D-060) -------------------------------- */
 
 .field-pair {

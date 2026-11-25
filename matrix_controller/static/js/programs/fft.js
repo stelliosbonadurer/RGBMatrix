@@ -60,17 +60,6 @@ export function formatHz(hz) {
 
 const copy = value => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)));
 
-export function layersFromStructure(structure, nextUid) {
-  return (structure?.layers || []).map(layer => ({
-    uid: nextUid(),
-    layer_id: layer.layer_id,
-    layer_type: layer.layer_type,
-    analyzer_id: layer.analyzer_id,
-    visible: layer.visible,
-    settings: copy(layer.settings) || {},
-  }));
-}
-
 // The structure.set document (D-015): draw order, names trimmed, no page handles.
 export function structureDocument(backend, layers) {
   return {

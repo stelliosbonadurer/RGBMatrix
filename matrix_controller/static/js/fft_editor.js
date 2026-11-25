@@ -1,15 +1,18 @@
-// The Music FFT page's draft (web-control-refactor M5 slices 1–2): the analyzer
-// row, the output selector, and the layer list with each layer's settings and
-// graph (D-058–D-060). program.js keeps the shell (status line, Launch/Terminate,
-// the bottom bar) and asks this editor for its unsent count, validity, and submit
-// (D-062). The rules live in programs/fft.js and programs/fft_layout.js; this file
-// only draws them. The number fields are the draft: the graph writes into them.
+// The Music FFT page's draft (web-control-refactor M5 slices 1–3): the presets
+// (fft_preset_controls.js), the analyzer row, the output selector, and the layer
+// list with each layer's settings and graph (D-058–D-060). program.js keeps the
+// shell (status line, Launch/Terminate, the bottom bar) and asks this editor for
+// its unsent count, validity, and submit (D-062). The rules live in programs/fft.js,
+// programs/fft_layout.js, and programs/fft_presets.js; this file only draws them.
+// The number fields are the draft: the graph writes into them.
 
 import {api} from './api.js';
 import {createLayerGraph} from './fft_graph.js';
+import {createPresetControls} from './fft_preset_controls.js';
 import {parseValue} from './model.js';
 import * as fft from './programs/fft.js';
 import * as fftLayout from './programs/fft_layout.js';
+import * as presetRules from './programs/fft_presets.js';
 import {createField, h} from './ui.js';
 
 export const id = fft.id;
@@ -55,6 +58,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   let matrixValues = null; // the stored matrix settings, for the bar count before launch
   let contextKey = ''; // the bin context the page last drew
   let refreshFrame = 0;
+  let submitCount = 0; // so a preset reply that outlived a submit is dropped
 
   // ---- Analyzer row (D-065; Bluetooth arrives in slice 4) -------------------
 
@@ -100,6 +104,20 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       outputError),
     outputNote);
 
+  // ---- Presets (D-063, D-070–D-072) ---------------------------------------------
+
+  const presetControls = createPresetControls({
+    sourceSpec,
+    info: () => info,
+    catalog: () => catalog,
+    unsentCount: () => fft.draftChanges(baseline, readDraft()).total,
+    busy: () => busy,
+    submits: () => submitCount,
+    replaceDraft,
+    addLayer: insertLayer,
+    refresh: () => refresh(),
+  });
+
   // ---- Layer list (D-052, D-054–D-057) ------------------------------------------
 
   const typeSelect = h('select', {'aria-label': 'Layer type'});
@@ -115,12 +133,14 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       h('h2', {className: 'section-title', id: `fft-layers-${number}`}, 'Layers'),
       h('span', {className: 'section-hint'}, 'the top layer draws over the ones below')),
     costNote,
-    h('div', {className: 'layer-add'}, typeSelect, addButton, h('span', {className: 'spacer'}), layerCount),
+    h('div', {className: 'layer-add'}, typeSelect, addButton, presetControls.copyButton,
+      h('span', {className: 'spacer'}), layerCount),
+    presetControls.copyArea,
     listError,
     list,
     emptyNote);
 
-  const element = h('div', {className: 'fft-editor'}, analyzerRow, outputPanel, layersPanel);
+  const element = h('div', {className: 'fft-editor'}, presetControls.line, analyzerRow, outputPanel, layersPanel);
 
   // ---- Reading the draft --------------------------------------------------------
 
@@ -460,6 +480,8 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       body.append(heading, container);
     }
     const graph = attachGraph(fields, points);
+    const saver = presetControls.layerSaver(uid); // D-070
+    body.append(saver.element);
 
     const element = h('li', {className: 'layer-row', 'data-uid': uid},
       h('div', {className: 'layer-line'}, handle, title, unsent, visibleInput, chevron),
@@ -469,7 +491,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     const row = {
       uid, layer_type: layer.layer_type, analyzer_id: layer.analyzer_id, descriptor, extraSettings,
       element, handle, title, unsent, visibleInput, chevron, summary, up, down, remove, body, layerError,
-      nameField, fields, points, groups, graph, graphGood: null,
+      nameField, fields, points, groups, graph, saver, graphGood: null,
     };
     title.addEventListener('click', () => setOpen(openUid === uid ? null : uid));
     chevron.addEventListener('click', () => setOpen(openUid === uid ? null : uid));
@@ -629,27 +651,32 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     edited();
   }
 
+  // A new layer on top of the list, opened (D-054, D-057). `replaced` holds the
+  // values the backend lock set, for a later switch to restore (D-061).
+  function insertLayer(layer, replaced = {}) {
+    const uid = nextUid();
+    if (Object.keys(replaced).length) stash[uid] = replaced;
+    createRow({...layer, uid});
+    order.push(uid); // appended to the document: the top row (D-054)
+    placeRows();
+    setOpen(uid);
+    edited();
+    rows.get(uid).element.scrollIntoView({block: 'nearest'});
+  }
+
   function addLayer() {
     const layerType = typeSelect.value;
     const descriptor = descriptorOf(layerType);
     if (!descriptor || order.length >= fft.maxLayers(info)) return;
     const names = readDraft().layers.map(layer => layer.layer_id);
     const {settings, replaced} = fft.lockLayer(fft.defaultSettings(descriptor), descriptor, backend);
-    const uid = nextUid();
-    if (Object.keys(replaced).length) stash[uid] = replaced;
-    createRow({
-      uid,
+    insertLayer({
       layer_id: fft.freeName(layerType, names),
       layer_type: layerType,
       analyzer_id: info?.available_analyzer_ids?.[0] ?? info?.analyzers?.[0]?.analyzer_id,
       visible: true,
       settings,
-    });
-    order.push(uid); // appended to the document: the top row (D-054)
-    placeRows();
-    setOpen(uid);
-    edited();
-    rows.get(uid).element.scrollIntoView({block: 'nearest'});
+    }, replaced);
   }
 
   // Drag from the handle only (D-056), with pointer events for mouse and touch.
@@ -742,12 +769,34 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     refresh();
   }
 
+  // Load (D-063): a preset's source, output, and layers replace the draft. The
+  // baseline stays what runs (or the catalog), so they count as unsent changes.
+  function replaceDraft(result) {
+    source = result.source;
+    backend = result.backend;
+    stash = {};
+    lockNote = '';
+    serverError = null;
+    const layers = result.layers.map((layer, index) => {
+      const uid = nextUid();
+      if (Object.keys(result.replaced?.[index] || {}).length) stash[uid] = result.replaced[index];
+      return {...layer, uid};
+    });
+    buildRows(layers);
+    setOpen(null);
+    refresh();
+  }
+
+  // The snapshot and the catalog go through the same reconcile as a preset
+  // (D-064), so the page never assumes a stored shape matches its descriptor.
   function setBaselineFrom(structure) {
     info = structure;
+    const reconciled = presetRules.reconcile(
+      {source: baseline.source, backend: structure.output_backend, layers: structure.layers}, structure);
     baseline = {
       source: baseline.source,
-      backend: structure.output_backend,
-      layers: fft.layersFromStructure(structure, nextUid),
+      backend: reconciled.backend,
+      layers: reconciled.layers.map(layer => ({...layer, uid: nextUid()})),
     };
   }
 
@@ -1033,7 +1082,9 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         group.heading.nextElementSibling.hidden = group.heading.hidden;
       }
       if (row.graph) row.graph.render(graphModel(row, layer, locked, draft.context));
+      row.saver.refresh({valid: Object.keys(errors).length === 0 && !rowMessage});
     });
+    presetControls.refresh(draft);
     onChange();
   }
 
@@ -1044,6 +1095,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
 
     async load(status) {
       lastStatus = status;
+      const listing = presetControls.load(); // the preset list, alongside the catalog; never throws
       catalog = await api.fftCatalog();
       info = catalog.structure;
       const running = status?.visualization_id === fft.id && (status.state === 'running' || status.state === 'starting');
@@ -1067,6 +1119,8 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       loadDraft();
       loaded = true;
       onChange();
+      // The list doesn't hold up the page; it redraws the preset line when it comes.
+      listing.then(() => refresh());
     },
 
     // Each /status poll. Loads the snapshot of the run this page expects once it
@@ -1123,6 +1177,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     // is also shown on its field. Throws only when /run itself fails, which
     // program.js reports as a failed launch.
     async submit(kind, status, {relaunch = false} = {}) {
+      submitCount += 1;
       const draft = readDraft();
       const sentUids = draft.layers.map(layer => layer.uid);
       const document = fft.structureDocument(draft.backend, draft.layers);

@@ -1,7 +1,7 @@
-"""FFT presets saved on the Pi (web-control-refactor D-008, D-024, D-025).
+"""FFT presets saved on the Pi (web-control-refactor D-008, D-024, D-025, D-071).
 
-A preset is a name plus the two things ``POST /api/v1/run`` accepts for FFT: launch
-``parameters`` and a layer ``structure``. The store is one versioned JSON file in
+A preset is a name, an optional description, and the two things ``POST /api/v1/run``
+accepts for FFT: launch ``parameters`` and a layer ``structure``. The store is one versioned JSON file in
 the controller's state directory. Every operation re-reads the file under one lock,
 and every change replaces the file atomically. A file that can't be read as this
 version is reported and never rewritten, so a downgrade or a hand edit can't lose
@@ -31,9 +31,13 @@ from .state_files import write_bytes_atomically
 PRESET_FILE_VERSION = 1
 MAX_PRESETS = 32
 MAX_PRESET_NAME_LENGTH = 64
+MAX_PRESET_DESCRIPTION_LENGTH = 200
 DEFAULT_PRESET_FILE = DEFAULT_STATE_DIRECTORY / "fft-presets.json"
 _PRESET_ID_PATTERN = re.compile(r"[0-9a-f]{16}")
 _PRESET_FIELDS = frozenset({"preset_id", "name", "revision", "parameters", "structure"})
+# D-071: stored only when not empty, so a store without descriptions keeps exactly
+# the fields earlier versions require and still loads there.
+_OPTIONAL_PRESET_FIELDS = frozenset({"description"})
 
 ParameterValidator = Callable[[Mapping[str, Any]], Mapping[str, Any]]
 StructureValidator = Callable[[Any], Mapping[str, Any]]
@@ -95,6 +99,50 @@ def normalize_preset_name(value: Any) -> str:
     return name
 
 
+def normalize_preset_description(value: Any) -> str:
+    """Return the trimmed description (``""`` for none), or raise ``invalid_preset``.
+
+    Line breaks are allowed; other control characters aren't.
+    """
+
+    if type(value) is not str:
+        raise _invalid("description must be a string")
+    description = value.strip()
+    if len(description) > MAX_PRESET_DESCRIPTION_LENGTH:
+        raise _invalid(
+            f"description must be at most {MAX_PRESET_DESCRIPTION_LENGTH} characters"
+        )
+    if any(
+        character != "\n" and unicodedata.category(character) == "Cc"
+        for character in description
+    ):
+        raise _invalid("description must not contain control characters other than line breaks")
+    return description
+
+
+def _record(
+    preset_id: str,
+    name: str,
+    description: str,
+    revision: int,
+    parameters: dict[str, Any],
+    structure: dict[str, Any],
+) -> dict[str, Any]:
+    """A preset as stored: ``description`` only when there is one."""
+
+    preset: dict[str, Any] = {"preset_id": preset_id, "name": name}
+    if description:
+        preset["description"] = description
+    preset.update(revision=revision, parameters=parameters, structure=structure)
+    return preset
+
+
+def _public(preset: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored preset as the API returns it: ``description`` always present."""
+
+    return {**preset, "description": preset.get("description", "")}
+
+
 def _revision(value: Any, *, label: str) -> int:
     if type(value) is not int or value < 1:
         raise _invalid(f"{label} must be a positive integer")
@@ -120,7 +168,11 @@ class PresetStore:
 
     @staticmethod
     def limits() -> dict[str, int]:
-        return {"max_presets": MAX_PRESETS, "max_name_length": MAX_PRESET_NAME_LENGTH}
+        return {
+            "max_presets": MAX_PRESETS,
+            "max_name_length": MAX_PRESET_NAME_LENGTH,
+            "max_description_length": MAX_PRESET_DESCRIPTION_LENGTH,
+        }
 
     def list(self) -> dict[str, Any]:
         with self._lock:
@@ -130,6 +182,7 @@ class PresetStore:
                 {
                     "preset_id": preset["preset_id"],
                     "name": preset["name"],
+                    "description": preset.get("description", ""),
                     "revision": preset["revision"],
                 }
                 for preset in presets
@@ -140,7 +193,7 @@ class PresetStore:
     def get(self, preset_id: str) -> dict[str, Any]:
         with self._lock:
             presets = self._load_locked()
-            return dict(presets[self._index_locked(presets, preset_id)])
+            return _public(presets[self._index_locked(presets, preset_id)])
 
     # Each change reads the file before validating the request, so an unreadable
     # store answers 503 whatever the body holds (criterion 4).
@@ -148,7 +201,7 @@ class PresetStore:
     def create(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         with self._lock:
             presets = self._load_locked()
-            name, parameters, structure = self._content(payload, allowed=set())
+            name, description, parameters, structure = self._content(payload, allowed=set())
             self._require_unique_name(presets, name, exclude=None)
             if len(presets) >= MAX_PRESETS:
                 raise PresetError(
@@ -157,37 +210,33 @@ class PresetStore:
                     status=HTTPStatus.BAD_REQUEST,
                 )
             preset_id = self._new_id_locked(presets)
-            preset = {
-                "preset_id": preset_id,
-                "name": name,
-                "revision": 1,
-                "parameters": parameters,
-                "structure": structure,
-            }
+            preset = _record(preset_id, name, description, 1, parameters, structure)
             self._write_locked([*presets, preset])
-            return dict(preset)
+            return _public(preset)
 
     def replace(self, preset_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         with self._lock:
             presets = self._load_locked()
-            name, parameters, structure = self._content(
+            name, description, parameters, structure = self._content(
                 payload, allowed={"expected_revision"}
             )
             expected = _revision(payload.get("expected_revision"), label="expected_revision")
             index = self._index_locked(presets, preset_id)
             self._require_revision(presets[index], expected)
             self._require_unique_name(presets, name, exclude=preset_id)
-            preset = {
-                "preset_id": preset_id,
-                "name": name,
-                "revision": presets[index]["revision"] + 1,
-                "parameters": parameters,
-                "structure": structure,
-            }
+            # A replace is whole: leaving out the description clears it.
+            preset = _record(
+                preset_id,
+                name,
+                description,
+                presets[index]["revision"] + 1,
+                parameters,
+                structure,
+            )
             updated = list(presets)
             updated[index] = preset
             self._write_locked(updated)
-            return dict(preset)
+            return _public(preset)
 
     def delete(self, preset_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         with self._lock:
@@ -202,18 +251,19 @@ class PresetStore:
 
     def _content(
         self, payload: Mapping[str, Any], *, allowed: set[str]
-    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
         """Validate the client-supplied content of a create or replace."""
 
         if not isinstance(payload, Mapping):
             raise _invalid("request body must be a JSON object")
-        unknown = set(payload) - {"name", "parameters", "structure", *allowed}
+        unknown = set(payload) - {"name", "description", "parameters", "structure", *allowed}
         if unknown:
             raise _invalid(f"unknown preset fields: {', '.join(sorted(unknown))}")
         missing = {"name", "structure", *allowed} - set(payload)
         if missing:
             raise _invalid(f"missing preset fields: {', '.join(sorted(missing))}")
         name = normalize_preset_name(payload["name"])
+        description = normalize_preset_description(payload.get("description", ""))
         supplied = payload.get("parameters", {})
         if not isinstance(supplied, Mapping):
             raise _invalid("parameters must be a JSON object")
@@ -225,7 +275,7 @@ class PresetStore:
         # D-025: validate the full launch set, keep only what the user chose, so a
         # preset doesn't pin today's defaults.
         parameters = {key: normalized[key] for key in supplied}
-        return name, parameters, dict(structure)
+        return name, description, parameters, dict(structure)
 
     @staticmethod
     def _index_locked(presets: list[dict[str, Any]], preset_id: Any) -> int:
@@ -300,8 +350,17 @@ class PresetStore:
 
     @staticmethod
     def _stored_preset_is_valid(preset: Any) -> bool:
-        if not isinstance(preset, dict) or set(preset) != _PRESET_FIELDS:
+        if not isinstance(preset, dict):
             return False
+        if not _PRESET_FIELDS <= set(preset) <= _PRESET_FIELDS | _OPTIONAL_PRESET_FIELDS:
+            return False
+        if "description" in preset:
+            description = preset["description"]
+            try:
+                if not description or normalize_preset_description(description) != description:
+                    return False
+            except PresetError:
+                return False
         preset_id = preset["preset_id"]
         revision = preset["revision"]
         if type(preset_id) is not str or not _PRESET_ID_PATTERN.fullmatch(preset_id):
