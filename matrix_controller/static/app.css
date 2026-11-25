@@ -739,6 +739,72 @@ details.panel[open] > summary { margin-bottom: 12px; }
 .point-error { grid-column: 1 / -1; }
 .point-actions { display: flex; gap: 8px; }
 .field-points.changed .field-label { color: var(--pink); }
+.point-row:not(.point-head) { margin-inline: -4px; padding: 3px 4px; border-radius: var(--radius-small); }
+.point-row.selected { background: rgb(255 148 77 / 12%); outline: 1px solid rgb(255 148 77 / 45%); }
+.field-warning { color: var(--orange); font-size: 13px; font-weight: 600; }
+
+/* ---- Layer graph (M5 slice 2, D-058–D-060) -------------------------------- */
+
+.field-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  border-top: 1px solid var(--line);
+}
+.field-pair > .field { border-top: 0; }
+.graph-part { display: grid; gap: 4px; padding: 10px 0 4px; }
+.fields > .graph-part:first-child { padding-top: 2px; }
+.graph-wrap { position: relative; min-width: 0; }
+.graph { display: block; width: 100%; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.graph-caption { color: var(--faint); font-size: 12px; }
+
+.strip-track { fill: var(--surface-raised); stroke: var(--line); }
+.strip-band { fill: rgb(77 231 255 / 18%); stroke: var(--cyan); stroke-width: 1; }
+.strip-end { fill: var(--cyan); }
+.strip-over { fill: rgb(255 100 116 / 30%); }
+.strip-over.assumed { fill: rgb(255 148 77 / 26%); }
+.grid-line { stroke: var(--line); stroke-width: 1; }
+.grid-line.minor { stroke: rgb(41 48 68 / 60%); }
+.axis { fill: var(--faint); font: 11px var(--mono); }
+.axis.strong { fill: var(--muted); }
+.off-row { fill: rgb(115 124 150 / 10%); }
+.bar { fill: rgb(77 231 255 / 30%); }
+.bar-low { fill: var(--cyan); }
+.bar-off { fill: var(--faint); }
+.hatch-line { stroke: rgb(166 174 196 / 35%); stroke-width: 1; }
+.curve { fill: none; stroke: var(--pink); stroke-width: 2; stroke-linejoin: round; }
+.point-dot { fill: var(--pink); stroke: var(--bg); stroke-width: 2; }
+.point-dot.selected { fill: var(--orange); }
+.point-ring { fill: none; stroke: var(--orange); stroke-width: 2; }
+.zero-zone { fill: var(--surface-raised); stroke: var(--line); }
+.floor-track { stroke: var(--line-strong); stroke-width: 4; stroke-linecap: round; }
+.floor-fill { stroke: var(--orange); stroke-width: 4; stroke-linecap: round; opacity: .55; }
+.floor-handle { fill: var(--orange); stroke: var(--bg); stroke-width: 2; }
+
+/* Thumb-sized targets. Only these take a touch, so the rest of a graph scrolls. */
+.graph-hit { fill: transparent; pointer-events: all; touch-action: none; outline: none; }
+.graph-hit:focus-visible { stroke: var(--cyan); stroke-width: 2; }
+.graph-hit.inert { pointer-events: none; }
+.graph-hit.off { display: none; }
+.hit-end { cursor: ew-resize; }
+.hit-band, .hit-point, .hit-floor { cursor: grab; }
+.graph.dragging, .graph.dragging * { cursor: grabbing; }
+
+.graph-tip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  transform: translate(-50%, calc(-100% - 10px));
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 12px var(--mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 .action-reason {
   max-width: 44rem;

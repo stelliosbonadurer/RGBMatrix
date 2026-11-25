@@ -171,6 +171,27 @@ export function crossFieldErrors(settings, labelOf = name => name) {
   return {};
 }
 
+// The exact frequency with digit grouping, for the Nyquist value (22,050 Hz).
+export const exactHz = hz => `${Number(hz.toFixed(2)).toLocaleString('en-US')} Hz`;
+
+// Max Hz against half the sample rate (D-069). `context` is
+// fft_layout.binContext's. With a known rate it is an error, as the Pi refuses
+// the update; with an assumed rate a warning, and launching stays allowed.
+// Exactly Nyquist passes: the server refuses only a higher value.
+export function nyquistIssue(maxFreq, context, label = 'Max Hz') {
+  const rate = context?.sampleRate;
+  if (!Number.isFinite(maxFreq) || !Number.isFinite(rate) || maxFreq <= rate / 2) return null;
+  const nyquist = exactHz(rate / 2);
+  if (context.assumed?.has('sample_rate')) {
+    return {
+      level: 'warning',
+      message: `Above ${nyquist}, the Nyquist frequency at the assumed ${formatHz(rate)} sample rate. ` +
+        `If the source runs at ${formatHz(rate)}, the Pi refuses this layer at launch and runs the default layer.`,
+    };
+  }
+  return {level: 'error', message: `${label} must be at most ${nyquist}, the Nyquist frequency at ${formatHz(rate)}.`};
+}
+
 export function defaultSettings(descriptor) {
   return Object.fromEntries((descriptor?.fields || []).map(field => [field.name, copy(field.default)]));
 }

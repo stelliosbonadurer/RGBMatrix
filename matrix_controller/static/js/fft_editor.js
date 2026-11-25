@@ -1,12 +1,15 @@
-// The Music FFT page's draft (web-control-refactor M5 slice 1): the analyzer row,
-// the output selector, and the layer list with each layer's settings. program.js
-// keeps the shell (status line, Launch/Terminate, the bottom bar) and asks this
-// editor for its unsent count, validity, and submit (D-062). The rules live in
-// programs/fft.js; this file only draws them.
+// The Music FFT page's draft (web-control-refactor M5 slices 1–2): the analyzer
+// row, the output selector, and the layer list with each layer's settings and
+// graph (D-058–D-060). program.js keeps the shell (status line, Launch/Terminate,
+// the bottom bar) and asks this editor for its unsent count, validity, and submit
+// (D-062). The rules live in programs/fft.js and programs/fft_layout.js; this file
+// only draws them. The number fields are the draft: the graph writes into them.
 
 import {api} from './api.js';
+import {createLayerGraph} from './fft_graph.js';
 import {parseValue} from './model.js';
 import * as fft from './programs/fft.js';
+import * as fftLayout from './programs/fft_layout.js';
 import {createField, h} from './ui.js';
 
 export const id = fft.id;
@@ -49,6 +52,9 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   let lastStatus = null;
   let loaded = false; // nothing can be launched before the catalog loads
   let revealPending = false; // a server error to scroll to once inputs are enabled
+  let matrixValues = null; // the stored matrix settings, for the bar count before launch
+  let contextKey = ''; // the bin context the page last drew
+  let refreshFrame = 0;
 
   // ---- Analyzer row (D-065; Bluetooth arrives in slice 4) -------------------
 
@@ -120,9 +126,10 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
 
   const descriptorOf = layerType => fft.descriptorFor(info, layerType);
 
-  function readLayer(row) {
+  function readLayer(row, context) {
     const settings = {...row.extraSettings};
     const errors = {};
+    const warnings = {};
     for (const field of row.descriptor?.fields || []) {
       if (field.type === 'points') {
         const result = row.points.read();
@@ -138,6 +145,12 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     for (const [name, message] of Object.entries(fft.crossFieldErrors(settings, name => labels.get(name) || name))) {
       errors[name] ||= message;
     }
+    const maxName = fftLayout.GRAPH_FIELDS.max;
+    if (labels.has(maxName)) {
+      const issue = fft.nyquistIssue(settings[maxName], context, labels.get(maxName));
+      if (issue?.level === 'error') errors[maxName] ||= issue.message;
+      else if (issue) warnings[maxName] = issue.message;
+    }
     return {
       layer: {
         uid: row.uid,
@@ -148,28 +161,50 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         settings,
       },
       errors,
+      warnings,
     };
   }
 
   function readDraft() {
     const layers = [];
     const errors = new Map();
+    const warnings = new Map();
+    const context = binContextNow();
     for (const uid of order) {
-      const {layer, errors: layerErrors} = readLayer(rows.get(uid));
+      const {layer, errors: layerErrors, warnings: layerWarnings} = readLayer(rows.get(uid), context);
       layers.push(layer);
       errors.set(uid, layerErrors);
+      warnings.set(uid, layerWarnings);
     }
     layers.forEach((layer, index) => {
       const others = layers.filter((_other, otherIndex) => otherIndex !== index).map(other => other.layer_id);
       const error = fft.nameError(layer.layer_id, others);
       if (error) errors.get(layer.uid).layer_id = error;
     });
-    return {source, backend, layers, errors};
+    return {source, backend, layers, errors, warnings, context};
   }
+
+  // What the graph and the Nyquist check use (D-049, D-069): the current run's
+  // bin_layout, or the catalog's with the rate and bar count assumed.
+  function binContextNow() {
+    const {structure} = analyzerStructure();
+    const live = Boolean(liveStructure) && structure === liveStructure;
+    return fftLayout.binContext({
+      snapshotLayout: live ? liveStructure.bin_layout : null,
+      catalogLayout: catalog?.structure?.bin_layout,
+      assumedUntilLaunch: catalog?.assumed_until_launch,
+      matrixValues,
+      sourceChanged: live && source !== baseline.source,
+    });
+  }
+
+  const contextText = context => JSON.stringify([context.sampleRate, context.fftSize, context.numBars, [...context.assumed]]);
 
   // ---- Rows ---------------------------------------------------------------------
 
-  function createPointsEditor(field) {
+  // The weighting points list (D-021, D-060). Each entry keeps an `id` for its
+  // life, so the graph's handles and the selection follow it through re-sorts.
+  function createPointsEditor(field, uid) {
     const items = Object.fromEntries((field.item_fields || []).map(item => [item.name, item]));
     const positionSpec = fft.settingParameter(items.position || {name: 'position', type: 'number'});
     const weightSpec = fft.settingParameter(items.weight || {name: 'weight', type: 'number'});
@@ -177,33 +212,33 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     const maxItems = field.max_items ?? Infinity;
     const marker = h('span', {className: 'changed-marker', title: 'Unsent change', hidden: true}, '●');
     const table = h('div', {className: 'points-list'});
+    const head = h('div', {className: 'point-row point-head', 'aria-hidden': 'true'},
+      h('span', {}, positionSpec.label || 'Position'), h('span', {}, '≈'),
+      h('span', {}, weightSpec.label || 'Weight'), h('span', {}));
     const error = h('p', {className: 'field-error', role: 'alert', hidden: true});
     const add = h('button', {type: 'button', className: 'button secondary small'}, '+ Add point');
+    const removeSelected = h('button', {type: 'button', className: 'button secondary small'}, 'Remove point');
     let entries = [];
     let range = null;
     let locked = false;
+    let disabledNow = false;
+    let serial = 0;
+    let selectedId = null;
 
-    function entry(point, index) {
-      const position = h('input', {type: 'text', inputMode: 'decimal', autocomplete: 'off', spellcheck: 'false',
-        'aria-label': `Point ${index + 1} ${positionSpec.label || 'position'}`});
-      const weight = h('input', {type: 'text', inputMode: 'decimal', autocomplete: 'off', spellcheck: 'false',
-        'aria-label': `Point ${index + 1} ${weightSpec.label || 'weight'}`});
+    function entry(point) {
+      const position = h('input', {type: 'text', inputMode: 'decimal', autocomplete: 'off', spellcheck: 'false'});
+      const weight = h('input', {type: 'text', inputMode: 'decimal', autocomplete: 'off', spellcheck: 'false'});
       position.value = String(point.position);
       weight.value = String(point.weight);
       const hint = h('span', {className: 'point-hint'});
-      const remove = h('button', {type: 'button', className: 'icon-button', 'aria-label': `Remove point ${index + 1}`}, '✕');
+      const remove = h('button', {type: 'button', className: 'icon-button'}, '✕');
       const message = h('p', {className: 'field-error point-error', role: 'alert', hidden: true});
-      const item = {position, weight, hint, remove, message,
+      const item = {id: ++serial, position, weight, hint, remove, message,
         element: h('div', {className: 'point-row'}, position, hint, weight, remove, message)};
       position.addEventListener('input', edited);
       weight.addEventListener('input', edited);
-      remove.addEventListener('click', () => {
-        if (entries.length <= minItems) return;
-        entries.splice(entries.indexOf(item), 1);
-        item.element.remove();
-        relabel();
-        edited();
-      });
+      remove.addEventListener('click', () => removeEntry(item.id));
+      item.element.addEventListener('focusin', () => select(item.id));
       return item;
     }
 
@@ -215,21 +250,26 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       });
     }
 
+    function place() {
+      table.replaceChildren(head, ...entries.map(item => item.element));
+      relabel();
+    }
+
     function write(points) {
       entries = fft.sortedPoints(points || []).map(entry);
-      table.replaceChildren(
-        h('div', {className: 'point-row point-head', 'aria-hidden': 'true'},
-          h('span', {}, positionSpec.label || 'Position'), h('span', {}, '≈'),
-          h('span', {}, weightSpec.label || 'Weight'), h('span', {})),
-        ...entries.map(item => item.element));
+      selectedId = null;
+      place();
+    }
+
+    function parsed(item) {
+      return {position: parseValue(positionSpec, item.position.value), weight: parseValue(weightSpec, item.weight.value)};
     }
 
     function read() {
       const value = [];
       const errors = {};
       entries.forEach((item, index) => {
-        const position = parseValue(positionSpec, item.position.value);
-        const weight = parseValue(weightSpec, item.weight.value);
+        const {position, weight} = parsed(item);
         value.push({position: position.value, weight: weight.value});
         if (position.error) errors[`${field.name}[${index}].position`] = position.error;
         if (weight.error) errors[`${field.name}[${index}].weight`] = weight.error;
@@ -243,19 +283,67 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       return {value, errors};
     }
 
+    // Selection is the page's own (graph and row highlighted); not a draft edit.
+    function select(id) {
+      const next = entries.some(item => item.id === id) ? id : null;
+      if (next === selectedId) return;
+      selectedId = next;
+      scheduleRefresh();
+    }
+
+    function removeEntry(id) {
+      if (entries.length <= minItems || disabledNow || locked) return;
+      const index = entries.findIndex(item => item.id === id);
+      if (index < 0) return;
+      entries[index].element.remove();
+      entries.splice(index, 1);
+      if (selectedId === id) selectedId = null;
+      relabel();
+      edited();
+    }
+
+    // By position, once typing ends (R3), so a row never moves under the cursor.
+    // Returns whether the order changed; never sorts while a position is invalid.
+    function sortEntries() {
+      const positions = new Map(entries.map(item => [item.id, parsed(item).position]));
+      if ([...positions.values()].some(position => position.error)) return false;
+      const sorted = [...entries].sort((a, b) => positions.get(a.id).value - positions.get(b.id).value);
+      if (sorted.every((item, index) => item === entries[index])) return false;
+      entries = sorted;
+      place();
+      return true;
+    }
+
+    table.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (busy || table.contains(document.activeElement)) return; // a submit reads this order
+        // A rejected point names its index in the sent order; keep that order.
+        if (serverError?.target === 'layer' && serverError.uid === uid &&
+            String(serverError.key || '').startsWith(`${field.name}[`)) return;
+        if (sortEntries()) scheduleRefresh();
+      }, 0);
+    });
+
+    // In the widest gap, on the curve, and selected rather than focused (R2), so
+    // a phone keyboard doesn't open.
     add.addEventListener('click', () => {
       const {value, errors} = read();
       if (Object.keys(errors).length || entries.length >= maxItems) return;
       const {points, index} = fft.addPoint(value, positionSpec.minimum ?? 0, positionSpec.maximum ?? 1);
-      write(points);
+      const item = entry(points[index]);
+      entries.push(item);
+      if (!sortEntries()) place();
+      selectedId = item.id;
       edited();
-      entries[index]?.weight.focus();
+    });
+    removeSelected.addEventListener('click', () => {
+      if (selectedId !== null) removeEntry(selectedId);
     });
 
     const element = h('div', {className: 'field field-points', 'data-name': field.name},
       h('div', {className: 'field-head'}, h('span', {className: 'field-label'}, field.label || field.name), marker),
       table,
-      h('div', {className: 'point-actions'}, add),
+      h('div', {className: 'point-actions'}, removeSelected, add),
       h('p', {className: 'field-help'}, field.help || ''),
       error);
 
@@ -263,11 +351,29 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       element,
       read,
       write,
+      select,
+      remove: removeEntry,
+      selected: () => selectedId,
+      positionRange: [positionSpec.minimum ?? 0, positionSpec.maximum ?? 1],
+      // Each entry's typed values for the graph, and whether both parse in bounds.
+      graphPoints() {
+        return entries.map(item => {
+          const {position, weight} = parsed(item);
+          return {id: item.id, position: position.value, weight: weight.value, valid: !position.error && !weight.error};
+        });
+      },
+      setPoint(id, values) {
+        const item = entries.find(other => other.id === id);
+        if (!item) return;
+        if (values.position !== undefined) item.position.value = String(values.position);
+        if (values.weight !== undefined) item.weight.value = String(values.weight);
+      },
       setRange(minHz, maxHz) {
         range = Number.isFinite(minHz) && Number.isFinite(maxHz) && minHz > 0 && maxHz > minHz ? [minHz, maxHz] : null;
       },
       // `errors` holds this field's keys: the list, and `name[i].position`.
       setState({changed, errors, disabled}) {
+        disabledNow = disabled;
         marker.hidden = !changed;
         element.classList.toggle('changed', changed);
         error.textContent = errors[field.name] || '';
@@ -281,6 +387,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
           item.message.hidden = !text;
           item.position.setAttribute('aria-invalid', String(Boolean(positionError)));
           item.weight.setAttribute('aria-invalid', String(Boolean(weightError)));
+          item.element.classList.toggle('selected', item.id === selectedId);
           const position = value[index].position;
           item.hint.textContent = range && Number.isFinite(position) && position >= 0 && position <= 1
             ? fft.formatHz(fft.positionHz(range[0], range[1], position))
@@ -290,6 +397,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         });
         add.disabled = disabled || locked || entries.length >= maxItems ||
           Object.keys(errors).some(key => key.startsWith(`${field.name}[`));
+        removeSelected.disabled = disabled || locked || selectedId === null || entries.length <= minItems;
       },
       setLocked(next) {
         locked = next;
@@ -339,7 +447,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       const heading = h('h3', {className: 'subsection-title'}, group.label);
       for (const field of group.fields) {
         if (field.type === 'points') {
-          points = createPointsEditor(field);
+          points = createPointsEditor(field, uid);
           points.write(layer.settings?.[field.name]);
           container.append(points.element);
         } else {
@@ -351,6 +459,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       groups.push({heading, fields: group.fields.map(field => field.name)});
       body.append(heading, container);
     }
+    const graph = attachGraph(fields, points);
 
     const element = h('li', {className: 'layer-row', 'data-uid': uid},
       h('div', {className: 'layer-line'}, handle, title, unsent, visibleInput, chevron),
@@ -360,7 +469,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     const row = {
       uid, layer_type: layer.layer_type, analyzer_id: layer.analyzer_id, descriptor, extraSettings,
       element, handle, title, unsent, visibleInput, chevron, summary, up, down, remove, body, layerError,
-      nameField, fields, points, groups,
+      nameField, fields, points, groups, graph, graphGood: null,
     };
     title.addEventListener('click', () => setOpen(openUid === uid ? null : uid));
     chevron.addEventListener('click', () => setOpen(openUid === uid ? null : uid));
@@ -373,12 +482,114 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     return row;
   }
 
+  // The layer graph (D-058–D-060), when the descriptor has the four fields the
+  // bars are computed from. It sits among those fields: the strip above Min and
+  // Max Hz (side by side), the detail graph below them, the lane in Noise floor.
+  function attachGraph(fields, points) {
+    const names = fftLayout.GRAPH_FIELDS;
+    const min = fields.get(names.min);
+    const max = fields.get(names.max);
+    const floor = fields.get(names.floor);
+    if (!min || !max || !floor || points?.element.dataset.name !== names.points) return null;
+    const changed = () => {
+      serverError = null;
+      scheduleRefresh();
+    };
+    const graph = createLayerGraph({
+      onRange(changes) {
+        if (changes[names.min] !== undefined) min.write(changes[names.min]);
+        if (changes[names.max] !== undefined) max.write(changes[names.max]);
+        changed();
+      },
+      onFloor(value) {
+        floor.write(value);
+        changed();
+      },
+      onPoint(id, values) {
+        points.setPoint(id, values);
+        changed();
+      },
+      onSelect: id => points.select(id),
+      onRemove: id => points.remove(id),
+    });
+    const pair = h('div', {className: 'field-pair'});
+    min.element.before(graph.strip);
+    graph.strip.after(pair);
+    pair.append(min.element, max.element);
+    pair.after(graph.detail);
+    floor.input.after(graph.floor);
+    return graph;
+  }
+
+  // What the graph draws: the typed values, or the last valid ones while a typed
+  // value is invalid (R4), so its handles keep working.
+  function graphModel(row, layer, locked, context) {
+    const names = fftLayout.GRAPH_FIELDS;
+    const specs = new Map(row.descriptor.fields.map(field => [field.name, field]));
+    const inBounds = (name, value) => {
+      const spec = specs.get(name);
+      return Number.isFinite(value) && !(spec?.min > value) && !(spec?.max < value);
+    };
+    const settings = layer.settings;
+    row.graphGood ||= {
+      minFreq: specs.get(names.min)?.default,
+      maxFreq: specs.get(names.max)?.default,
+      floor: specs.get(names.floor)?.default ?? 0,
+      points: new Map(),
+    };
+    const good = row.graphGood;
+    // Each end follows its field while the other one is invalid, as long as the
+    // pair stays increasing; an increasing pair of valid values replaces both.
+    const [minFreq, maxFreq] = [settings[names.min], settings[names.max]];
+    const minOk = inBounds(names.min, minFreq);
+    const maxOk = inBounds(names.max, maxFreq);
+    if (minOk && maxOk) {
+      if (minFreq < maxFreq) [good.minFreq, good.maxFreq] = [minFreq, maxFreq];
+    } else if (minOk && minFreq < good.maxFreq) {
+      good.minFreq = minFreq;
+    } else if (maxOk && maxFreq > good.minFreq) {
+      good.maxFreq = maxFreq;
+    }
+    if (inBounds(names.floor, settings[names.floor])) good.floor = settings[names.floor];
+    const points = [];
+    for (const point of row.points.graphPoints()) {
+      if (point.valid) good.points.set(point.id, {position: point.position, weight: point.weight});
+      const shown = good.points.get(point.id);
+      if (shown) points.push({id: point.id, ...shown});
+    }
+    return {
+      minFreq: good.minFreq,
+      maxFreq: good.maxFreq,
+      floor: good.floor,
+      points,
+      selectedId: row.points.selected(),
+      maxHz: specs.get(names.max)?.max ?? Infinity,
+      context,
+      disabled: {
+        range: busy || locked.has(names.min) || locked.has(names.max),
+        floor: busy || locked.has(names.floor),
+        points: busy || locked.has(names.points),
+      },
+      positionRange: row.points.positionRange,
+    };
+  }
+
+  // Drags and selection redraw once per frame, not once per pointer event.
+  function scheduleRefresh() {
+    if (refreshFrame) return;
+    refreshFrame = requestAnimationFrame(() => {
+      refreshFrame = 0;
+      refresh();
+    });
+  }
+
   function placeRows() {
     list.append(...fft.displayRows(order).map(uid => rows.get(uid).element));
   }
 
   function buildRows(layers) {
     list.replaceChildren();
+    for (const row of rows.values()) row.graph?.destroy();
     rows.clear();
     for (const layer of layers) createRow(layer);
     order = layers.map(layer => layer.uid);
@@ -411,6 +622,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     if (!window.confirm(`Remove layer ${name}?`)) return;
     order = order.filter(other => other !== uid);
     rows.get(uid).element.remove();
+    rows.get(uid).graph?.destroy();
     rows.delete(uid);
     delete stash[uid];
     if (openUid === uid) openUid = null;
@@ -701,21 +913,28 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     sourceMarker.hidden = source === baseline.source;
     const {structure, assumed} = analyzerStructure();
     const facts = fft.analyzerFacts(structure, assumed);
-    const rate = facts.sampleRate ? fft.formatHz(facts.sampleRate) : 'unknown';
-    const rateText = facts.assumed.has('sample_rate') ? `${rate} (assumed until launch)` : rate;
+    // The rate the graph and the Nyquist check use (assumed after a source change).
+    const context = binContextNow();
+    const rateAssumed = context.assumed.has('sample_rate');
+    const rate = context.sampleRate ? fft.formatHz(context.sampleRate) : 'unknown';
+    const rateText = rateAssumed ? `${rate} (assumed until launch)` : rate;
+    const bars = context.numBars
+      ? `${context.numBars}${context.assumed.has('num_bars') ? ' (assumed until launch)' : ''}` : '—';
     factsTable.replaceChildren(
       h('dt', {}, 'Sample rate'), h('dd', {}, rateText),
       h('dt', {}, 'FFT size'), h('dd', {}, facts.fftSize ?? '—'),
-      h('dt', {}, 'Block'), h('dd', {}, facts.blockSize ? `${facts.blockSize} samples` : '—'));
+      h('dt', {}, 'Block'), h('dd', {}, facts.blockSize ? `${facts.blockSize} samples` : '—'),
+      h('dt', {}, 'Bars'), h('dd', {}, bars));
     analyzerSummary.textContent = [
       fft.sourceLabel(source),
-      facts.assumed.has('sample_rate') ? `${rate} assumed` : rate,
+      rateAssumed ? `${rate} assumed` : rate,
       facts.fftSize ? `FFT ${facts.fftSize}` : null,
     ].filter(Boolean).join(' · ');
   }
 
   function refresh() {
     const draft = readDraft();
+    contextKey = contextText(draft.context);
     const changes = fft.draftChanges(baseline, draft);
     const baseByUid = new Map(baseline.layers.map(layer => [layer.uid, layer]));
     const count = draft.layers.length;
@@ -799,6 +1018,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         const control = row.fields.get(field.name);
         control.setChanged(changed);
         control.setError(fieldErrors[field.name] || null);
+        control.setWarning(fieldErrors[field.name] ? null : draft.warnings.get(layer.uid)?.[field.name] || null);
         control.setHidden(!shown);
         if (locked.has(field.name)) {
           control.setDisabled(true);
@@ -812,6 +1032,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         group.heading.hidden = !group.fields.some(fieldName => shownByName[fieldName]);
         group.heading.nextElementSibling.hidden = group.heading.hidden;
       }
+      if (row.graph) row.graph.render(graphModel(row, layer, locked, draft.context));
     });
     onChange();
   }
@@ -852,8 +1073,19 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     // connects; other runs' layers are never followed (D-062).
     noticeStatus(status) {
       lastStatus = status;
-      refreshAnalyzer();
+      // A run starting or stopping changes what the graph assumes (D-069).
+      if (loaded && contextText(binContextNow()) !== contextKey) refresh();
+      else refreshAnalyzer();
       maybeLoadSnapshot(status);
+    },
+
+    // The stored matrix settings (program.js reads them each poll): the bar
+    // count before launch is their width (plan criterion 2).
+    noticeMatrix(values) {
+      const next = values ?? null;
+      if (sameJson(next, matrixValues)) return;
+      matrixValues = next;
+      if (loaded) refresh();
     },
 
     unsentCount() {

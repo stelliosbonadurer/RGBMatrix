@@ -483,6 +483,7 @@ async function refresh() {
   } catch (_error) {
     // Keep the last matrix snapshot; the status line shows when the controller is gone.
   }
+  noticeMatrix();
   for (const [name, entry] of files) {
     let next;
     try {
@@ -537,6 +538,12 @@ el.showMatrixFlags.addEventListener('change', render);
 el.options.addEventListener('submit', event => event.preventDefault());
 guardLeaving(unsentCount);
 
+// The FFT editor sizes its graph from the stored panel width before launch.
+// Unusable stored settings mean launches use the Pi config, which the page can't see.
+function noticeMatrix() {
+  editor?.noticeMatrix?.(matrix && !matrix.error ? matrix.values : null);
+}
+
 async function initialize() {
   try {
     const [catalog, current] = await Promise.all([api.visualizations(), api.status()]);
@@ -584,6 +591,7 @@ async function initialize() {
   } catch (error) {
     showMessage(el.message, `Could not load the matrix settings: ${error.message}`, 'error');
   }
+  noticeMatrix();
   render();
   if (!polling) {
     polling = true;

@@ -40,6 +40,8 @@ export function createField(parameter, value, {onInput, readOnly = false} = {}) 
   const rangeNote = range ? h('span', {className: 'field-range'}, range) : null;
   const help = h('p', {className: 'field-help', id: `${id}-help`}, helpText, rangeNote ? ' ' : null, rangeNote);
   const error = h('p', {className: 'field-error', id: `${id}-error`, role: 'alert', hidden: true});
+  // A warning doesn't block sending (the FFT page's assumed Nyquist, D-069).
+  const warning = h('p', {className: 'field-warning', id: `${id}-warning`, hidden: true});
 
   let input;
   if (parameter.type === 'bool') {
@@ -57,16 +59,16 @@ export function createField(parameter, value, {onInput, readOnly = false} = {}) 
   }
   input.name = parameter.name;
   input.disabled = readOnly;
-  input.setAttribute('aria-describedby', `${id}-help ${id}-error`);
+  input.setAttribute('aria-describedby', `${id}-help ${id}-error ${id}-warning`);
   writeInput(parameter, input, value);
 
   const head = h('div', {className: 'field-head'}, label, marker);
   const element = h('div', {className: `field field-${parameter.type}`, 'data-name': parameter.name});
   if (parameter.type === 'bool') {
     head.append(input);
-    element.append(head, help, error);
+    element.append(head, help, error, warning);
   } else {
-    element.append(head, input, help, error);
+    element.append(head, input, help, error, warning);
   }
   if (onInput) {
     const eventName = parameter.type === 'bool' || parameter.type === 'enum' ? 'change' : 'input';
@@ -91,6 +93,10 @@ export function createField(parameter, value, {onInput, readOnly = false} = {}) 
       error.textContent = message || '';
       error.hidden = !message;
       input.setAttribute('aria-invalid', String(Boolean(message)));
+    },
+    setWarning(message) {
+      warning.textContent = message || '';
+      warning.hidden = !message;
     },
     setHidden(hidden) {
       element.hidden = hidden;
