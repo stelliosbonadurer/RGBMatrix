@@ -1,8 +1,9 @@
 """Hardware-free tests for the FFT runtime protocol controller.
 
 Since web-control-refactor M1 the controller owns only run identity, revision, and
-the snapshot. Every live control, patch path, and legacy action is rejected; the
-layer structure (``structure.set``) is the only configuration path (D-001, D-015).
+the snapshot. Every live control and legacy action is rejected, and the patch
+operation is gone (D-051); the layer structure (``structure.set``) is the only
+configuration path (D-001, D-015).
 """
 
 from __future__ import annotations
@@ -88,7 +89,9 @@ class FftRuntimeControllerTests(unittest.TestCase):
         self.assertNotIn("controls", snapshot)
         self.assertNotIn("state", snapshot)
 
-    def test_every_legacy_patch_path_is_rejected_without_revision_change(self) -> None:
+    def test_patch_is_an_unknown_operation_for_every_legacy_path(self) -> None:
+        # D-051: the patch branch is gone, so a patch is like any other unknown
+        # command operation.
         for path in LEGACY_PATCH_PATHS:
             with self.subTest(path=path), self.assertRaises(RuntimeControlError) as caught:
                 self.controller.handle_runtime_operation("command", {
@@ -98,8 +101,8 @@ class FftRuntimeControllerTests(unittest.TestCase):
                     },
                     "expected_revision": 0,
                 })
-            self.assertEqual(caught.exception.code, "invalid_path")
-            self.assertEqual(caught.exception.path, path)
+            self.assertEqual(caught.exception.code, "invalid_operation")
+            self.assertIsNone(caught.exception.path)
         self.assertEqual(self.controller.revision, 0)
 
     def test_every_legacy_action_is_rejected_without_revision_change(self) -> None:
@@ -126,7 +129,7 @@ class FftRuntimeControllerTests(unittest.TestCase):
             ("command", {"command": {
                 "operation": "patch",
                 "changes": [{"path": "settings.noise_floor", "value": 10 ** 400}],
-            }}, "invalid_path"),
+            }}, "invalid_operation"),
         )
         for operation, payload, code in cases:
             with self.subTest(code=code), self.assertRaises(RuntimeControlError) as caught:
@@ -201,8 +204,7 @@ class FftRuntimeControllerTests(unittest.TestCase):
                 "expected_revision": 0,
             })
             self.assertIsInstance(rejected, RuntimeRemoteError)
-            self.assertEqual(rejected.code, "invalid_path")
-            self.assertEqual(rejected.path, "visualizer.gradient")
+            self.assertEqual(rejected.code, "invalid_operation")
             self.assertEqual(controller.revision, 0)
 
             stop_event.set()

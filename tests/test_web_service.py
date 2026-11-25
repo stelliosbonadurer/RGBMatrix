@@ -256,12 +256,12 @@ class WebServiceTests(unittest.TestCase):
 
         status, body = self.request(
             "/api/v1/run",
-            payload={"visualization_id": "fft", "parameters": {"theme": "warm"}},
+            payload={"visualization_id": "fft", "parameters": {"audio_source": "bluetooth"}},
             token="secret-token",
         )
         self.assertEqual(status, 200)
         self.assertEqual(body["pid"], 42)
-        self.assertEqual(self.supervisor.started, [("fft", {"theme": "warm"})])
+        self.assertEqual(self.supervisor.started, [("fft", {"audio_source": "bluetooth"})])
 
     def test_run_forwards_a_bounded_launch_structure(self) -> None:
         document = self._structure_document()
@@ -317,29 +317,16 @@ class WebServiceTests(unittest.TestCase):
         self.assertEqual(body["visualization_id"], "fft")
         self.assertEqual(body["controls"][0]["path"], "visualizer.gradient")
 
-    def test_runtime_patch_is_bounded_and_forwards_typed_command(self) -> None:
-        payload = {
-            "run_id": 1,
-            "expected_revision": 4,
-            "changes": [{"path": "visualizer.gradient", "value": True}],
-        }
-        status, body = self.request(
-            "/api/v1/runtime",
-            payload=payload,
-            token="secret-token",
-            method="PATCH",
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(body["revision"], 5)
-        self.assertEqual(
-            self.supervisor.runtime_commands[-1],
-            {
-                "operation": "patch",
-                "run_id": 1,
-                "expected_revision": 4,
-                "changes": [{"path": "visualizer.gradient", "value": True}],
-            },
-        )
+    def test_runtime_patch_route_is_gone(self) -> None:
+        # D-051: the standard library's unsupported-method reply, and no listing.
+        payload = {"run_id": 1, "changes": [{"path": "visualizer.gradient", "value": True}]}
+        with self.assertRaises(urllib.error.HTTPError) as caught:
+            self.request("/api/v1/runtime", payload=payload, token="secret-token", method="PATCH")
+        self.assertEqual(caught.exception.code, 501)
+        caught.exception.close()
+        self.assertEqual(self.supervisor.runtime_commands, [])
+        _status, index = self.request("/api/v1")
+        self.assertFalse([entry for entry in index["endpoints"] if entry.startswith("PATCH")])
 
     def test_runtime_action_forwards_allowlisted_envelope(self) -> None:
         payload = {
@@ -491,22 +478,6 @@ class WebServiceTests(unittest.TestCase):
             else:
                 self.assertEqual(body["path"], error.path)
 
-    def test_runtime_patch_rejects_unknown_fields_before_supervisor(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as caught:
-            self.request(
-                "/api/v1/runtime",
-                payload={
-                    "run_id": 1,
-                    "changes": [{"path": "x", "value": True}],
-                    "shell": "echo unsafe",
-                },
-                token="secret-token",
-                method="PATCH",
-            )
-        self.assertEqual(caught.exception.code, 400)
-        caught.exception.close()
-        self.assertEqual(self.supervisor.runtime_commands, [])
-
     def test_stop_requires_token_and_quits_current_visualization(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as caught:
             self.request("/api/v1/stop", payload={})
@@ -631,30 +602,17 @@ class WebServiceTests(unittest.TestCase):
         wrong_origin.exception.close()
 
         status, runtime = self.request(
-            "/api/v1/runtime",
-            payload={
-                "run_id": 1,
-                "expected_revision": 4,
-                "changes": [{"path": "visualizer.gradient", "value": True}],
-            },
-            method="PATCH",
-            headers={"Cookie": cookie, "Origin": self.base_url},
-        )
-        self.assertEqual(status, 200)
-        self.assertEqual(runtime["revision"], 5)
-
-        status, runtime = self.request(
             "/api/v1/runtime/actions",
             payload={
                 "run_id": 1,
-                "expected_revision": 5,
+                "expected_revision": 4,
                 "action": "dynamic.reseed",
                 "args": {},
             },
             headers={"Cookie": cookie, "Origin": self.base_url},
         )
         self.assertEqual(status, 200)
-        self.assertEqual(runtime["revision"], 6)
+        self.assertEqual(runtime["revision"], 5)
 
         status, _body = self.request(
             "/api/v1/stop",
@@ -816,7 +774,7 @@ class PresetApiTests(unittest.TestCase):
     def preset_payload(self, name: str = "Warm bass") -> dict:
         return {
             "name": name,
-            "parameters": {"theme": "warm", "audio_source": "bluetooth"},
+            "parameters": {"audio_source": "bluetooth"},
             "structure": self._structure_document(),
         }
 
@@ -838,7 +796,7 @@ class PresetApiTests(unittest.TestCase):
 
         status, loaded = self.request(f"/api/v1/presets/{preset_id}", token=self.session)
         self.assertEqual(status, 200)
-        self.assertEqual(loaded["parameters"], {"theme": "warm", "audio_source": "bluetooth"})
+        self.assertEqual(loaded["parameters"], {"audio_source": "bluetooth"})
 
         # The loaded pair goes to launch unchanged.
         status, _ = self.request(
@@ -1473,7 +1431,6 @@ class OpenAccessTests(unittest.TestCase):
             ("DELETE", "/api/v1/programs/graph_traversal/files/render", None),
             ("PUT", "/api/v1/presets/0000000000000000", {}),
             ("DELETE", "/api/v1/presets/0000000000000000", {}),
-            ("PATCH", "/api/v1/runtime", {}),
         )
         for origin in ("http://example.invalid", "null", self.base_url.replace("http:", "https:")):
             for method, path, payload in cases:
@@ -1525,6 +1482,22 @@ class OpenAccessTests(unittest.TestCase):
         self.request("/api/v1/run", payload={"visualization_id": "sorts", "parameters": {}})
         argv = self.factory.calls[-1]
         self.assertEqual(argv[argv.index("--led-brightness") + 1], "70")
+
+    def test_fft_launch_options_are_only_the_audio_source(self) -> None:
+        # M5 slice 1 criterion 2 (D-050): theme, gradient, and overflow live in each
+        # layer's settings, so /run refuses them by name and nothing is launched.
+        _, body = self.request("/api/v1/visualizations")
+        fft = next(item for item in body["visualizations"] if item["id"] == "fft")
+        self.assertEqual([parameter["name"] for parameter in fft["parameters"]], ["audio_source"])
+        for name, value in (("theme", "warm"), ("gradient", True), ("overflow", False)):
+            with self.subTest(name=name):
+                status, error = self.error(
+                    "/api/v1/run",
+                    payload={"visualization_id": "fft", "parameters": {name: value}},
+                )
+                self.assertEqual(status, 400)
+                self.assertIn(name, error["error"])
+        self.assertEqual(self.factory.calls, [])
 
     def test_visualization_list_carries_no_matrix_settings(self) -> None:
         _, body = self.request("/api/v1/visualizations")

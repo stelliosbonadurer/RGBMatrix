@@ -113,15 +113,10 @@ def main():
     # Initialize matrix application (handles argument parsing)
     app = MatrixApp()
     
-    # Application options come from the shared controller contract. Direct execution
-    # uses None for visual settings so a supplied JSON settings file remains the
-    # source of truth unless the user explicitly passes an override.
-    direct_defaults = {
-        "audio_source": "usb-mic",
-        "theme": None,
-        "gradient": None,
-        "overflow": None,
-    }
+    # Application options come from the shared controller contract. The audio
+    # source is the only one (web-control-refactor D-050): the default layer's look
+    # comes from config/settings.py or a --settings file.
+    direct_defaults = {"audio_source": "usb-mic"}
     for parameter in application_parameters("fft"):
         parameter.add_to_argparse(
             app.parser,
@@ -164,15 +159,6 @@ def main():
         settings.audio = resolve_audio_source(args.audio_source, settings.audio)
     except AudioSourceResolutionError as exc:
         app.parser.error(str(exc))
-    
-    # Override settings from command line if provided
-    if args.theme:
-        settings.color.theme = args.theme
-    
-    # Override mode settings from command line
-    gradient_enabled = bool(args.gradient) if args.gradient is not None else False
-    if args.overflow is not None:
-        settings.overflow.enabled = bool(args.overflow)
 
     # Initialize matrix
     if not app.initialize_matrix():
@@ -180,7 +166,6 @@ def main():
         sys.exit(1)
 
     initial_layer_settings = current_bars_settings_from_runtime(settings)
-    initial_layer_settings["gradient"] = gradient_enabled
     print_startup_info(app.width, app.height, initial_layer_settings)
 
     # Initialize components

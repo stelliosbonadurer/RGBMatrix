@@ -473,56 +473,100 @@ def current_bars_settings_from_runtime(
     }
 
 
+# Page presentation for the descriptor (web-control-refactor D-053): ordered
+# setting groups, and the conditions that show a field. A hidden field keeps its
+# value and is still sent; the page only draws what these say.
+CURRENT_BARS_SETTING_GROUPS = (
+    {"id": "range", "label": "Range & weighting"},
+    {"id": "look", "label": "Look"},
+    {"id": "peaks", "label": "Peaks"},
+    {"id": "motion", "label": "Motion"},
+    {"id": "dynamic", "label": "Dynamic theme"},
+)
+_WHEN_OVERFLOW = {"field": "overflow", "values": [True]}
+_WHEN_PEAKS = {"field": "peak_enabled", "values": [True]}
+_WHEN_DYNAMIC_THEME = {"field": "theme", "values": ["dynamic", "dynamic_lateral_gradient"]}
+
+
 def current_bars_settings_descriptor() -> dict[str, object]:
-    """Return the small project-owned descriptor rendered by future clients."""
+    """Return the project-owned descriptor the page draws a layer's settings from.
+
+    Each field has a ``group`` (an id from ``groups``), a short ``label``, and
+    optionally ``shown_when`` ({"field", "values"}): the field is shown while that
+    other field holds one of the values (D-053).
+    """
 
     return {
+        "groups": [dict(group) for group in CURRENT_BARS_SETTING_GROUPS],
         "fields": [
-            {"name": "theme", "type": "choice", "choices": list_themes(), "default": "ocean",
+            {"name": "theme", "label": "Theme", "group": "look",
+             "type": "choice", "choices": list_themes(), "default": "ocean",
              "help": "Color theme for this layer's bars."},
-            {"name": "gradient", "type": "boolean", "default": False,
+            {"name": "gradient", "label": "Gradient", "group": "look",
+             "type": "boolean", "default": False,
              "help": "On: each pixel gets its own color along the bar. Off: one color per bar."},
-            {"name": "overflow", "type": "boolean", "default": True,
+            {"name": "overflow", "label": "Overflow", "group": "look",
+             "type": "boolean", "default": True,
              "help": "On: loud bars wrap past the top in layered colors. Off: bars stop at the top."},
-            {"name": "overflow_multiplier", "type": "number", "min": 0.1, "max": 10.0, "default": 1.5,
+            {"name": "overflow_multiplier", "label": "Overflow multiplier", "group": "look",
+             "shown_when": dict(_WHEN_OVERFLOW),
+             "type": "number", "min": 0.1, "max": 10.0, "default": 1.5,
              "help": "How readily bars overflow; higher means more overflow."},
-            {"name": "bars", "type": "boolean", "default": True,
+            {"name": "bars", "label": "Bars", "group": "look",
+             "type": "boolean", "default": True,
              "help": "Draw the bars. Turn off to show only the peak markers."},
-            {"name": "full", "type": "boolean", "default": False,
+            {"name": "full", "label": "Full columns", "group": "look",
+             "type": "boolean", "default": False,
              "help": "Light the whole column, crossfading at the bar height."},
-            {"name": "shadow_enabled", "type": "boolean", "default": False,
+            {"name": "shadow_enabled", "label": "Shadows", "group": "motion",
+             "type": "boolean", "default": False,
              "help": "Let pixels fade out over a few frames instead of switching off."},
-            {"name": "peak_enabled", "type": "boolean", "default": False,
+            {"name": "peak_enabled", "label": "Peaks", "group": "peaks",
+             "type": "boolean", "default": False,
              "help": "Show a marker that holds at each bar's recent peak."},
-            {"name": "peak_color_mode", "type": "choice", "choices": ["white", "bar", "contrast", "peak"], "default": "contrast",
+            {"name": "peak_color_mode", "label": "Peak color", "group": "peaks",
+             "shown_when": dict(_WHEN_PEAKS),
+             "type": "choice", "choices": ["white", "bar", "contrast", "peak"], "default": "contrast",
              "help": "Peak marker color: white, the bar's color, a contrasting color, or the theme's peak color."},
-            {"name": "peak_fall_speed", "type": "number", "min": 0.0, "max": 1.0, "default": 0.08,
+            {"name": "peak_fall_speed", "label": "Peak fall speed", "group": "peaks",
+             "shown_when": dict(_WHEN_PEAKS),
+             "type": "number", "min": 0.0, "max": 1.0, "default": 0.08,
              "help": "How fast a peak marker drops after its hold ends."},
-            {"name": "peak_hold_frames", "type": "integer", "min": 0, "max": 600, "default": 8,
+            {"name": "peak_hold_frames", "label": "Peak hold (frames)", "group": "peaks",
+             "shown_when": dict(_WHEN_PEAKS),
+             "type": "integer", "min": 0, "max": 600, "default": 8,
              "help": "Frames a peak marker stays put before falling."},
-            {"name": "sensitivity_scalar", "type": "number", "min": 0.01, "max": 20.0, "default": 1.0,
-             "help": "Overall gain on top of automatic scaling; higher makes bars taller."},
-            {"name": "smoothing_rise", "type": "number", "min": 0.0, "max": 1.0, "default": 0.4,
+            {"name": "smoothing_rise", "label": "Rise", "group": "motion",
+             "type": "number", "min": 0.0, "max": 1.0, "default": 0.4,
              "help": "How fast bars rise toward a louder value (1 is instant)."},
-            {"name": "smoothing_fall", "type": "number", "min": 0.0, "max": 1.0, "default": 0.1,
+            {"name": "smoothing_fall", "label": "Fall", "group": "motion",
+             "type": "number", "min": 0.0, "max": 1.0, "default": 0.1,
              "help": "How fast bars fall toward a quieter value (1 is instant)."},
-            {"name": "dynamic_cycle_speed", "type": "number", "min": 0.0, "max": 5.0, "default": 0.06,
+            {"name": "dynamic_cycle_speed", "label": "Cycle speed", "group": "dynamic",
+             "shown_when": dict(_WHEN_DYNAMIC_THEME),
+             "type": "number", "min": 0.0, "max": 5.0, "default": 0.06,
              "help": "Color cycling speed for the dynamic themes; ignored by other themes."},
-            {"name": "dynamic_frozen", "type": "boolean", "default": False,
+            {"name": "dynamic_frozen", "label": "Frozen", "group": "dynamic",
+             "shown_when": dict(_WHEN_DYNAMIC_THEME),
+             "type": "boolean", "default": False,
              "help": "Pause color cycling for the dynamic themes."},
-            {"name": "min_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 100.0,
+            {"name": "min_freq", "label": "Min Hz", "group": "range",
+             "type": "number", "min": 1.0, "max": 24000.0, "default": 100.0,
              "help": "Lowest frequency in Hz shown by the leftmost bar."},
-            {"name": "max_freq", "type": "number", "min": 1.0, "max": 24000.0, "default": 6300.0,
+            {"name": "max_freq", "label": "Max Hz", "group": "range",
+             "type": "number", "min": 1.0, "max": 24000.0, "default": 6300.0,
              "help": "Highest frequency in Hz shown by the rightmost bar; at most half the sample rate."},
-            {"name": "noise_floor", "type": "number", "min": 0.0, "max": 100.0, "default": 0.3,
+            {"name": "noise_floor", "label": "Noise floor", "group": "range",
+             "type": "number", "min": 0.0, "max": 100.0, "default": 0.3,
              "help": "Subtracted from every weighted bar; raise it if bars move with no audio."},
-            {"name": "weight_points", "type": "points",
+            {"name": "weight_points", "label": "Weighting points", "group": "range",
+             "type": "points",
              "min_items": MIN_WEIGHT_POINTS, "max_items": MAX_WEIGHT_POINTS,
              "item_fields": [
-                 {"name": "position", "type": "number",
+                 {"name": "position", "label": "Position", "type": "number",
                   "min": WEIGHT_POSITION_MIN, "max": WEIGHT_POSITION_MAX,
                   "help": "Place along the layer's range: 0 is min_freq, 1 is max_freq, log-spaced."},
-                 {"name": "weight", "type": "number", "min": WEIGHT_MIN, "max": WEIGHT_MAX,
+                 {"name": "weight", "label": "Weight", "type": "number", "min": WEIGHT_MIN, "max": WEIGHT_MAX,
                   "help": "Multiplier for the bars at this position."},
              ],
              "default": [
@@ -530,6 +574,9 @@ def current_bars_settings_descriptor() -> dict[str, object]:
                  for position, weight in DEFAULT_WEIGHT_POINTS
              ],
              "help": "Frequency weighting curve: linear between points, flat beyond the first and last. Points are sorted by position, and two points can't share one."},
+            {"name": "sensitivity_scalar", "label": "Gain", "group": "range",
+             "type": "number", "min": 0.01, "max": 20.0, "default": 1.0,
+             "help": "Overall gain on top of automatic scaling; higher makes bars taller."},
         ],
         "backend_constraints": {
             PILLOW_BULK_OUTPUT_PATH: {

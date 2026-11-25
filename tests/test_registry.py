@@ -6,6 +6,7 @@ import math
 import argparse
 import unittest
 
+from matrix_controller.definitions import application_parameters
 from matrix_controller.registry import build_default_registry
 from matrix_controller.schema import ValidationError
 
@@ -46,10 +47,10 @@ class RegistryTests(unittest.TestCase):
                 spec.validate_parameters({"led_brightness": 50})
 
     def test_public_parameters_carry_their_cli_flags(self) -> None:
-        gradient = self.registry.get("fft").parameter("gradient").as_public_dict()
-        self.assertEqual(gradient["cli_flag"], "--gradient")
-        self.assertEqual(gradient["negative_cli_flag"], "--no-gradient")
-        self.assertIsNone(gradient["true_cli_value"])
+        cycles = self.registry.get("graph_traversal").parameter("allow_cycles").as_public_dict()
+        self.assertEqual(cycles["cli_flag"], "--allow-cycles")
+        self.assertEqual(cycles["negative_cli_flag"], "--no-cycles")
+        self.assertIsNone(cycles["true_cli_value"])
         pulse = next(
             item for item in self.registry.get("fft").matrix_parameters
             if item.name == "led_no_hardware_pulse"
@@ -67,8 +68,8 @@ class RegistryTests(unittest.TestCase):
     def test_strict_parameter_types_and_ranges(self) -> None:
         fft = self.registry.get("fft")
         invalid_cases = (
-            {"gradient": "true"},
-            {"theme": "not-a-theme"},
+            {"audio_source": 1},
+            {"audio_source": "not-a-source"},
         )
         for supplied in invalid_cases:
             with self.subTest(supplied=supplied), self.assertRaises(ValidationError):
@@ -89,8 +90,22 @@ class RegistryTests(unittest.TestCase):
         second = fft.validate_parameters({})
         self.assertEqual(first, second)
         self.assertIsNot(first, second)
-        first["theme"] = "warm"
-        self.assertEqual(second["theme"], "ocean")
+        first["audio_source"] = "bluetooth"
+        self.assertEqual(second["audio_source"], "usb-mic")
+
+    def test_audio_source_is_the_only_fft_launch_option(self) -> None:
+        # D-050: each layer's theme, gradient, and overflow live in the layer
+        # structure. main.py's flags come from the same specs.
+        fft = self.registry.get("fft")
+        self.assertEqual([parameter.name for parameter in fft.parameters], ["audio_source"])
+        self.assertEqual(
+            [parameter.name for parameter in application_parameters("fft")], ["audio_source"]
+        )
+        for name in ("theme", "gradient", "overflow"):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                ValidationError, f"unknown parameters: {name}"
+            ):
+                fft.validate_parameters({name: "ocean"})
 
     def test_fft_audio_source_is_public_bounded_and_defaults_to_usb(self) -> None:
         fft = self.registry.get("fft")

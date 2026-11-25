@@ -620,3 +620,132 @@ details.panel[open] > summary { margin-bottom: 12px; }
   gap: 8px;
   margin-top: 14px;
 }
+
+/* ---- Music FFT page (M5, D-052–D-066) ----------------------------------- */
+
+.program-editor { display: grid; gap: 14px; min-width: 0; }
+.program-editor:empty { display: none; }
+.fft-editor { display: grid; gap: 14px; min-width: 0; }
+.fft-editor > * { min-width: 0; }
+
+.analyzer-row .value-table { margin-top: 4px; }
+.analyzer-row .summary-hint { overflow-wrap: anywhere; }
+
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+  cursor: pointer;
+}
+.choice:has(input:checked) { border-color: var(--cyan); background: rgb(77 231 255 / 10%); }
+.choice input { accent-color: var(--cyan); margin: 0; }
+
+.output-field { border-top: 0; padding-top: 0; }
+.panel > .note:first-child { margin-top: 0; }
+
+.layers-panel { display: grid; gap: 10px; }
+.layers-panel .note { margin-top: 0; }
+.layer-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.layer-add select {
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+  font-size: 16px;
+}
+.empty-layers { padding: 8px 0; }
+
+.layer-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+
+.layer-row {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-small);
+  background: var(--bg);
+}
+.layer-row.open { border-color: var(--line-strong); }
+.layer-row.has-error { border-color: rgb(255 100 116 / 60%); }
+.layer-row.dragging {
+  position: relative;
+  z-index: 2;
+  border-color: var(--cyan);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 55%);
+}
+
+.layer-line { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px; }
+.layer-line-secondary { padding-top: 0; }
+
+.drag-handle, .icon-button, .layer-title {
+  min-width: 40px;
+  min-height: 40px;
+  border: 0;
+  border-radius: var(--radius-small);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.drag-handle { font-size: 20px; cursor: grab; touch-action: none; }
+.layer-row.dragging .drag-handle { cursor: grabbing; }
+.icon-button:hover:not(:disabled), .drag-handle:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+.icon-button:disabled, .drag-handle:disabled { opacity: .35; cursor: not-allowed; }
+.danger-text { color: var(--danger); }
+
+.layer-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 700;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.layer-row.hidden-layer .layer-title { color: var(--muted); }
+.layer-unsent { border-color: rgb(255 79 163 / 50%); color: var(--pink); }
+.layer-summary {
+  flex: 1;
+  min-width: 0;
+  padding-left: 46px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-body { padding: 0 12px 12px; border-top: 1px solid var(--line); }
+.layer-body > .fields:first-child { padding-top: 6px; }
+
+.points-list { display: grid; gap: 6px; }
+.point-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.5rem minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 6px;
+}
+/* The .field input rules size these (16px, so iOS doesn't zoom). */
+.point-row input { padding: 0 10px; font-family: var(--mono); }
+.point-row input:disabled { opacity: .55; }
+.point-head { color: var(--faint); font-size: 12px; }
+.point-hint { color: var(--faint); font-family: var(--mono); font-size: 12px; text-align: center; }
+.point-error { grid-column: 1 / -1; }
+.point-actions { display: flex; gap: 8px; }
+.field-points.changed .field-label { color: var(--pink); }
+
+.action-reason {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 8px var(--gutter) 0;
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 650;
+}
+body.has-action-bar:has(.action-reason:not([hidden])) { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }

@@ -82,10 +82,10 @@ class SupervisorTests(unittest.TestCase):
             pass
 
     def test_start_passes_vector_and_service_safety_options(self) -> None:
-        result = self.supervisor.start("fft", {"theme": "warm"})
+        result = self.supervisor.start("fft", {"audio_source": "bluetooth"})
         argv, kwargs = self.factory.calls[0]
         self.assertEqual(argv[:4], ["sudo", "-n", "-E", "/fixed/python"])
-        self.assertEqual(result.parameters["theme"], "warm")
+        self.assertEqual(result.parameters["audio_source"], "bluetooth")
         self.assertTrue(kwargs["start_new_session"])
         self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
         self.assertEqual(self.supervisor.status()["state"], "running")

@@ -131,6 +131,17 @@ function model(status, extra = {}) {
   });
 }
 
+test('a running FFT update that must relaunch says so (D-062)', () => {
+  const running = {state: 'running', visualization_id: 'sorts'};
+  const relaunch = model(running, {dirty: true, relaunch: true});
+  assert.deepEqual([relaunch.bottom.label, relaunch.bottom.action, relaunch.bottom.disabled],
+    ['Relaunch with changes', 'update', false]);
+  assert.equal(model(running, {dirty: true, relaunch: true, pending: 'update'}).bottom.label, 'Relaunching…');
+  assert.equal(model(running, {dirty: true}).bottom.label, 'Send update');
+  // Not running: Launch sends everything, whatever the reason.
+  assert.equal(model({state: 'idle'}, {relaunch: true}).bottom.label, 'Launch with these settings');
+});
+
 test('D-037 button table', () => {
   const idle = model({state: 'idle', visualization_id: null});
   assert.deepEqual([idle.top.label, idle.top.action, idle.bottom.label, idle.bottom.action],

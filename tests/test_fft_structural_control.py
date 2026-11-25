@@ -692,6 +692,35 @@ class StructuralCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.registry.projection_count, 2)
         json.dumps(snapshot)
 
+    def test_an_empty_structure_activates_renders_blank_and_can_be_refilled(self) -> None:
+        # M5 slice 1 criterion 5: the page may send an empty layer list.
+        coordinator = self._coordinator()
+        result = self._exchange(coordinator, _payload(_document([])))
+        self.assertNotIn("error", result)
+        self.assertEqual(result["value"]["revision"], 1)
+        self.assertEqual(result["value"]["structure"]["layers"], [])
+        for _frame in range(3):
+            plan = self.owner.begin_frame()
+            self.assertEqual(plan.prepare_frame().size, 0)
+            canvas = _DirectCanvas()
+            plan.draw_frame(canvas)
+            self.assertEqual(canvas.clear_calls, 1)
+        self.assertEqual(self.analyzer.get_calls, 0)
+
+        result = self._exchange(coordinator, _payload(_document([_layer(self.base)]), revision=1))
+        self.assertNotIn("error", result)
+        self.assertEqual(result["value"]["revision"], 2)
+        plan = self.owner.begin_frame()
+        self.assertEqual(plan.prepare_frame().size, self.runtime_width)
+        self.assertEqual(self.analyzer.get_calls, 1)
+
+    def test_an_empty_launch_structure_is_accepted(self) -> None:
+        coordinator = self._coordinator()
+        self.assertTrue(coordinator.apply_launch_structure(json.dumps(_document([]))))
+        self.assertEqual(coordinator.structure_snapshot()["layers"], [])
+        self.assertNotIn("launch_error", coordinator.structure_snapshot())
+        self.assertEqual(self.owner.begin_frame().prepare_frame().size, 0)
+
     def test_weight_points_are_sorted_in_the_snapshot_and_round_trip(self) -> None:
         coordinator = self._coordinator()
         unsorted = [
@@ -747,7 +776,8 @@ class StructuralCoordinatorTests(unittest.TestCase):
             ]},
             "expected_revision": 0,
         })
-        self.assertEqual(patch["error"].code, "invalid_path")
+        # D-051: patch is no longer a command operation at all.
+        self.assertEqual(patch["error"].code, "invalid_operation")
         self._assert_unchanged()
 
     def test_public_layer_tool_compiles_and_activates_all_counts_and_backends(self) -> None:

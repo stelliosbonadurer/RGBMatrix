@@ -54,7 +54,16 @@ export const api = {
     request('PUT', filePath(visualizationId, name), {expected_revision: expectedRevision, document}),
   // Only clears a saved file the program can't use (D-047).
   removeProgramFile: (visualizationId, name) => request('DELETE', filePath(visualizationId, name)),
-  run: (visualizationId, parameters) =>
-    request('POST', '/api/v1/run', {visualization_id: visualizationId, parameters}),
+  // `structure` (Music FFT only) is the layer structure to launch with (D-016).
+  run: (visualizationId, parameters, structure) =>
+    request('POST', '/api/v1/run', structure === undefined
+      ? {visualization_id: visualizationId, parameters}
+      : {visualization_id: visualizationId, parameters, structure}),
+  // Music FFT (M5): the layer catalog while stopped (D-049), the running
+  // snapshot, and structure.set.
+  fftCatalog: () => request('GET', '/static/fft_catalog.json'),
+  runtime: () => request('GET', '/api/v1/runtime'),
+  runtimeAction: (runId, expectedRevision, action, args) =>
+    request('POST', '/api/v1/runtime/actions', {run_id: runId, expected_revision: expectedRevision, action, args}),
   stop: () => request('POST', '/api/v1/stop', {}),
 };

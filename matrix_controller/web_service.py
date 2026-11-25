@@ -74,10 +74,14 @@ STATIC_ASSETS: dict[str, tuple[str, str]] = {
     "/static/js/home.js": ("js/home.js", _JAVASCRIPT),
     "/static/js/program.js": ("js/program.js", _JAVASCRIPT),
     "/static/js/file_editor.js": ("js/file_editor.js", _JAVASCRIPT),
+    "/static/js/fft_editor.js": ("js/fft_editor.js", _JAVASCRIPT),
+    "/static/js/programs/fft.js": ("js/programs/fft.js", _JAVASCRIPT),
     "/static/js/programs/graph_traversal.js": (
         "js/programs/graph_traversal.js",
         _JAVASCRIPT,
     ),
+    # Generated from the FFT code by tests/test_fft_catalog.py (D-049).
+    "/static/fft_catalog.json": ("fft_catalog.json", "application/json; charset=utf-8"),
 }
 
 
@@ -217,49 +221,6 @@ def validate_launch_structure(structure: Any) -> dict[str, Any]:
             f"structure must be at most {MAX_LAUNCH_STRUCTURE_BYTES} bytes"
         )
     return bounded
-
-
-def _parse_runtime_patch(payload: dict[str, Any]) -> dict[str, Any]:
-    """Validate the public atomic patch envelope without knowing visualization IDs."""
-
-    allowed = {"run_id", "expected_revision", "changes"}
-    unknown = set(payload) - allowed
-    if unknown:
-        raise ValidationError(f"unknown runtime fields: {', '.join(sorted(unknown))}")
-    run_id = payload.get("run_id")
-    if type(run_id) not in {str, int} or (isinstance(run_id, str) and not run_id):
-        raise ValidationError("run_id must be a non-empty string or integer")
-    expected_revision = payload.get("expected_revision")
-    if expected_revision is not None and (
-        type(expected_revision) is not int or expected_revision < 0
-    ):
-        raise ValidationError("expected_revision must be a non-negative integer")
-    changes = payload.get("changes")
-    if not isinstance(changes, list) or not changes or len(changes) > MAX_RUNTIME_CHANGES:
-        raise ValidationError(
-            f"changes must contain between 1 and {MAX_RUNTIME_CHANGES} items"
-        )
-    normalized_changes = []
-    for index, change in enumerate(changes):
-        if not isinstance(change, dict) or set(change) != {"path", "value"}:
-            raise ValidationError(f"changes[{index}] must contain path and value only")
-        path = change["path"]
-        if type(path) is not str or not path or len(path) > MAX_RUNTIME_PATH_LENGTH:
-            raise ValidationError(f"changes[{index}].path is invalid")
-        normalized_changes.append(
-            {
-                "path": path,
-                "value": _bounded_runtime_value(
-                    change["value"], label=f"changes[{index}].value"
-                ),
-            }
-        )
-    return {
-        "operation": "patch",
-        "run_id": run_id,
-        "expected_revision": expected_revision,
-        "changes": normalized_changes,
-    }
 
 
 def _parse_runtime_action(payload: dict[str, Any]) -> dict[str, Any]:
@@ -460,7 +421,6 @@ def build_handler(
                             "GET /api/v1/matrix-settings",
                             "GET /api/v1/programs/{visualization_id}/files/{name}",
                             "GET /api/v1/runtime",
-                            "PATCH /api/v1/runtime",
                             "POST /api/v1/runtime/actions",
                             "GET /api/v1/presets",
                             "GET /api/v1/presets/{preset_id}",
@@ -647,29 +607,6 @@ def build_handler(
                 self._send_json(status, {"error": str(exc)}, headers=headers)
             except RuntimeError as exc:
                 self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
-
-        def do_PATCH(self) -> None:  # noqa: N802 - HTTP handler API name
-            """Apply one authenticated atomic runtime patch."""
-
-            path = urlsplit(self.path).path
-            if self._refuse_cross_site_mutation():
-                return
-            if path != "/api/v1/runtime":
-                self._send_error_json(HTTPStatus.NOT_FOUND, "endpoint not found")
-                return
-            if not self._is_control_authorized():
-                self._send_error_json(HTTPStatus.UNAUTHORIZED, "invalid or missing control session")
-                return
-            if not self._cookie_mutation_is_same_origin():
-                self._send_error_json(HTTPStatus.FORBIDDEN, "cookie request origin is invalid")
-                return
-            try:
-                command = _parse_runtime_patch(self._read_json_object())
-                self._handle_runtime_command(command)
-            except ValidationError as exc:
-                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
-            except ValueError as exc:
-                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
 
         def do_PUT(self) -> None:  # noqa: N802 - HTTP handler API name
             """Replace one whole preset (D-025), the matrix settings (D-035), or a
@@ -1036,7 +973,7 @@ def build_handler(
             """Require an exact Origin match only when a cookie grants access.
 
             Bearer clients remain usable from scripts and terminals without browser
-            headers. Browsers send Origin on fetch-based POST/PATCH requests, so an
+            headers. Browsers send Origin on fetch-based POST/PUT/DELETE requests, so an
             unrelated site cannot silently drive the controller with ambient cookies.
             """
 

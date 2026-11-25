@@ -28,11 +28,8 @@ class ControllerConfigTests(unittest.TestCase):
         self.assertEqual(config.matrix_defaults["led_rows"], 64)
         self.assertEqual(config.matrix_defaults["led_cols"], 64)
         self.assertEqual(config.matrix_defaults["led_slowdown_gpio"], 2)
-        self.assertEqual(config.visualization_defaults["fft"]["theme"], "ocean")
-        self.assertEqual(
-            config.visualization_defaults["fft"]["audio_source"],
-            "usb-mic",
-        )
+        # D-050: the audio source is FFT's only launch option.
+        self.assertEqual(config.visualization_defaults["fft"], {"audio_source": "usb-mic"})
         self.assertEqual(config.visualization_defaults["master_theorem"]["a"], 2)
         self.assertFalse(config.visualization_defaults["master_theorem"]["animate"])
         self.assertEqual(config.visualization_defaults["graph_traversal"]["e"], 0)
@@ -62,17 +59,17 @@ class ControllerConfigTests(unittest.TestCase):
                         "led_rows": 32,
                         "led_no_hardware_pulse": True,
                     },
-                    "visualizations": {"fft": {"theme": "warm"}},
+                    "visualizations": {"fft": {"audio_source": "bluetooth"}},
                 }
             )
         )
         # D-035: a program's defaults no longer include the matrix block.
-        self.assertEqual(config.defaults_for("fft"), {"theme": "warm"})
+        self.assertEqual(config.defaults_for("fft"), {"audio_source": "bluetooth"})
         self.assertEqual(config.defaults_for("sorts"), {})
         registry = registry_for_config(config)
         fft = registry.get("fft")
         values = fft.validate_parameters({})
-        self.assertEqual(values["theme"], "warm")
+        self.assertEqual(values["audio_source"], "bluetooth")
         matrix = config_matrix_values(config.matrix_defaults)
         self.assertEqual(matrix["led_rows"], 32)
         self.assertEqual(matrix["led_cols"], 64)  # code default fills the rest
@@ -127,7 +124,9 @@ class ControllerConfigTests(unittest.TestCase):
             {"version": 1, "unexpected": {}},
             {"version": 1, "runtime": {"use_sudo": "yes"}},
             {"version": 1, "matrix": {"led_rows": 0}},
-            {"version": 1, "visualizations": {"fft": {"theme": "missing"}}},
+            {"version": 1, "visualizations": {"fft": {"audio_source": "missing"}}},
+            # D-050: retired FFT launch options are unknown names now.
+            {"version": 1, "visualizations": {"fft": {"theme": "ocean"}}},
             {"version": 1, "visualizations": {"unknown": {}}},
         )
         for payload in cases:

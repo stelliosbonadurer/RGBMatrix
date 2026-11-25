@@ -33,10 +33,7 @@
   },
   "visualizations": {
     "fft": {
-      "audio_source": "usb-mic",
-      "theme": "ocean",
-      "gradient": false,
-      "overflow": true
+      "audio_source": "usb-mic"
     },
     "master_theorem": {
       "example": "custom",

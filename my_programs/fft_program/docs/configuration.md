@@ -21,7 +21,7 @@ All settings are defined in `config/settings.py` as dataclasses. You can modify 
 ### Application Arguments
 
 | Argument | Description |
-| `--theme` | Color theme name |
+| `--audio-source` | Audio input: `usb-mic` (default) or `bluetooth` |
 | `--visualizer` | Visualizer type (`bars`, `bars_overflow`) |
 | `--settings` | Path to JSON settings file |
 | `--list-themes` | Show available themes and exit |

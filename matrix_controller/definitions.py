@@ -112,6 +112,8 @@ MATRIX_PARAMETERS: tuple[ParameterSpec, ...] = (
 )
 
 
+# web-control-refactor D-050: the audio source is FFT's only launch option. Each
+# layer's look lives in its settings in the layer structure.
 FFT_PARAMETERS: tuple[ParameterSpec, ...] = (
     *MATRIX_PARAMETERS,
     ParameterSpec(
@@ -121,38 +123,6 @@ FFT_PARAMETERS: tuple[ParameterSpec, ...] = (
         "usb-mic",
         "Audio input used by the FFT analyzer.",
         choices=("usb-mic", "bluetooth"),
-    ),
-    ParameterSpec(
-        "theme",
-        "--theme",
-        "enum",
-        "ocean",
-        "Initial FFT color theme.",
-        choices=(
-            "autumn",
-            "dynamic",
-            "dynamic_lateral_gradient",
-            "forest",
-            "ocean",
-            "rainbow",
-            "warm",
-        ),
-    ),
-    ParameterSpec(
-        "gradient",
-        "--gradient",
-        "bool",
-        False,
-        "Render each bar with per-pixel gradient colors.",
-        negative_cli_flag="--no-gradient",
-    ),
-    ParameterSpec(
-        "overflow",
-        "--overflow",
-        "bool",
-        True,
-        "Allow FFT bars to wrap above the matrix height.",
-        negative_cli_flag="--no-overflow",
     ),
 )
 

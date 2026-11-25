@@ -8,8 +8,8 @@ A real-time audio spectrum visualizer for RGB LED matrix panels on Raspberry Pi.
 # Basic usage
 sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2
 
-# With specific theme
-sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2 --theme=ocean
+# With a settings file for the default layer
+sudo python main.py --led-rows=64 --led-cols=64 --led-gpio-mapping=adafruit-hat --led-slowdown-gpio=2 --settings my_settings.json
 
 # List available themes
 python main.py --list-themes
@@ -40,8 +40,9 @@ peak history. A launch through `POST /api/v1/run` may carry the same document as
 `structure`. If that document is invalid, the program runs the default single
 `current-bars` layer and reports the reason as `structure.launch_error` in the
 snapshot. Without a launch structure, startup is one `current-bars` layer using
-`direct`, built from the settings file and the `--theme`, `--gradient`, and
-`--overflow` options.
+`direct`, built from the settings file (or the `config/settings.py` defaults). Of the
+options shared with the web controller, only `--audio-source` remains; each layer's
+theme, gradient, and overflow are settings in the structure.
 
 For a reusable client of that same web-facing contract, run from the repository
 root:

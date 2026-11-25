@@ -33,7 +33,10 @@
 
     <div id="changed-banner" class="banner" hidden></div>
 
-    <section class="panel" aria-labelledby="options-title">
+    <!-- A program module's own editor (Music FFT, M5), drawn by program.js. -->
+    <div id="program-editor" class="program-editor"></div>
+
+    <section id="options-panel" class="panel" aria-labelledby="options-title">
       <h2 class="section-title" id="options-title">Options</h2>
       <form id="options" class="fields" novalidate></form>
       <p id="no-options" class="meta" hidden>This program has no options of its own.</p>
@@ -62,6 +65,7 @@
   </main>
 
   <div class="action-bar">
+    <p id="action-reason" class="action-reason" hidden></p>
     <div class="action-bar-inner">
       <span id="dirty-count" class="dirty-count" aria-live="polite"></span>
       <button id="discard" class="link-button" type="button" hidden>Discard</button>

@@ -262,8 +262,9 @@ export function runKey(status, programId) {
   return `run:${status.run_id}`;
 }
 
-// The D-037 state table: what the top toggle and the bottom button do.
-export function buttonModel({status, programId, programName, otherName, dirty, matrixChanged, filesChanged = false, valid, pending}) {
+// The D-037 state table: what the top toggle and the bottom button do. `relaunch`
+// (Music FFT, D-062) says a running update must relaunch rather than go live.
+export function buttonModel({status, programId, programName, otherName, dirty, matrixChanged, filesChanged = false, valid, pending, relaunch = false}) {
   const state = status?.state || 'unknown';
   const active = status?.visualization_id === programId;
   const running = active && state === 'running';
@@ -302,7 +303,7 @@ export function buttonModel({status, programId, programName, otherName, dirty, m
   let bottom;
   if (running) {
     bottom = {
-      label: 'Send update',
+      label: relaunch ? 'Relaunch with changes' : 'Send update',
       action: 'update',
       disabled: Boolean(pending) || !valid || !(dirty || matrixChanged || filesChanged),
     };
@@ -312,7 +313,7 @@ export function buttonModel({status, programId, programName, otherName, dirty, m
     bottom = {label: 'Launch with these settings', action: 'launch', disabled: Boolean(pending) || !valid};
   }
   if (pending) {
-    const busy = {launch: 'Launching…', update: 'Sending…', stop: 'Stopping…'}[pending] || 'Working…';
+    const busy = {launch: 'Launching…', update: relaunch ? 'Relaunching…' : 'Sending…', stop: 'Stopping…'}[pending] || 'Working…';
     if (pending === 'stop') top.label = busy;
     else bottom.label = busy;
   }

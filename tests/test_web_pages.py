@@ -38,8 +38,6 @@ EXTRA_VALUES = {
     "led_show_refresh": (True,),
     "led_pixel_mapper": ("Rotate:90", "U-mapper;Rotate:180"),
     "led_panel_type": ("FM6126A",),
-    "gradient": (True,),
-    "overflow": (False,),
     "delay": (0.0, 2.0, 0.00005, 1.25, 0.1, 0.0001),
     "k": (4.0, 0.5, 2.5),
     "hold": (0.1, 30.0),
@@ -99,7 +97,7 @@ class FlagFixtureTests(unittest.TestCase):
         cases = build_fixture()["cases"]
         argv = [case["argv"] for case in cases]
         self.assertIn([], argv)  # false with no negative flag
-        self.assertIn(["--no-gradient"], argv)
+        self.assertIn(["--not-connected"], argv)
         self.assertIn(["--led-no-hardware-pulse", "1"], argv)
         self.assertIn(["--delay", "5e-05"], argv)
         self.assertIn(["--k", "1.0"], argv)

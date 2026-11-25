@@ -597,6 +597,64 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
         self.assertEqual(normalize_current_bars_settings(defaults, DIRECT_OUTPUT_PATH), defaults)
         self.assertEqual(defaults, current_bars_settings_from_runtime(Settings()))
 
+    def test_every_field_has_a_known_group_and_a_label(self) -> None:
+        # M5 slice 1 criterion 4 (D-053): the page draws headings and names from
+        # the descriptor alone.
+        descriptor = current_bars_settings_descriptor()
+        group_ids = [group["id"] for group in descriptor["groups"]]
+        self.assertEqual(group_ids, ["range", "look", "peaks", "motion", "dynamic"])
+        self.assertTrue(all(group["label"].strip() for group in descriptor["groups"]))
+        labels = []
+        for field in descriptor["fields"]:
+            with self.subTest(field=field["name"]):
+                self.assertIn(field["group"], group_ids)
+                self.assertTrue(field["label"].strip())
+                labels.append(field["label"])
+        self.assertEqual(len(labels), len(set(labels)))
+        used = {field["group"] for field in descriptor["fields"]}
+        self.assertEqual(used, set(group_ids))
+
+    def test_show_conditions_name_real_fields_and_allowed_values(self) -> None:
+        fields = {
+            field["name"]: field
+            for field in current_bars_settings_descriptor()["fields"]
+        }
+        conditional = {
+            name: field["shown_when"]
+            for name, field in fields.items()
+            if "shown_when" in field
+        }
+        self.assertEqual(
+            {name: condition["field"] for name, condition in conditional.items()},
+            {
+                "overflow_multiplier": "overflow",
+                "peak_color_mode": "peak_enabled",
+                "peak_fall_speed": "peak_enabled",
+                "peak_hold_frames": "peak_enabled",
+                "dynamic_cycle_speed": "theme",
+                "dynamic_frozen": "theme",
+            },
+        )
+        for name, condition in conditional.items():
+            with self.subTest(field=name):
+                self.assertEqual(set(condition), {"field", "values"})
+                target = fields[condition["field"]]
+                self.assertNotEqual(condition["field"], name)
+                self.assertNotIn("shown_when", target)
+                self.assertTrue(condition["values"])
+                if target["type"] == "boolean":
+                    allowed = [True, False]
+                elif target["type"] == "choice":
+                    allowed = target["choices"]
+                else:
+                    self.fail(f"{name} depends on a {target['type']} field")
+                for value in condition["values"]:
+                    self.assertIn(value, allowed)
+        self.assertEqual(
+            fields["dynamic_frozen"]["shown_when"]["values"],
+            ["dynamic", "dynamic_lateral_gradient"],
+        )
+
     def test_weight_points_field_describes_its_items(self) -> None:
         fields = {
             field["name"]: field

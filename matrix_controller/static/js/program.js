@@ -2,7 +2,9 @@
 // Launch, Send update, and Terminate reach the controller. Polling refreshes the
 // status, the stored matrix settings, and the saved program files, never the draft.
 // A program's config file editor (M4b, D-044, D-048) is part of the same draft:
-// a submit saves a changed file first, then launches.
+// a submit saves a changed file first, then launches. A program module with
+// `createEditor` (Music FFT, M5) owns its own draft and submit instead of the
+// options form; this file keeps the shell around it.
 
 import {api} from './api.js';
 import {createFileEditor} from './file_editor.js';
@@ -19,7 +21,9 @@ import {
   runKey,
   runningValues,
 } from './model.js';
+import * as fftEditor from './fft_editor.js';
 import * as graphTraversal from './programs/graph_traversal.js';
+import {relaunchText} from './programs/fft.js';
 import {
   createField,
   guardLeaving,
@@ -32,8 +36,8 @@ import {
   showMessage,
 } from './ui.js';
 
-// Per-program rules (D-042). M5 adds the FFT module here.
-const EXTENSIONS = {[graphTraversal.id]: graphTraversal};
+// Per-program rules (D-042) and the FFT page's editor (M5).
+const EXTENSIONS = {[graphTraversal.id]: graphTraversal, [fftEditor.id]: fftEditor};
 
 const $ = id => document.getElementById(id);
 const el = {
@@ -44,6 +48,8 @@ const el = {
   statusText: $('status-text'),
   top: $('top-action'),
   changedBanner: $('changed-banner'),
+  editor: $('program-editor'),
+  optionsPanel: $('options-panel'),
   options: $('options'),
   noOptions: $('no-options'),
   resetDefaults: $('reset-defaults'),
@@ -53,6 +59,7 @@ const el = {
   flags: $('program-flags'),
   showMatrixFlags: $('show-matrix-flags'),
   dirty: $('dirty-count'),
+  reason: $('action-reason'),
   discard: $('discard'),
   bottom: $('bottom-action'),
 };
@@ -74,6 +81,7 @@ let fileBusy = false; // a program file removal is in flight
 let polling = false;
 let previousMst = false;
 let ruleErrors = {};
+let editor = null; // a program module's own draft (Music FFT)
 const fields = new Map();
 // File name -> {snapshot (the saved document, as last loaded), editor, text}.
 const files = new Map();
@@ -96,7 +104,7 @@ function fileChangesOf(entry) {
 }
 
 function unsentCount() {
-  let count = changedNames(parameters, readDraft().values, baseline).length;
+  let count = editor ? editor.unsentCount() : changedNames(parameters, readDraft().values, baseline).length;
   for (const entry of files.values()) count += fileChangesOf(entry).length;
   return count;
 }
@@ -105,7 +113,7 @@ function unsentCount() {
 // their hidden fields, disabled choices, and messages.
 function applyRules() {
   ruleErrors = {};
-  if (!extension) return;
+  if (!extension?.applyRules) return;
   const {values, parseErrors} = readDraft();
   const result = extension.applyRules(values, previousMst);
   previousMst = result.mst;
@@ -120,18 +128,20 @@ function applyRules() {
 
 // The MST flag for a set of values, without the rules' one-time adjustments.
 function mstOf(values) {
-  return extension ? extension.applyRules(values, true).mst : false;
+  return extension?.applyRules ? extension.applyRules(values, true).mst : false;
 }
 
 function render() {
   if (!program) return;
-  const {values, parseErrors} = readDraft();
+  // The reply reloads the draft (D-038, D-062), so edits can't be typed meanwhile.
+  if (editor) editor.setBusy(Boolean(pending));
+  const {values: fieldValues, parseErrors} = readDraft();
+  const values = editor ? editor.values() : fieldValues;
   const errors = {...ruleErrors, ...parseErrors};
-  const changed = new Set(changedNames(parameters, values, baseline));
+  const changed = new Set(changedNames(parameters, fieldValues, baseline));
   for (const [name, field] of fields) {
     field.setChanged(changed.has(name));
     field.setError(errors[name] || null);
-    // The reply reloads the draft (D-038), so edits can't be typed meanwhile.
     field.setDisabled(Boolean(pending));
   }
   // The outside-relaunch banner only matters while there are edits to keep.
@@ -154,13 +164,14 @@ function render() {
       changedFileNouns.push(entry.text.noun || entry.snapshot.label.toLowerCase());
     }
   }
-  const unsent = changed.size + fileChangeCount;
+  const unsent = (editor ? editor.unsentCount() : changed.size) + fileChangeCount;
   const invalid = new Set(Object.keys(errors));
   // A removal in flight holds the launch buttons too.
-  const valid = invalid.size === 0 && filesValid && !fileBusy;
+  const valid = invalid.size === 0 && filesValid && !fileBusy && (!editor || editor.valid());
   const stored = matrix && !matrix.error ? matrix.values : null;
   const matrixChanged = matrixChangedSinceLaunch(status, matrix?.values);
   const filesChanged = filesChangedSinceLaunch(status, programId, savedRevisions);
+  const reasons = editor ? editor.relaunchReasons(status, matrixChanged) : [];
   const activeId = status?.visualization_id;
   const model = buttonModel({
     status,
@@ -172,6 +183,7 @@ function render() {
     filesChanged,
     valid,
     pending,
+    relaunch: reasons.length > 0,
   });
 
   setTone(el.statusDot, model.tone);
@@ -189,6 +201,9 @@ function render() {
   else if (model.running) el.dirty.textContent = changedSinceLaunchText(matrixChanged, changedFileNouns);
   else el.dirty.textContent = '';
   el.discard.hidden = unsent === 0;
+  const reason = model.running ? relaunchText(program.name, reasons) : '';
+  el.reason.textContent = reason;
+  el.reason.hidden = !reason;
 
   let argv = flagVector(argvOrder, values, invalid);
   if (el.showMatrixFlags.checked && matrix) argv = [...flagVector(matrix.parameters, matrix.values), ...argv];
@@ -198,7 +213,9 @@ function render() {
   let note = '';
   if (matrix?.error) note = "The saved matrix settings can't be used, so launches use the Pi config values.";
   else if (model.running && matrixChanged && stored) {
-    note = 'This run started with different matrix settings. Send update relaunches with the saved ones.';
+    note = editor
+      ? 'This run started with different matrix settings. Relaunch with changes uses the saved ones.'
+      : 'This run started with different matrix settings. Send update relaunches with the saved ones.';
   }
   el.matrixNote.textContent = note;
   el.matrixNote.hidden = !note;
@@ -262,7 +279,12 @@ function discardAll() {
     entry.editor.write(entry.snapshot.document);
     showBanner(entry.editor.banner, '');
   }
-  writeDraft(baseline);
+  if (editor) {
+    editor.discard();
+    render();
+  } else {
+    writeDraft(baseline);
+  }
 }
 
 function loadSavedFile(entry) {
@@ -359,7 +381,29 @@ function filesHaveErrors() {
   return [...files.values()].some(entry => Object.keys(entry.editor.read().errors).length > 0);
 }
 
+// The program module's editor submits its own draft (Music FFT, D-062).
+async function submitEditor(kind) {
+  if (fileBusy || !editor.valid()) return;
+  const relaunch = editor.relaunchReasons(status, matrixChangedSinceLaunch(status, matrix?.values)).length > 0;
+  submits += 1;
+  pending = kind;
+  render();
+  try {
+    const result = await editor.submit(kind, status, {relaunch});
+    showMessage(el.message, result.text, result.tone || 'info');
+  } catch (error) {
+    showMessage(el.message, `Could not ${kind === 'update' ? 'send the update' : 'launch'}: ${error.message}`, 'error');
+  } finally {
+    pending = null;
+    await refreshStatus();
+  }
+}
+
 async function submit(kind) {
+  if (editor) {
+    await submitEditor(kind);
+    return;
+  }
   const {values, parseErrors} = readDraft();
   if (fileBusy || Object.keys(parseErrors).length || Object.keys(ruleErrors).length || filesHaveErrors()) return;
   submits += 1;
@@ -394,6 +438,7 @@ async function terminate() {
   try {
     status = await api.stop();
     knownRunKey = runKey(status, programId);
+    if (editor) editor.noticeStatus(status);
     showMessage(el.message, `${program.name} was stopped. The matrix is free.`);
   } catch (error) {
     showMessage(el.message, `Could not terminate: ${error.message}`, 'error');
@@ -409,6 +454,7 @@ async function refreshStatus() {
   } catch (_error) {
     status = null;
   }
+  if (status && editor) editor.noticeStatus(status);
   render();
 }
 
@@ -425,7 +471,10 @@ async function refresh() {
   // through a launch) owns the result; its own reply updates the page.
   if (pending || fileBusy || started !== submits) return;
   status = next;
-  if (status) noticeOutsideChange();
+  // D-062: the FFT layers never follow another device; the editor only loads
+  // the snapshot of the run it expects.
+  if (status && editor) editor.noticeStatus(status);
+  else if (status) noticeOutsideChange();
   try {
     matrix = await api.matrixSettings();
   } catch (_error) {
@@ -509,7 +558,23 @@ async function initialize() {
   parameters = extension?.orderParameters ? extension.orderParameters(argvOrder) : argvOrder;
   baseline = runningValues(status, programId, parameters) || defaultsOf(parameters);
   knownRunKey = runKey(status, programId);
-  buildFields();
+  if (extension?.createEditor) {
+    editor = extension.createEditor({
+      program,
+      parameters,
+      onChange: render,
+      onMessage: (text, tone = 'info') => showMessage(el.message, text, tone),
+    });
+    el.optionsPanel.hidden = true;
+    el.editor.append(editor.element);
+    try {
+      await editor.load(status);
+    } catch (error) {
+      showMessage(el.message, `Could not load the layer settings: ${error.message} Reload the page to try again.`, 'error');
+    }
+  } else {
+    buildFields();
+  }
   await loadFiles();
   try {
     matrix = await api.matrixSettings();

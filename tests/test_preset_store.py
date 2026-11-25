@@ -66,7 +66,7 @@ class PresetStoreTests(unittest.TestCase):
         )
 
     def _create(self, name: str = "Warm bass", **extra) -> dict:
-        payload = {"name": name, "parameters": {"theme": "warm"}, "structure": structure_document()}
+        payload = {"name": name, "parameters": {"audio_source": "bluetooth"}, "structure": structure_document()}
         payload.update(extra)
         return self.store.create(payload)
 
@@ -129,8 +129,8 @@ class PresetStoreTests(unittest.TestCase):
             {"name": "Defaults", "structure": structure_document()}
         )
         self.assertEqual(created["parameters"], {})
-        created = self._create("Two", parameters={"theme": "warm", "gradient": True})
-        self.assertEqual(created["parameters"], {"theme": "warm", "gradient": True})
+        created = self._create("Two", parameters={"audio_source": "bluetooth"})
+        self.assertEqual(created["parameters"], {"audio_source": "bluetooth"})
 
     def test_matrix_settings_are_not_preset_parameters(self) -> None:
         # web-control-refactor D-035: presets hold FFT launch options only.
@@ -200,7 +200,9 @@ class PresetStoreTests(unittest.TestCase):
             "delete character": {"name": "bad\x7fname", "structure": structure},
             "name not a string": {"name": 7, "structure": structure},
             "unknown parameter": {"name": "x", "parameters": {"zoom": 1}, "structure": structure},
-            "invalid parameter": {"name": "x", "parameters": {"theme": "fire"}, "structure": structure},
+            "invalid parameter": {"name": "x", "parameters": {"audio_source": "fire"}, "structure": structure},
+            # D-050: a retired FFT launch option is refused like any unknown one.
+            "retired parameter": {"name": "x", "parameters": {"theme": "ocean"}, "structure": structure},
             "parameters not an object": {"name": "x", "parameters": [], "structure": structure},
             "structure not an object": {"name": "x", "structure": ["layers"]},
             "structure missing": {"name": "x"},

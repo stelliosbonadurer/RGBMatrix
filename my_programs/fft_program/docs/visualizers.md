@@ -27,18 +27,12 @@ The word *layer* in overflow theme APIs means a vertical matrix-height color ban
 when a single bar exceeds the panel height. It does not mean an independent analyzer
 or renderer.
 
-## Command Line Options
+## Gradient and Overflow
 
-```bash
-# Start with gradient mode enabled
-sudo python main.py --gradient ...
-
-# Start with overflow mode enabled  
-sudo python main.py --overflow ...
-
-# Both modes
-sudo python main.py --gradient --overflow ...
-```
+`gradient` and `overflow` are settings of each layer, set on the FFT page or in a
+`structure.set` document; there are no `--gradient` or `--overflow` options. The
+default layer starts with gradient off and overflow from the settings file
+(`overflow.enabled`, on by default).
 
 ## Creating a Custom Visualizer
 
