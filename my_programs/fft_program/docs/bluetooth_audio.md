@@ -136,9 +136,8 @@ The FFT therefore captures in the bridge's own format (mono, 44.1 kHz, `S32_LE`)
 scales it to the same float range as the USB mic, so the two sides always agree. An
 earlier float capture opened before the phone played made the bridge's sink fail to
 start, and the panel stayed dark (see "Panel dark while the phone plays" below).
-Launching with the phone already playing is proved on the Pi. Launching first, right
-after boot and before any phone audio, should work the same but hasn't been seen
-working yet.
+Both orders work on the Pi: launching with the phone already playing, and launching
+first, right after boot and before any phone audio, then playing.
 
 Turning phone Bluetooth off leaves the persistent capture endpoint open and silent.
 After reconnect, the phone may take more than 15 seconds to re-enable the Pi media
