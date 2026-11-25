@@ -20,6 +20,20 @@ from core.analysis_plan import (
 )
 
 
+# What a capture dtype's samples are multiplied by to reach float32 in [-1, 1].
+# float32 arrives scaled; int32 is the Bluetooth loopback's S32LE (see
+# core/audio_source.py), scaled by 2**-31 as PortAudio's own conversion does.
+_CAPTURE_SCALES = {"float32": None, "int32": 1.0 / 2_147_483_648}
+
+
+def _capture_scale(capture_dtype: str) -> Optional[float]:
+    """Return the int-to-float scale for a capture dtype, or None for float32."""
+    try:
+        return _CAPTURE_SCALES[capture_dtype]
+    except KeyError:
+        raise ValueError(f"unsupported capture dtype: {capture_dtype!r}") from None
+
+
 @dataclass
 class FFTData:
     """Processed FFT data passed to visualizers."""
@@ -251,6 +265,7 @@ class AudioProcessor:
             num_bins: Number of frequency bins (typically matrix width)
         """
         self.audio_settings = audio_settings
+        self._capture_scale = _capture_scale(audio_settings.capture_dtype)
         self.freq_settings = freq_settings
         self.sensitivity_settings = sensitivity_settings
         self.num_bins = num_bins
@@ -603,7 +618,13 @@ class AudioProcessor:
 
     def _audio_callback(self, indata, frames, time_info, status):
         """Copy and publish only the newest input block, then wake analysis."""
-        samples = indata[:, self.audio_settings.channel].copy()
+        column = indata[:, self.audio_settings.channel]
+        if self._capture_scale is None:
+            samples = column.copy()
+        else:
+            # astype copies; the published block is float32 whatever the capture.
+            samples = column.astype(np.float32)
+            samples *= self._capture_scale
         with self._sample_lock:
             self.latest_samples = samples
             self.sample_generation += 1
@@ -614,6 +635,8 @@ class AudioProcessor:
     
     def start(self) -> None:
         """Start the audio input stream."""
+        # The stream opens with the settings' dtype; scale by the same one.
+        self._capture_scale = _capture_scale(self.audio_settings.capture_dtype)
         self._start_analysis_worker()
         try:
             self._stream = sd.InputStream(

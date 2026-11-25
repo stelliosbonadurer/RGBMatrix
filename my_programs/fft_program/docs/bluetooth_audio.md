@@ -127,6 +127,13 @@ The Bluetooth endpoint is validated before the child initializes the matrix. If 
 bridge is absent or ambiguous, launch exits with a bounded error and never falls
 back to the microphone. Source changes require relaunching FFT.
 
+The loopback gives both of its sides one format, set by whichever side opens first.
+The FFT therefore captures in the bridge's own format (mono, 44.1 kHz, `S32_LE`) and
+scales it to the same float range as the USB mic, so it doesn't matter whether FFT
+launches before or after the phone starts playing. An earlier float capture opened
+first made the bridge's sink fail to start (`wpctl` lists it, but `pw-cli info` on it
+shows `Start error: Invalid argument`) and the panel stayed dark.
+
 Turning phone Bluetooth off leaves the persistent capture endpoint open and silent.
 After reconnect, the phone may take more than 15 seconds to re-enable the Pi media
 output. Reselect it on the phone and relaunch FFT if needed; automatic reopen and

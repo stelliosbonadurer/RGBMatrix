@@ -116,6 +116,34 @@ class AudioCaptureBehaviorTests(unittest.TestCase):
             np.arange(512, dtype=np.float32),
         )
 
+    def test_int32_capture_is_published_as_float32_in_the_usb_range(self) -> None:
+        # The Bluetooth loopback captures S32LE (core/audio_source.py).
+        processor = AudioProcessor(
+            AudioSettings(capture_dtype="int32"),
+            FrequencySettings(),
+            SensitivitySettings(),
+            64,
+        )
+        raw = np.array([-(2**31), -(2**30), 0, 2**30, 2**31 - 1], dtype=np.int32)
+        block = raw.reshape(-1, 1)
+
+        processor._audio_callback(block, len(raw), None, None)
+
+        published = processor.latest_samples
+        self.assertEqual(published.dtype, np.float32)
+        self.assertFalse(np.shares_memory(published, block))
+        np.testing.assert_allclose(published, [-1.0, -0.5, 0.0, 0.5, 1.0], atol=1e-7)
+        self.assertEqual(processor.sample_generation, 1)
+
+    def test_an_unsupported_capture_dtype_is_refused_before_any_stream(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported capture dtype"):
+            AudioProcessor(
+                AudioSettings(capture_dtype="int16"),
+                FrequencySettings(),
+                SensitivitySettings(),
+                64,
+            )
+
     def test_callback_does_no_analysis_or_result_transport_work(self) -> None:
         processor = _processor()
         samples = np.ones((512, 1), dtype=np.float32)
