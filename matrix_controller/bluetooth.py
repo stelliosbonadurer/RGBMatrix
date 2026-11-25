@@ -12,6 +12,8 @@ Web-control-refactor M3. The decisions this module implements:
   registered only while the window is open.
 - D-029: the source catalog. Selection stays the ``audio_source`` launch parameter.
 - D-030: opaque device IDs, and paired devices only.
+- D-073 (M5 slice 4): each listed device's ``streaming``, and ``adapter.name``, the
+  Pi's own alias cleaned like a phone name, for the FFT page.
 
 Privacy rule (from bluetooth-audio-input): a Bluetooth address never leaves this
 module. Responses carry an HMAC-derived ``device_id``. Errors carry fixed messages
@@ -116,7 +118,10 @@ class BluetoothError(Exception):
 class BluetoothBackend(Protocol):
     def bind(self, handlers: "BluetoothController") -> None: ...
 
-    def adapter_state(self) -> dict[str, bool]: ...
+    def adapter_state(self) -> dict[str, Any]:
+        """``powered``, ``discoverable``, ``pairable``, and the raw ``alias`` and
+        ``address`` (never sent; the controller cleans the alias)."""
+        ...
 
     def devices(self) -> list[BluetoothDevice]: ...
 
@@ -242,6 +247,15 @@ def _public_name(name: str | None, address: str) -> str:
     return cleaned[:MAX_DEVICE_NAME_LENGTH]
 
 
+def _adapter_name(alias: Any, address: Any) -> str | None:
+    """The Pi's own Bluetooth name for the pairing hint (D-073), or ``None``."""
+
+    if type(alias) is not str or not alias:
+        return None
+    name = _public_name(alias, address if type(address) is str else "")
+    return None if name == UNNAMED_DEVICE else name
+
+
 class BluetoothController:
     """Pairing window, pending request, and device actions over one backend."""
 
@@ -308,6 +322,7 @@ class BluetoothController:
                         "paired": False,
                         "trusted": False,
                         "connected": False,
+                        "streaming": False,
                     }
                 )
         return {
@@ -317,6 +332,7 @@ class BluetoothController:
                 "powered": bool(adapter.get("powered")),
                 "discoverable": bool(adapter.get("discoverable")),
                 "pairable": bool(adapter.get("pairable")),
+                "name": _adapter_name(adapter.get("alias"), adapter.get("address")),
             },
             "window": {
                 "open": closes_at is not None,
@@ -613,6 +629,7 @@ class BluetoothController:
             "paired": device.paired,
             "trusted": device.trusted,
             "connected": device.connected,
+            "streaming": device.streaming,
         }
 
 
@@ -637,9 +654,17 @@ class FakeDecision:
 class FakeBluetoothBackend:
     """An in-memory BlueZ for tests and for page work without hardware."""
 
-    def __init__(self, devices: list[BluetoothDevice] | None = None):
+    def __init__(
+        self,
+        devices: list[BluetoothDevice] | None = None,
+        *,
+        alias: str | None = "Test Pi",
+        address: str = "00:1A:7D:DA:71:13",
+    ):
         self.devices_by_address = {device.address: device for device in devices or []}
         self.adapter = {"powered": True, "discoverable": False, "pairable": False}
+        self.alias = alias
+        self.address = address
         self.saved_pairable: bool | None = None
         self.agent_registered = False
         self.unavailable_reason: str | None = None
@@ -659,9 +684,9 @@ class FakeBluetoothBackend:
             if self.fail_with is not None:
                 raise BluetoothBackendError(self.fail_with)
 
-    def adapter_state(self) -> dict[str, bool]:
+    def adapter_state(self) -> dict[str, Any]:
         self._check()
-        return dict(self.adapter)
+        return {**self.adapter, "alias": self.alias, "address": self.address}
 
     def devices(self) -> list[BluetoothDevice]:
         self._check()
@@ -756,7 +781,7 @@ class DbusBluetoothBackend:
     shapes. The M3 Pi check (``b28e31d``) showed that the web unit's user reaches
     ``org.bluez``, that the window opens and closes with the agent registered as the
     default, and that close leaves the adapter as found. Pairing a real phone and
-    streaming are M6.
+    streaming are checked from the FFT page in web-control-refactor M5 slice 4.
     """
 
     AGENT_PATH = "/org/rgbmatrix/bluetooth_agent"
@@ -915,12 +940,14 @@ class DbusBluetoothBackend:
 
     # ----- backend interface -----
 
-    def adapter_state(self) -> dict[str, bool]:
+    def adapter_state(self) -> dict[str, Any]:
         _, properties = self._adapter(self._objects())
         return {
             "powered": bool(properties.get("Powered", False)),
             "discoverable": bool(properties.get("Discoverable", False)),
             "pairable": bool(properties.get("Pairable", False)),
+            "alias": str(properties["Alias"]) if "Alias" in properties else None,
+            "address": str(properties.get("Address", "")),
         }
 
     def devices(self) -> list[BluetoothDevice]:

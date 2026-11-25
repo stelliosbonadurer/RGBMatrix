@@ -1,4 +1,5 @@
-"""Bluetooth controller tests with a fake backend and clock (M3 criteria 5-8).
+"""Bluetooth controller tests with a fake backend and clock (M3 criteria 5-8, and
+the M5 slice 4 status fields, D-073).
 
 No local test talks to BlueZ (criterion 11). The real D-Bus backend's
 "unavailable" paths are exercised with stand-in modules for dbus-python and GLib,
@@ -111,7 +112,8 @@ class WindowTests(ControllerTestCase):
         self.assertEqual(status["window"]["open"], True)
         self.assertEqual(status["window"]["seconds_remaining"], WINDOW_SECONDS)
         self.assertEqual(
-            status["adapter"], {"powered": True, "discoverable": True, "pairable": True}
+            status["adapter"],
+            {"powered": True, "discoverable": True, "pairable": True, "name": "Test Pi"},
         )
         self.assertTrue(self.backend.agent_registered)
         self.assertEqual(self.backend.calls, [("open_window", 120)])
@@ -378,9 +380,45 @@ class DeviceTests(ControllerTestCase):
         )
         for device in status["devices"]:
             self.assertRegex(device["device_id"], r"^[0-9a-f]{16}$")
-            self.assertEqual(set(device), {"device_id", "name", "paired", "trusted", "connected"})
+            self.assertEqual(
+                set(device), {"device_id", "name", "paired", "trusted", "connected", "streaming"}
+            )
         self.assertNoAddress(status)
         self.assertEqual(self.controller.status()["devices"], status["devices"])
+
+    def test_each_device_reports_streaming(self) -> None:
+        # D-073: the page names the streaming phone; the pending phone never streams.
+        self.act(action="window.open")
+        self.backend.request_confirmation(NEW_PHONE, "Pending", 1)
+        status = self.controller.status()
+        self.assertEqual(
+            [(device["name"], device["streaming"]) for device in status["devices"]],
+            [("Pixel", False), ("Tablet", True), ("Pending", False)],
+        )
+        self.act(action="device.disconnect", device_id=self.device_id("Tablet"))
+        self.assertEqual([device["streaming"] for device in self.controller.status()["devices"]], [False] * 3)
+
+    def test_adapter_name_is_the_alias_cleaned_like_a_phone_name(self) -> None:
+        address = self.backend.address
+        for alias, expected in (
+            ("raspberrypi", "raspberrypi"),
+            ("Living room\x07 ", "Living room"),
+            ("p" * 80, "p" * 64),
+            (None, None),
+            ("", None),
+            ("\x07", None),
+            (address, None),
+            (address.replace(":", "-"), None),
+            ("pi " + address.replace(":", "").lower(), None),
+            ("11:22:33:44:55:66", None),
+        ):
+            with self.subTest(alias=alias):
+                self.backend.alias = alias
+                status = self.controller.status()
+                self.assertEqual(status["adapter"]["name"], expected)
+                self.assertNotIn(address, json.dumps(status))
+                self.assertNotIn("address", status["adapter"])
+                self.assertNotIn("alias", status["adapter"])
 
     def test_device_ids_change_with_a_new_controller(self) -> None:
         other = BluetoothController(FakeBluetoothBackend([PHONE]), timer_factory=None)
@@ -620,6 +658,8 @@ class DbusBackendCallTests(unittest.TestCase):
                     "Pairable": True,
                     "DiscoverableTimeout": 180,
                     "PairableTimeout": 0,
+                    "Alias": "raspberrypi",
+                    "Address": "00:1A:7D:DA:71:13",
                 }
             },
             self.ADAPTER + "/dev_1": {
@@ -724,6 +764,13 @@ class DbusBackendCallTests(unittest.TestCase):
         self.fail_set = set()
         self.backend.close_window()
         self.assertIn(("PairableTimeout", ("u", 0)), self.writes())
+
+    def test_adapter_state_reads_the_alias_and_address(self) -> None:
+        state = self.backend.adapter_state()
+        self.assertEqual((state["alias"], state["address"]), ("raspberrypi", "00:1A:7D:DA:71:13"))
+        del self.objects[self.ADAPTER]["org.bluez.Adapter1"]["Alias"]
+        self.assertIsNone(self.backend.adapter_state()["alias"])
+        self.assertEqual(self.calls, [])  # reads only
 
     def test_trust_writes_with_ssv_and_forget_passes_an_object_path(self) -> None:
         self.backend.set_trusted(PHONE.address, True)

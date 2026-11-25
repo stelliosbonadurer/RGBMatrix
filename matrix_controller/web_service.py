@@ -77,9 +77,11 @@ STATIC_ASSETS: dict[str, tuple[str, str]] = {
     "/static/js/fft_editor.js": ("js/fft_editor.js", _JAVASCRIPT),
     "/static/js/fft_graph.js": ("js/fft_graph.js", _JAVASCRIPT),
     "/static/js/fft_preset_controls.js": ("js/fft_preset_controls.js", _JAVASCRIPT),
+    "/static/js/fft_bluetooth_controls.js": ("js/fft_bluetooth_controls.js", _JAVASCRIPT),
     "/static/js/programs/fft.js": ("js/programs/fft.js", _JAVASCRIPT),
     "/static/js/programs/fft_layout.js": ("js/programs/fft_layout.js", _JAVASCRIPT),
     "/static/js/programs/fft_presets.js": ("js/programs/fft_presets.js", _JAVASCRIPT),
+    "/static/js/programs/fft_bluetooth.js": ("js/programs/fft_bluetooth.js", _JAVASCRIPT),
     "/static/js/programs/graph_traversal.js": (
         "js/programs/graph_traversal.js",
         _JAVASCRIPT,

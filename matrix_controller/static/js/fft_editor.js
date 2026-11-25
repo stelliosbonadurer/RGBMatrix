@@ -1,16 +1,20 @@
-// The Music FFT page's draft (web-control-refactor M5 slices 1–3): the presets
-// (fft_preset_controls.js), the analyzer row, the output selector, and the layer
-// list with each layer's settings and graph (D-058–D-060). program.js keeps the
+// The Music FFT page's draft (web-control-refactor M5 slices 1–4): the presets
+// (fft_preset_controls.js), the analyzer row with the Bluetooth phones
+// (fft_bluetooth_controls.js, D-065), the output selector, and the layer list
+// with each layer's settings and graph (D-058–D-060). program.js keeps the
 // shell (status line, Launch/Terminate, the bottom bar) and asks this editor for
 // its unsent count, validity, and submit (D-062). The rules live in programs/fft.js,
-// programs/fft_layout.js, and programs/fft_presets.js; this file only draws them.
+// programs/fft_layout.js, programs/fft_presets.js, and programs/fft_bluetooth.js;
+// this file only draws them.
 // The number fields are the draft: the graph writes into them.
 
 import {api} from './api.js';
+import {createBluetoothControls} from './fft_bluetooth_controls.js';
 import {createLayerGraph} from './fft_graph.js';
 import {createPresetControls} from './fft_preset_controls.js';
 import {parseValue} from './model.js';
 import * as fft from './programs/fft.js';
+import * as bluetoothRules from './programs/fft_bluetooth.js';
 import * as fftLayout from './programs/fft_layout.js';
 import * as presetRules from './programs/fft_presets.js';
 import {createField, h} from './ui.js';
@@ -60,7 +64,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   let refreshFrame = 0;
   let submitCount = 0; // so a preset reply that outlived a submit is dropped
 
-  // ---- Analyzer row (D-065; Bluetooth arrives in slice 4) -------------------
+  // ---- Analyzer row (D-065) -------------------------------------------------
 
   const analyzerSummary = h('span', {className: 'summary-hint'});
   const sourceMarker = h('span', {className: 'changed-marker', title: 'Unsent change', hidden: true}, '●');
@@ -75,17 +79,31 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     sourceInputs.push(input);
     sourceChoices.append(h('label', {className: 'choice'}, input, h('span', {}, fft.sourceLabel(choice))));
   }
+  // What the source can use now (D-029): the bridge, and which phone streams.
+  const sourceNote = h('p', {className: 'field-help', hidden: true});
+  const runningLine = h('p', {className: 'meta', hidden: true});
   const sourceField = h('div', {className: 'field'},
     h('div', {className: 'field-head'},
       h('span', {className: 'field-label', id: `fft-source-${number}`}, 'Source'), sourceMarker),
     sourceChoices,
+    runningLine,
+    sourceNote,
     h('p', {className: 'field-help'}, `${sourceSpec.description || 'Audio input.'} Changing it relaunches ${program.name}.`));
   const factsTable = h('dl', {className: 'value-table'});
+  // Collapsed by default; while open its Bluetooth status is polled (D-065).
+  const bluetooth = createBluetoothControls({
+    rowOpen: () => analyzerRow.open,
+    changed: () => {
+      if (loaded) refreshAnalyzer();
+    },
+  });
   const analyzerRow = h('details', {className: 'panel analyzer-row'},
     h('summary', {}, h('span', {className: 'summary-title'}, 'Analyzer'), analyzerSummary),
     h('div', {className: 'fields'}, sourceField),
     h('h3', {className: 'subsection-title'}, 'Analysis · read-only'),
-    factsTable);
+    factsTable,
+    bluetooth.element);
+  analyzerRow.addEventListener('toggle', () => bluetooth.setRowOpen(analyzerRow.open));
 
   // ---- Output backend (D-061) -------------------------------------------------
 
@@ -955,10 +973,18 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   }
 
   function refreshAnalyzer() {
+    const btStatus = bluetooth.status();
+    const note = bluetoothRules.sourceNote({source, bridgePresent: bluetooth.bridgePresent(), status: btStatus});
     for (const input of sourceInputs) {
       input.checked = input.value === source;
-      input.disabled = busy;
+      input.disabled = busy || (input.value === 'bluetooth' && note.bluetoothDisabled);
     }
+    sourceNote.textContent = note.text;
+    sourceNote.hidden = !note.text;
+    sourceNote.className = note.tone === 'warning' ? 'field-warning' : 'field-help';
+    const running = bluetoothRules.runningText(lastStatus, fft.id);
+    runningLine.textContent = running;
+    runningLine.hidden = !running;
     sourceMarker.hidden = source === baseline.source;
     const {structure, assumed} = analyzerStructure();
     const facts = fft.analyzerFacts(structure, assumed);
@@ -978,6 +1004,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       fft.sourceLabel(source),
       rateAssumed ? `${rate} assumed` : rate,
       facts.fftSize ? `FFT ${facts.fftSize}` : null,
+      ...bluetoothRules.summaryParts(btStatus),
     ].filter(Boolean).join(' · ');
   }
 
@@ -1096,6 +1123,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     async load(status) {
       lastStatus = status;
       const listing = presetControls.load(); // the preset list, alongside the catalog; never throws
+      bluetooth.load(); // once on page open (D-065); redraws the analyzer row when it answers
       catalog = await api.fftCatalog();
       info = catalog.structure;
       const running = status?.visualization_id === fft.id && (status.state === 'running' || status.state === 'starting');

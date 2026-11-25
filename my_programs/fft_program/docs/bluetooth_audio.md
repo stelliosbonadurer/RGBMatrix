@@ -29,10 +29,23 @@ as the phone's active media output; do not restart the matrix service.
 
 ## Pair and manage phones from the web service
 
-The web service can do the pairing below without SSH. A paired phone session can
-call these routes; the Music FFT page gets controls for them in a later
-web-control-refactor milestone (M5). Until then, use the API directly or the SSH
-procedure.
+The web service can do the pairing below without SSH. On the Music FFT page
+(`/programs/fft`), open the **Analyzer** row:
+
+1. Under **Bluetooth phones**, tap **Pair a new phone**. The Pi stays visible to new
+   phones for two minutes; the row counts down and names what to pick in the phone's
+   Bluetooth settings.
+2. When the phone asks to pair, the row shows its name and a six-digit code. Check
+   that the phone shows the same code, then tap **Pair** on the page and accept on
+   the phone.
+3. Tap **Trust** on the new phone, then **Connect**. Pairing alone doesn't let it
+   stream.
+4. Under **Source**, choose **Bluetooth phone** and press **Launch** (or **Relaunch
+   with changes** while FFT runs). Play audio on the phone with the Pi as its output.
+
+Each phone also has **Untrust**, **Disconnect**, and **Forget…** (asks first). These
+act on the Pi at once; they aren't part of Send update. The same routes work
+without the page:
 
 - `GET /api/v1/bluetooth` returns the adapter state, the pairing window, any pending
   pairing request, and the paired phones under opaque `device_id`s. Addresses are

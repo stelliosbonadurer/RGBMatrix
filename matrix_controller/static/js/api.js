@@ -75,5 +75,10 @@ export const api = {
     request('PUT', presetPath(presetId), {...body, expected_revision: expectedRevision}),
   deletePreset: (presetId, expectedRevision) =>
     request('DELETE', presetPath(presetId), {expected_revision: expectedRevision}),
+  // Bluetooth phones and the audio sources (M3 D-026–D-030, M5 slice 4 D-065).
+  // Actions act on the Pi at once and return the new status.
+  bluetooth: () => request('GET', '/api/v1/bluetooth'),
+  bluetoothAction: body => request('POST', '/api/v1/bluetooth/actions', body),
+  audioSources: () => request('GET', '/api/v1/audio/sources'),
   stop: () => request('POST', '/api/v1/stop', {}),
 };
