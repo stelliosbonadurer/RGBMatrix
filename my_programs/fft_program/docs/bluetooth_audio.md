@@ -68,8 +68,12 @@ A phone stays untrusted until you trust it. While the window is open, the
 service's agent refuses media connections from untrusted phones; outside the window,
 whatever agent the Pi already had (for example the desktop panel's) answers. If the
 service can't reach BlueZ, the status says why and the
-actions return 503; the rest of the web service keeps working. This path has not yet
-been tested on the Pi.
+actions return 503; the rest of the web service keeps working. Pairing, trust,
+connect, and choosing the source from the page were tried on the Pi with a real
+phone.
+
+The list shows every device paired with the Pi, not only phones: a paired mouse or
+keyboard appears too. Use **Forget…** on it only if you want it unpaired from the Pi.
 
 ## Pair one phone over SSH
 
@@ -129,10 +133,12 @@ back to the microphone. Source changes require relaunching FFT.
 
 The loopback gives both of its sides one format, set by whichever side opens first.
 The FFT therefore captures in the bridge's own format (mono, 44.1 kHz, `S32_LE`) and
-scales it to the same float range as the USB mic, so it doesn't matter whether FFT
-launches before or after the phone starts playing. An earlier float capture opened
-first made the bridge's sink fail to start (`wpctl` lists it, but `pw-cli info` on it
-shows `Start error: Invalid argument`) and the panel stayed dark.
+scales it to the same float range as the USB mic, so the two sides always agree. An
+earlier float capture opened before the phone played made the bridge's sink fail to
+start, and the panel stayed dark (see "Panel dark while the phone plays" below).
+Launching with the phone already playing is proved on the Pi. Launching first, right
+after boot and before any phone audio, should work the same but hasn't been seen
+working yet.
 
 Turning phone Bluetooth off leaves the persistent capture endpoint open and silent.
 After reconnect, the phone may take more than 15 seconds to re-enable the Pi media
@@ -162,6 +168,32 @@ Expected bridge state:
 After reboot, desktop autologin starts PipeWire and WirePlumber and the loopback
 card returns as card 10. A trusted phone may reconnect, but the user may still need
 to reselect the Pi as its media output.
+
+### Panel dark while the phone plays
+
+If the page says the phone is connected but not streaming while it plays, check the
+bridge sink. Its id is the number next to `Bluetooth loopback (RGB Matrix)` in
+`wpctl status`:
+
+```bash
+pw-cli info <sink-id> | grep state
+```
+
+A sink in `error` (for example `Start error: Invalid argument`) stays there and
+refuses every stream until WirePlumber restarts. To recover:
+
+1. On the FFT page, relaunch with **USB mic** or stop FFT, so nothing holds the
+   loopback capture.
+2. As the desktop user: `systemctl --user restart wireplumber`.
+3. Check that `wpctl status` lists `Bluetooth loopback (RGB Matrix)` as the default
+   sink again, reconnect the phone if it dropped, and relaunch with **Bluetooth
+   phone**.
+
+Don't restart WirePlumber while FFT runs with **Bluetooth phone**: WirePlumber
+probes each card when it starts, and a card it can't open drops out of PipeWire
+until the next restart, the loopback included. That holds for rerunning the
+installer too. A USB mic run is fine: the iMM-6C drops out of PipeWire the same way,
+but FFT reads it directly, and it returns at the next boot.
 
 ## Disconnect, forget, or return to USB-only
 
