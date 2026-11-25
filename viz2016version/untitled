@@ -1,4 +1,0 @@
-import time
-import pyaudio
-from rgbmatrix import Adafruit_RGBmatrix
-#import pim
