@@ -12,6 +12,7 @@ import {
   fileSlots,
   fileUpdateAction,
   filesChangedSinceLaunch,
+  hasFileEditor,
   hexToColor,
   parseValue,
 } from '../../matrix_controller/static/js/model.js';
@@ -108,4 +109,12 @@ test('changed-since-launch text names everything that changed', () => {
 test('Graph Traversal names its colors section', () => {
   assert.equal(fileText.render.restore, 'Restore default colors');
   assert.equal(fileText.render.load, 'Load saved colors');
+});
+
+test('a file with no editor fields gets no section (fft-themes D-011)', () => {
+  assert.equal(hasFileEditor(fields), true);
+  assert.equal(hasFileEditor([]), false);
+  assert.equal(hasFileEditor(undefined), false);
+  // With no fields nothing can change, so the page never saves the file.
+  assert.deepEqual(fileChanges([], {themes: []}, {themes: [{name: 'my_a'}]}), []);
 });

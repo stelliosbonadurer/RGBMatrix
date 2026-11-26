@@ -1,18 +1,19 @@
-"""Theme module for FFT visualizer color schemes."""
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+"""Theme module for FFT visualizer color schemes.
 
-from themes.base import BaseTheme
-from themes.gradients import (
+Imports are relative so the web service can import ``themes.custom`` (as
+``my_programs.fft_program.themes.custom``) without changing its own import path
+(fft-themes D-007).
+"""
+from .base import BaseTheme
+from .gradients import (
     WarmTheme,
     OceanTheme,
     ForestTheme,
     RainbowTheme,
     AutumnTheme,
 )
-from themes.color_stops import ColorStopTheme, color_stop_theme
-from themes.registry import get_theme, register_theme, list_themes
+from .color_stops import ColorStopTheme, color_stop_theme
+from .registry import get_theme, register_theme, list_themes
 
 __all__ = [
     'BaseTheme',

@@ -17,6 +17,7 @@ import {
   fileUpdateAction,
   filesChangedSinceLaunch,
   flagVector,
+  hasFileEditor,
   matrixChangedSinceLaunch,
   runKey,
   runningValues,
@@ -520,7 +521,8 @@ async function loadFiles() {
     });
     entry.editor.write(snapshot.document);
     files.set(file.name, entry);
-    el.files.append(entry.editor.element);
+    // D-011: the editor still exists, so the draft code needs no special case.
+    if (hasFileEditor(snapshot.fields)) el.files.append(entry.editor.element);
   }
 }
 

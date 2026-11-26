@@ -52,9 +52,11 @@ from core import (
     resolve_audio_source,
 )
 from themes import list_themes
+from themes.custom import load_custom_themes
 from matrix_controller.definitions import application_parameters
 from matrix_controller.runtime_transport import (
     LAUNCH_STRUCTURE_ENVIRONMENT,
+    PROGRAM_CONFIG_ENVIRONMENT,
     FrameBoundaryRuntimeBridge,
     RuntimeControlClient,
 )
@@ -131,7 +133,11 @@ def main():
     
     # Parse arguments
     args = app.process_args()
-    
+
+    # Custom themes register before anything reads the theme list: the layer
+    # descriptor, the launch structure, and --list-themes (fft-themes D-005).
+    load_custom_themes(os.environ.get(PROGRAM_CONFIG_ENVIRONMENT))
+
     # Handle list commands
     if args.list_themes:
         print("Available themes:")

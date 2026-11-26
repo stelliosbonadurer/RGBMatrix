@@ -75,7 +75,8 @@ def wash_toward_white(stops: Sequence[ColorStop], amount: float) -> Tuple[ColorS
 
 
 def _lut_index(ratio: float) -> int:
-    if ratio <= 0.0:
+    # ``not ratio > 0`` also catches NaN, which maps to the first color (D-006).
+    if not ratio > 0.0:
         return 0
     if ratio >= 1.0:
         return _LUT_LAST

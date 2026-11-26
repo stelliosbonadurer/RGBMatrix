@@ -56,14 +56,56 @@ class ColorSettings:
 
 ## Creating a Custom Theme
 
-### From color stops (no code)
+### Saved on the Pi (no code)
 
-Most themes are a gradient. Describe one as color stops in `themes/palettes.py` and
-add it to `PALETTE_THEMES`:
+Custom themes are FFT's program config file, saved by the web service on the Pi
+(`<state directory>/program-files/fft.themes.json`) and edited through
+`GET`/`PUT /api/v1/programs/fft/files/themes`. The FFT page has no editor for it yet.
+Each FFT launch receives the saved file in `RGB_MATRIX_PROGRAM_CONFIG` and registers
+its themes before building any layer, so a saved change applies from the next launch.
+A run without that variable reads the tracked default `config/custom_themes.json`
+(no custom themes).
+
+```json
+{
+  "themes": [
+    {
+      "name": "my_sunset",
+      "description": "Purple to gold",
+      "axis": "height",
+      "stops": [
+        {"position": 0.0, "color": [60, 20, 140]},
+        {"position": 1.0, "color": [255, 200, 80]}
+      ],
+      "overflow": [
+        [{"position": 0.0, "color": [255, 200, 80]}, {"position": 1.0, "color": [255, 255, 255]}]
+      ]
+    }
+  ]
+}
+```
+
+- Names are `my_` plus 1-29 lowercase letters, digits, or underscores, so they never
+  collide with a built-in theme. Names are unique within the file.
+- Every theme has exactly these five fields. `axis` is `height` or `column`;
+  `description` is at most 80 characters.
+- `stops` (and each `overflow` list) holds 2-16 stops whose positions run from 0 to 1
+  without decreasing; colors are `[r, g, b]` integers 0-255. Overflow layer n uses
+  list n and later layers reuse the last list; with `[]` overflow repeats the main
+  gradient. At most 4 overflow lists and 32 themes.
+- The web service refuses a file that breaks these rules. If FFT is ever handed one,
+  it prints one line and runs with the built-in themes only.
+
+These are color-stop themes, drawn exactly like the built-in ones below.
+
+### From color stops (built in)
+
+Most built-in themes are a gradient. Describe one as color stops in
+`themes/palettes.py` and add it to `PALETTE_THEMES`:
 
 ```python
-MyTheme = color_stop_theme(
-    "my_theme",
+NavyGoldTheme = color_stop_theme(
+    "navy_gold",
     "Navy (low) -> gold (high)",
     ((0.0, (10, 20, 90)), (0.5, (120, 60, 160)), (1.0, (255, 200, 40))),
     axis="height",              # or "column" to spread colors across the display
@@ -84,10 +126,10 @@ Stops run from position 0 to 1 with RGB values 0-255. Each layer's theme builds 
 Add to `themes/gradients.py` (or create a new file):
 
 ```python
-class MyCustomTheme(BaseTheme):
+class PurplePinkTheme(BaseTheme):
     """Description of your theme."""
 
-    name = "my_custom"  # The value of a layer's theme setting
+    name = "purple_pink"  # The value of a layer's theme setting; built-ins never start with my_
     description = "My custom color scheme"
 
     def get_color(self, height_ratio: float, column_ratio: float = 0.0) -> Tuple[int, int, int]:
@@ -112,12 +154,12 @@ class MyCustomTheme(BaseTheme):
 In `themes/registry.py`, add to `_register_builtin_themes()`:
 
 ```python
-from .gradients import MyCustomTheme  # Add import
+from .gradients import PurplePinkTheme  # Add import
 
 def _register_builtin_themes():
     builtin_themes = [
         # ... existing themes ...
-        MyCustomTheme,  # Add here
+        PurplePinkTheme,  # Add here
     ]
 ```
 
@@ -126,7 +168,7 @@ def _register_builtin_themes():
 For cleaner imports, add to `themes/__init__.py`:
 
 ```python
-from .gradients import MyCustomTheme
+from .gradients import PurplePinkTheme
 ```
 
 ## Theme Methods

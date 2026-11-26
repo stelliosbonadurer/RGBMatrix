@@ -1,4 +1,7 @@
-"""Hardware-free tests for FFT themes (fft-themes milestone 1).
+"""Hardware-free tests for FFT themes (fft-themes milestones 1 and 2).
+
+``CustomThemeTests`` covers FFT reading its custom-theme file (M2); the web
+service's check on the same file is in ``test_program_files``.
 
 ``fixtures/theme_baseline_vectors.json`` holds the seven original themes' colors,
 recorded from source ``d44f3e5`` before color-stop themes existed. Those themes must
@@ -8,9 +11,14 @@ keep returning exactly these colors.
 from __future__ import annotations
 
 import colorsys
+import io
 import json
+import math
+import os
 from pathlib import Path
+import subprocess
 import sys
+import tempfile
 from types import ModuleType
 import unittest
 
@@ -37,6 +45,13 @@ try:
         normalize_current_bars_settings,
     )
     from themes import get_theme, list_themes  # noqa: E402
+    from themes import registry as theme_registry  # noqa: E402
+    from themes.custom import (  # noqa: E402
+        DEFAULT_PATH as CUSTOM_THEMES_DEFAULT,
+        CustomThemeError,
+        load_custom_themes,
+        parse_custom_themes,
+    )
     from themes.color_stops import (  # noqa: E402
         LUT_SIZE,
         ColorStopError,
@@ -224,6 +239,164 @@ class ColorStopThemeTests(unittest.TestCase):
             with self.subTest(case=label):
                 with self.assertRaises(ColorStopError):
                     color_stop_theme("bad", "test", **kwargs)
+
+
+class NanRatioTests(unittest.TestCase):
+    """fft-themes D-006: NaN maps to the first color instead of raising."""
+
+    def test_nan_ratios_give_the_first_color(self) -> None:
+        for name in VICE_THEMES:
+            with self.subTest(theme=name):
+                theme = get_theme(name)
+                first = theme._lut[0]
+                self.assertIs(theme.get_color(math.nan, math.nan), first)
+                for layer in (1, 2, 5):
+                    lut = theme._overflow_luts[min(layer, len(theme._overflow_luts)) - 1]
+                    self.assertIs(theme.get_overflow_color(layer, math.nan, math.nan), lut[0])
+
+
+def _custom(name="my_sunset", **changes):
+    theme = {
+        "name": name,
+        "description": "Purple to gold",
+        "axis": "height",
+        "stops": [
+            {"position": 0.0, "color": [60, 20, 140]},
+            {"position": 0.5, "color": [255, 46, 136]},
+            {"position": 1.0, "color": [255, 200, 80]},
+        ],
+        "overflow": [],
+    }
+    theme.update(changes)
+    return theme
+
+
+class CustomThemeTests(unittest.TestCase):
+    """fft-themes M2 acceptance criteria 2-4 (D-005, D-008-D-010)."""
+
+    def setUp(self) -> None:
+        saved = dict(theme_registry._THEME_REGISTRY)
+
+        def restore() -> None:
+            theme_registry._THEME_REGISTRY.clear()
+            theme_registry._THEME_REGISTRY.update(saved)
+
+        self.addCleanup(restore)
+        self.builtins = list_themes()
+
+    def load(self, document, **kwargs):
+        stderr = io.StringIO()
+        text = document if isinstance(document, str) else json.dumps(document)
+        names = load_custom_themes(text, stderr=stderr, **kwargs)
+        return names, stderr.getvalue()
+
+    def test_the_tracked_default_has_no_custom_themes(self) -> None:
+        document = json.loads(CUSTOM_THEMES_DEFAULT.read_text(encoding="utf-8"))
+        self.assertEqual(parse_custom_themes(document), ())
+        stderr = io.StringIO()
+        self.assertEqual(load_custom_themes(None, stderr=stderr), ())
+        self.assertEqual((stderr.getvalue(), list_themes()), ("", self.builtins))
+
+    def test_without_the_override_the_given_file_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "custom_themes.json"
+            path.write_text(json.dumps({"themes": [_custom()]}), encoding="utf-8")
+            self.assertEqual(load_custom_themes(None, path), ("my_sunset",))
+        self.assertIn("my_sunset", list_themes())
+
+    def test_saved_themes_are_offered_to_layers_and_follow_their_stops(self) -> None:
+        overflow = [[{"position": 0.0, "color": [255, 255, 255]},
+                     {"position": 1.0, "color": [255, 0, 0]}]]
+        names, stderr = self.load({"themes": [
+            _custom(),
+            _custom("my_skyline", axis="column", overflow=overflow),
+        ]})
+        self.assertEqual((names, stderr), (("my_sunset", "my_skyline"), ""))
+        self.assertEqual(list_themes(), sorted([*self.builtins, *names]))
+        descriptor = current_bars_settings_descriptor()
+        defaults = {field["name"]: field["default"] for field in descriptor["fields"]}
+        theme_field = next(f for f in descriptor["fields"] if f["name"] == "theme")
+        for name in names:
+            with self.subTest(theme=name):
+                self.assertIn(name, theme_field["choices"])
+                normalized = normalize_current_bars_settings(
+                    {**defaults, "theme": name}, DIRECT_OUTPUT_PATH
+                )
+                self.assertEqual(normalized["theme"], name)
+                self.assertIsInstance(get_theme(name), ColorStopTheme)
+
+        sunset = get_theme("my_sunset", brightness_boost=1.0)
+        self.assertEqual(sunset.get_color(0.0, 0.9), (60, 20, 140))
+        self.assertEqual(sunset.get_color(0.5, 0.0), sunset._lut[127])
+        self.assertEqual(sunset.get_color(1.0, 0.1), (255, 200, 80))
+        self.assertEqual(sunset._lut, build_lut(
+            ((0.0, (60, 20, 140)), (0.5, (255, 46, 136)), (1.0, (255, 200, 80)))
+        ))
+        skyline = get_theme("my_skyline")
+        self.assertEqual(skyline.get_color(0.9, 0.0), (60, 20, 140))
+        self.assertEqual(skyline.get_overflow_color(1, 0.0, 1.0), (255, 0, 0))
+        self.assertEqual(skyline.get_overflow_color(3, 0.0, 0.0), (255, 255, 255))
+        self.assertEqual(get_theme("my_sunset").get_color(math.nan), (60, 20, 140))
+
+    def test_an_unusable_document_prints_one_line_and_registers_nothing(self) -> None:
+        cases = (
+            ("{", "Expecting"),
+            ("NaN", "NaN is not valid JSON"),
+            (json.dumps({"themes": [_custom(), _custom("ocean")]}), "must be my_"),
+            (json.dumps({"themes": [_custom(stops=[])]}), "2 to 16 stops"),
+        )
+        for text, message in cases:
+            with self.subTest(message=message):
+                names, stderr = self.load(text)
+                self.assertEqual(names, ())
+                self.assertEqual(len(stderr.splitlines()), 1)
+                self.assertIn(message, stderr)
+                self.assertIn("using built-in themes only", stderr)
+                self.assertEqual(list_themes(), self.builtins)
+
+    def test_an_unreadable_default_file_prints_one_line(self) -> None:
+        stderr = io.StringIO()
+        missing = Path(tempfile.gettempdir()) / "no-such-dir-fft-themes" / "x.json"
+        self.assertEqual(load_custom_themes(None, missing, stderr=stderr), ())
+        self.assertIn(str(missing), stderr.getvalue())
+        self.assertEqual(list_themes(), self.builtins)
+
+    def test_a_registered_name_is_never_replaced(self) -> None:
+        self.assertEqual(self.load({"themes": [_custom()]})[0], ("my_sunset",))
+        first = theme_registry._THEME_REGISTRY["my_sunset"]
+        names, stderr = self.load({"themes": [_custom("my_other"), _custom()]})
+        self.assertEqual(names, ())
+        self.assertIn("already registered: my_sunset", stderr)
+        self.assertIs(theme_registry._THEME_REGISTRY["my_sunset"], first)
+        self.assertNotIn("my_other", list_themes())
+
+    def test_builtin_names_cannot_be_custom(self) -> None:
+        for name in self.builtins:
+            with self.subTest(theme=name), self.assertRaisesRegex(CustomThemeError, "must be my_"):
+                parse_custom_themes({"themes": [_custom(name)]})
+
+    def test_fft_registers_the_override_before_listing_themes(self) -> None:
+        # main.py end to end, with the audio library stubbed as above.
+        script = (
+            "import runpy, sys, types\n"
+            "sys.modules['sounddevice'] = types.ModuleType('sounddevice')\n"
+            "sys.argv = ['main.py', '--list-themes']\n"
+            "runpy.run_path('main.py', run_name='__main__')\n"
+        )
+        for override, listed, warned in (
+            (json.dumps({"themes": [_custom()]}), True, False),
+            ("{", False, True),
+        ):
+            with self.subTest(listed=listed):
+                environ = {**os.environ, "RGB_MATRIX_PROGRAM_CONFIG": override}
+                result = subprocess.run(
+                    [sys.executable, "-c", script], cwd=FFT_ROOT, env=environ,
+                    capture_output=True, text=True, timeout=60,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual("  - my_sunset" in result.stdout.splitlines(), listed)
+                self.assertIn("  - ocean", result.stdout.splitlines())
+                self.assertEqual("Custom themes not loaded" in result.stderr, warned)
 
 
 class _Canvas:

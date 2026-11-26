@@ -215,6 +215,12 @@ export function fileSlots(fields, document) {
 }
 
 // The slot keys where the draft differs from the saved document.
+// A file with no editor fields gets no section on the page; its snapshot still
+// drives revisions and "changed since launch" (fft-themes D-011).
+export function hasFileEditor(fields) {
+  return Array.isArray(fields) && fields.length > 0;
+}
+
 export function fileChanges(fields, draft, saved) {
   const draftSlots = fileSlots(fields, draft);
   const savedSlots = fileSlots(fields, saved);

@@ -124,6 +124,21 @@ def _validate_graph_traversal_render(document: Any) -> None:
         )
 
 
+def _validate_fft_custom_themes(document: Any) -> None:
+    """FFT's own custom-theme parser (fft-themes D-007, D-008, D-009).
+
+    The themes package uses relative imports, so this import leaves the web
+    service's ``sys.path`` alone.
+    """
+
+    from my_programs.fft_program.themes.custom import parse_custom_themes
+
+    try:
+        parse_custom_themes(document)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from exc
+
+
 class Registry:
     """Immutable-by-convention lookup for code-reviewed visualization entries."""
 
@@ -211,6 +226,23 @@ def build_default_registry(
                 requires_audio=True,
                 supports_live_control=True,
                 matrix_parameters=MATRIX_PARAMETERS,
+                # No editor fields until fft-themes M3; the page draws no section
+                # for a file without fields (D-011).
+                program_files=(
+                    ProgramFileSpec(
+                        name="themes",
+                        label="Custom themes",
+                        default_path=(
+                            root
+                            / "my_programs"
+                            / "fft_program"
+                            / "config"
+                            / "custom_themes.json"
+                        ),
+                        validate=_validate_fft_custom_themes,
+                        fields=(),
+                    ),
+                ),
             ),
             VisualizationSpec(
                 visualization_id="sorts",

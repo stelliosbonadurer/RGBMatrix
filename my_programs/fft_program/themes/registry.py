@@ -3,13 +3,10 @@ Theme registry for FFT visualizer.
 
 Provides a centralized way to access themes by name.
 """
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from typing import Dict, Type, List
 
-from typing import Dict, Type, Optional, List
-from themes.base import BaseTheme
-from themes.gradients import (
+from .base import BaseTheme
+from .gradients import (
     WarmTheme,
     OceanTheme,
     ForestTheme,
@@ -18,7 +15,7 @@ from themes.gradients import (
     DynamicTheme,
     DynamicLateralGradientTheme,
 )
-from themes.palettes import PALETTE_THEMES
+from .palettes import PALETTE_THEMES
 
 # Global theme registry
 _THEME_REGISTRY: Dict[str, Type[BaseTheme]] = {}
