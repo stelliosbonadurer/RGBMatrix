@@ -92,7 +92,8 @@ A run without that variable reads the tracked default `config/custom_themes.json
 - `stops` (and each `overflow` list) holds 2-16 stops whose positions run from 0 to 1
   without decreasing; colors are `[r, g, b]` integers 0-255. Overflow layer n uses
   list n and later layers reuse the last list; with `[]` overflow repeats the main
-  gradient. At most 4 overflow lists and 32 themes.
+  gradient. At most 4 overflow lists and 32 themes, and the whole file at most
+  48 KiB as compact JSON (a few themes of 3-5 stops is about 1-2 KB).
 - The web service refuses a file that breaks these rules. If FFT is ever handed one,
   it prints one line and runs with the built-in themes only.
 

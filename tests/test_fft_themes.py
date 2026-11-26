@@ -386,9 +386,12 @@ class CustomThemeTests(unittest.TestCase):
         for override, listed, warned in (
             (json.dumps({"themes": [_custom()]}), True, False),
             ("{", False, True),
+            (None, False, False),  # no variable: the tracked default, no custom themes
         ):
-            with self.subTest(listed=listed):
-                environ = {**os.environ, "RGB_MATRIX_PROGRAM_CONFIG": override}
+            with self.subTest(override=override):
+                environ = {k: v for k, v in os.environ.items() if k != "RGB_MATRIX_PROGRAM_CONFIG"}
+                if override is not None:
+                    environ["RGB_MATRIX_PROGRAM_CONFIG"] = override
                 result = subprocess.run(
                     [sys.executable, "-c", script], cwd=FFT_ROOT, env=environ,
                     capture_output=True, text=True, timeout=60,

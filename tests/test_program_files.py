@@ -31,6 +31,7 @@ from matrix_controller.registry import (
 from matrix_controller.program_files import ProgramFileError, ProgramFileStore
 from matrix_controller.runtime_transport import PROGRAM_CONFIG_ENVIRONMENT
 from matrix_controller.schema import ValidationError
+from matrix_controller.web_service import MAX_REQUEST_BYTES
 from my_programs.dsa_visualizations import graph_traversal
 from my_programs.dsa_visualizations.graph_rendering import (
     DEFAULT_CONFIG_PATH,
@@ -298,8 +299,10 @@ class FftCustomThemesFileTests(unittest.TestCase):
             ({"themes": [], "extra": 1}, "only themes"),
             ({"themes": {}}, "themes must be an array"),
             ({"themes": [custom_theme(name=f"my_{i}") for i in range(33)]}, "at most 32"),
-            ({"themes": [{"name": "my_a"}]}, r"themes\[0\] must contain only"),
-            ({"themes": [{**custom_theme(), "extra": 1}]}, "must contain only"),
+            ({"themes": ["my_a"]}, r"themes\[0\] must be an object"),
+            ({"themes": [{"name": "my_a"}]},
+             r"themes\[0\]: missing axis, description, overflow, stops$"),
+            ({"themes": [{**custom_theme(), "extra": 1}]}, r"themes\[0\]: unknown extra$"),
             ({"themes": [custom_theme(name="sunset")]}, "must be my_"),
             ({"themes": [custom_theme(name="ocean")]}, "must be my_"),
             ({"themes": [custom_theme(name="my_")]}, "must be my_"),
@@ -311,7 +314,10 @@ class FftCustomThemesFileTests(unittest.TestCase):
             ({"themes": [custom_theme(axis="diagonal")]}, "axis must be one of"),
             ({"themes": [custom_theme(stops=[stop])]}, "2 to 16 stops"),
             ({"themes": [custom_theme(stops=[stop] * 17)]}, "2 to 16 stops"),
-            ({"themes": [custom_theme(stops=[{"position": 0.0}, stop])]}, "only position and color"),
+            ({"themes": [custom_theme(stops=[{"position": 0.0}, stop])]},
+             r"my_sunset stops\[0\]: missing color$"),
+            ({"themes": [custom_theme(stops=[[0.0, [1, 2, 3]], stop])]},
+             r"stops\[0\] must be an object"),
             ({"themes": [custom_theme(stops=[{"position": True, "color": [1, 2, 3]}, stop])]},
              "position must be a number"),
             ({"themes": [custom_theme(stops=[{"position": 10 ** 400, "color": [1, 2, 3]}, stop])]},
@@ -338,7 +344,11 @@ class FftCustomThemesFileTests(unittest.TestCase):
              "must not decrease"),
             ({"themes": [custom_theme(overflow={})]}, "at most 4 stop lists"),
             ({"themes": [custom_theme(overflow=[custom_theme()["stops"]] * 5)]}, "at most 4 stop lists"),
-            ({"themes": [custom_theme(overflow=[[stop]])]}, r"overflow\[0\] must be an array"),
+            ({"themes": [custom_theme(overflow=[[stop]])]},
+             "my_sunset overflow layer 1 must be an array"),
+            ({"themes": [custom_theme(overflow=[custom_theme()["stops"], [
+                {"position": 0.0, "color": [1, 2, 3]}, {"position": 0.5, "color": [1, 2, 3]}]])]},
+             "my_sunset overflow layer 2: stops must start at 0 and end at 1"),
         )
         for document, message in cases:
             with self.subTest(message=message):
@@ -351,13 +361,32 @@ class FftCustomThemesFileTests(unittest.TestCase):
                 self.assertRegex(str(error), message)
         self.assertEqual(self.store.launch_files("fft"), {"themes": (0, None)})
 
-    def test_the_limits_themselves_are_accepted(self) -> None:
+    def test_each_limit_is_accepted_and_the_file_fits_one_request(self) -> None:
         stops = [{"position": index / 15, "color": [index, index, index]} for index in range(16)]
         stops[-1]["position"] = 1.0
-        theme = custom_theme(name="my_" + "a" * 29, description="x" * 80, stops=stops,
-                             overflow=[stops] * 4)
-        document = {"themes": [theme] + [custom_theme(name=f"my_{i}") for i in range(31)]}
+        widest = custom_theme(name="my_" + "a" * 29, description="x" * 80, stops=stops,
+                              overflow=[stops] * 4)
+        document = {"themes": [widest] + [custom_theme(name=f"my_{i}") for i in range(31)]}
         self.spec.validate(document)
+        # D-012: what validates also fits one HTTP request, so it can be saved.
+        body = json.dumps({"expected_revision": 0, "document": document}, separators=(",", ":"))
+        self.assertLess(len(body), MAX_REQUEST_BYTES)
+        self.assertEqual(self.save(document)["revision"], 1)
+
+    def test_a_file_over_48_kib_is_refused_with_its_size(self) -> None:
+        stops = [{"position": index / 15, "color": [255, 255, 255]} for index in range(16)]
+        stops[-1]["position"] = 1.0
+        themes = [custom_theme(name=f"my_{i:02d}" + "a" * 27, description="x" * 80,
+                               stops=stops, overflow=[stops] * 4) for i in range(32)]
+        size = len(json.dumps({"themes": themes}, separators=(",", ":")))
+        self.assertGreater(size, 48 * 1024)
+        with self.assertRaises(ProgramFileError) as caught:
+            self.save({"themes": themes})
+        self.assertIn(f"at most 49152 bytes as compact JSON (this is {size})", str(caught.exception))
+        # The cap measures compact JSON, as the supervisor encodes it.
+        fitting = themes[:11]
+        self.assertLessEqual(len(json.dumps({"themes": fitting}, separators=(",", ":"))), 48 * 1024)
+        self.spec.validate({"themes": fitting})
 
     def test_importing_the_validator_leaves_the_import_path_alone(self) -> None:
         # A fresh interpreter, so earlier tests' imports can't hide a change (D-007).

@@ -7,7 +7,7 @@ The web service saves the file on the Pi and passes it to each FFT launch in
 ``parse_custom_themes`` is also the web service's only check on a saved file
 (D-047), so its messages name the failing entry.
 
-Layout (fft-themes D-008, D-009)::
+Layout (fft-themes D-008, D-009; at most 48 KiB as compact JSON, D-012)::
 
     {"themes": [{"name": "my_sunset", "description": "...", "axis": "height",
                  "stops": [{"position": 0.0, "color": [r, g, b]}, ...],
@@ -31,6 +31,9 @@ MIN_STOPS = 2
 MAX_STOPS = 16
 MAX_OVERFLOW_LAYERS = 4
 MAX_DESCRIPTION = 80
+# Compact JSON, as the supervisor encodes it: fits the web service's 64 KiB request
+# body and stays far below Linux's 128 KiB environment string (fft-themes D-012).
+MAX_DOCUMENT_BYTES = 48 * 1024
 
 _THEME_KEYS = frozenset({"name", "description", "axis", "stops", "overflow"})
 _STOP_KEYS = frozenset({"position", "color"})
@@ -40,14 +43,27 @@ class CustomThemeError(ValueError):
     """A custom-theme document that can't be used."""
 
 
+def _key_problem(found: Any, expected: frozenset) -> str:
+    missing = sorted(expected - set(found))
+    unknown = sorted(str(key) for key in set(found) - expected)
+    parts = []
+    if missing:
+        parts.append(f"missing {', '.join(missing)}")
+    if unknown:
+        parts.append(f"unknown {', '.join(unknown)}")
+    return "; ".join(parts)
+
+
 def _parse_stops(value: Any, where: str) -> List[ColorStop]:
     if not isinstance(value, list) or not MIN_STOPS <= len(value) <= MAX_STOPS:
         raise CustomThemeError(f"{where} must be an array of {MIN_STOPS} to {MAX_STOPS} stops")
     stops = []
     for index, stop in enumerate(value):
         here = f"{where}[{index}]"
-        if not isinstance(stop, dict) or set(stop) != _STOP_KEYS:
-            raise CustomThemeError(f"{here} must contain only position and color")
+        if not isinstance(stop, dict):
+            raise CustomThemeError(f"{here} must be an object with position and color")
+        if set(stop) != _STOP_KEYS:
+            raise CustomThemeError(f"{here}: {_key_problem(stop, _STOP_KEYS)}")
         position = stop["position"]
         if isinstance(position, bool) or not isinstance(position, (int, float)):
             raise CustomThemeError(f"{here}.position must be a number")
@@ -71,6 +87,15 @@ def parse_custom_themes(document: Any) -> Tuple[Type[ColorStopTheme], ...]:
 
     if not isinstance(document, dict) or set(document) != {"themes"}:
         raise CustomThemeError("custom themes must be an object containing only themes")
+    try:
+        size = len(json.dumps(document, separators=(",", ":"), allow_nan=False))
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise CustomThemeError("custom themes must be plain JSON") from exc
+    if size > MAX_DOCUMENT_BYTES:
+        raise CustomThemeError(
+            f"custom themes must be at most {MAX_DOCUMENT_BYTES} bytes as compact JSON "
+            f"(this is {size})"
+        )
     entries = document["themes"]
     if not isinstance(entries, list):
         raise CustomThemeError("themes must be an array")
@@ -80,10 +105,10 @@ def parse_custom_themes(document: Any) -> Tuple[Type[ColorStopTheme], ...]:
     classes = []
     for index, entry in enumerate(entries):
         where = f"themes[{index}]"
-        if not isinstance(entry, dict) or set(entry) != _THEME_KEYS:
-            raise CustomThemeError(
-                f"{where} must contain only name, description, axis, stops, and overflow"
-            )
+        if not isinstance(entry, dict):
+            raise CustomThemeError(f"{where} must be an object")
+        if set(entry) != _THEME_KEYS:
+            raise CustomThemeError(f"{where}: {_key_problem(entry, _THEME_KEYS)}")
         name = entry["name"]
         if not isinstance(name, str) or not NAME_PATTERN.fullmatch(name):
             raise CustomThemeError(
@@ -108,7 +133,7 @@ def parse_custom_themes(document: Any) -> Tuple[Type[ColorStopTheme], ...]:
                 f"{name}: overflow must be an array of at most {MAX_OVERFLOW_LAYERS} stop lists"
             )
         overflow_stops = [
-            _parse_stops(layer, f"{name} overflow[{layer_index}]")
+            _parse_stops(layer, f"{name} overflow layer {layer_index + 1}")
             for layer_index, layer in enumerate(overflow)
         ]
         try:
