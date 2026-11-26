@@ -71,7 +71,7 @@ to quit a direct run.
 ## Features
 
 - **Real-time FFT** - Audio spectrum analysis with configurable frequency ranges
-- **7 Color Themes** - warm, fire, ocean, forest, purple, sunset, rainbow
+- **13 Color Themes** - ocean (default), warm, forest, autumn, rainbow, two dynamic themes, and six `vice_*` Miami themes ([themes.md](themes.md))
 - **Overflow Mode** - Bars stack with different colors when audio is loud
 - **Gradient Toggle** - Per-pixel gradients or uniform bar colors
 - **Peak Indicators** - Floating dots that show recent peak levels

@@ -139,6 +139,12 @@
          "forest",
          "ocean",
          "rainbow",
+         "vice_city",
+         "vice_orange",
+         "vice_pink",
+         "vice_purple",
+         "vice_skyline",
+         "vice_teal",
          "warm"
         ],
         "default": "ocean",

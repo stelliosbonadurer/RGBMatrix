@@ -11,6 +11,7 @@ from themes.gradients import (
     RainbowTheme,
     AutumnTheme,
 )
+from themes.color_stops import ColorStopTheme, color_stop_theme
 from themes.registry import get_theme, register_theme, list_themes
 
 __all__ = [
@@ -20,6 +21,8 @@ __all__ = [
     'ForestTheme',
     'RainbowTheme',
     'AutumnTheme',
+    'ColorStopTheme',
+    'color_stop_theme',
     'get_theme',
     'register_theme',
     'list_themes',

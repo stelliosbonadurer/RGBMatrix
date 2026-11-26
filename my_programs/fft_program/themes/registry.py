@@ -18,6 +18,7 @@ from themes.gradients import (
     DynamicTheme,
     DynamicLateralGradientTheme,
 )
+from themes.palettes import PALETTE_THEMES
 
 # Global theme registry
 _THEME_REGISTRY: Dict[str, Type[BaseTheme]] = {}
@@ -33,6 +34,7 @@ def _register_builtin_themes():
         AutumnTheme,
         DynamicTheme,
         DynamicLateralGradientTheme,
+        *PALETTE_THEMES,
     ]
     for theme_class in builtin_themes:
         _THEME_REGISTRY[theme_class.name] = theme_class

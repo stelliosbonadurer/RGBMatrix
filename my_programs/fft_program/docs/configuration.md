@@ -160,7 +160,7 @@ color_mode: str = 'contrast' # 'white', 'bar', 'contrast', 'peak'
 ### ColorSettings
 
 ```python
-theme: str = 'fire'           # Theme name
+theme: str = 'ocean'          # Theme name
 brightness_boost: float = 1.0 # Overall brightness multiplier
 ```
 

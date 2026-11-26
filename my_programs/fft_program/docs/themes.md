@@ -4,15 +4,28 @@ Themes control the colors used to render the visualization.
 
 ## Available Themes
 
+`ocean` is the default.
+
 | Theme | Description | Best For |
 | ----- | ----------- | -------- |
-| `warm` | Dark red → Orange → Yellow | Acoustic, general use |
-| `fire` | Red/orange base, uniform color per bar | Intense, EDM |
-| `ocean` | Deep blue → Cyan → White | Calm, ambient |
+| `ocean` | Deep blue → Cyan → White | Calm, ambient; the only theme the `pillow-bulk` backend accepts |
+| `warm` | Red → Orange → Yellow | Acoustic, general use |
 | `forest` | Dark green → Bright green → Yellow | Nature vibes |
-| `purple` | Deep purple → Magenta → Pink | Vibrant, pop |
-| `sunset` | Pink → Orange → Yellow | Warm, mellow |
+| `autumn` | Deep brown → Burnt orange → Golden yellow | Mellow |
 | `rainbow` | Full spectrum by column position | Colorful displays |
+| `dynamic` | Animated hue cycling, same color across columns | Shows, ambient |
+| `dynamic_lateral_gradient` | Animated hue cycling that drifts across columns | Shows, ambient |
+| `vice_pink` | Hot pink, dark → light | One layer of a multi-layer Miami look |
+| `vice_orange` | Sunset orange, dark → light | One layer of a multi-layer Miami look |
+| `vice_purple` | Violet, dark → light | One layer of a multi-layer Miami look |
+| `vice_teal` | Ocean teal, dark → light | One layer of a multi-layer Miami look |
+| `vice_city` | Purple → Pink → Orange → Peach by height | Single-layer Miami sunset |
+| `vice_skyline` | Teal → Purple → Pink → Orange across columns | Single-layer Miami skyline |
+
+The `vice_*` themes use the GTA VI Miami-sunset palette (approximate hex values in
+`themes/palettes.py`). Each single-color `vice_*` theme stays in its own hue, and its
+overflow layers brighten toward white, so stacked layers stay distinct. Use one per
+layer, for example pink, purple, and teal for three layers, adding orange for a fourth.
 
 ## Selecting a Theme
 
@@ -26,7 +39,7 @@ Each layer's `theme` setting picks its theme: the Theme field on the FFT page, o
 ```json
 {
   "color": {
-    "theme": "fire",
+    "theme": "vice_city",
     "brightness_boost": 1.2
   }
 }
@@ -37,13 +50,36 @@ Each layer's `theme` setting picks its theme: the Theme field on the FFT page, o
 ```python
 @dataclass
 class ColorSettings:
-    theme: str = 'fire'  # Change default here
+    theme: str = 'ocean'  # Change default here
     brightness_boost: float = 1.0
 ```
 
 ## Creating a Custom Theme
 
-### Step 1: Create Theme Class
+### From color stops (no code)
+
+Most themes are a gradient. Describe one as color stops in `themes/palettes.py` and
+add it to `PALETTE_THEMES`:
+
+```python
+MyTheme = color_stop_theme(
+    "my_theme",
+    "Navy (low) -> gold (high)",
+    ((0.0, (10, 20, 90)), (0.5, (120, 60, 160)), (1.0, (255, 200, 40))),
+    axis="height",              # or "column" to spread colors across the display
+    overflow=(                  # optional: one stop list per overflow layer
+        ((0.0, (255, 200, 40)), (1.0, (255, 240, 200))),
+        ((0.0, (255, 240, 200)), (1.0, (255, 255, 255))),
+    ),
+)
+```
+
+Stops run from position 0 to 1 with RGB values 0-255. Each layer's theme builds a
+256-entry lookup table once at launch, so drawing costs one table lookup per pixel.
+
+### From code
+
+#### Step 1: Create Theme Class
 
 Add to `themes/gradients.py` (or create a new file):
 
@@ -71,7 +107,7 @@ class MyCustomTheme(BaseTheme):
         return self._apply_brightness(r, g, b)
 ```
 
-### Step 2: Register the Theme
+#### Step 2: Register the Theme
 
 In `themes/registry.py`, add to `_register_builtin_themes()`:
 
@@ -85,7 +121,7 @@ def _register_builtin_themes():
     ]
 ```
 
-### Step 3: Update __init__.py (optional)
+#### Step 3: Update __init__.py (optional)
 
 For cleaner imports, add to `themes/__init__.py`:
 
