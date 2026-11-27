@@ -31,11 +31,15 @@
      "shadow_enabled": false,
      "peak_enabled": false,
      "peak_color_mode": "contrast",
-     "peak_fall_speed": 0.08,
-     "peak_hold_frames": 8,
+     "peak_hold_seconds": 0.09,
+     "peak_fall_rate": 7.0,
      "gain": 1.5,
-     "smoothing_rise": 0.4,
-     "smoothing_fall": 0.1,
+     "auto_level": true,
+     "auto_level_headroom": 2.5,
+     "auto_level_attack_seconds": 5.5,
+     "auto_level_release_seconds": 2.75,
+     "smoothing_rise_seconds": 0.023,
+     "smoothing_fall_seconds": 0.11,
      "dynamic_cycle_speed": 0.06,
      "dynamic_frozen": false,
      "min_freq": 100.0,
@@ -107,6 +111,10 @@
        {
         "id": "range",
         "label": "Range & weighting"
+       },
+       {
+        "id": "level",
+        "label": "Level"
        },
        {
         "id": "look",
@@ -218,8 +226,8 @@
         "help": "Peak marker color: white, the bar's color, a contrasting color, or the theme's peak color."
        },
        {
-        "name": "peak_fall_speed",
-        "label": "Peak fall speed",
+        "name": "peak_hold_seconds",
+        "label": "Peak hold (s)",
         "group": "peaks",
         "shown_when": {
          "field": "peak_enabled",
@@ -229,13 +237,13 @@
         },
         "type": "number",
         "min": 0.0,
-        "max": 1.0,
-        "default": 0.08,
-        "help": "How fast a peak marker drops after its hold ends."
+        "max": 10.0,
+        "default": 0.09,
+        "help": "Seconds a peak marker stays put before falling. Higher holds longer."
        },
        {
-        "name": "peak_hold_frames",
-        "label": "Peak hold (frames)",
+        "name": "peak_fall_rate",
+        "label": "Peak fall (heights/s)",
         "group": "peaks",
         "shown_when": {
          "field": "peak_enabled",
@@ -243,31 +251,31 @@
           true
          ]
         },
-        "type": "integer",
-        "min": 0,
-        "max": 600,
-        "default": 8,
-        "help": "Frames a peak marker stays put before falling."
+        "type": "number",
+        "min": 0.0,
+        "max": 50.0,
+        "default": 7.0,
+        "help": "How fast a peak marker drops after its hold, in panel heights per second. Higher falls faster; 0 never falls."
        },
        {
-        "name": "smoothing_rise",
-        "label": "Rise",
+        "name": "smoothing_rise_seconds",
+        "label": "Rise (s)",
         "group": "motion",
         "type": "number",
         "min": 0.0,
-        "max": 1.0,
-        "default": 0.4,
-        "help": "How fast bars rise toward a louder value (1 is instant)."
+        "max": 5.0,
+        "default": 0.023,
+        "help": "Time constant for bars rising toward a louder value, in seconds. Lower is snappier; 0 is instant."
        },
        {
-        "name": "smoothing_fall",
-        "label": "Fall",
+        "name": "smoothing_fall_seconds",
+        "label": "Fall (s)",
         "group": "motion",
         "type": "number",
         "min": 0.0,
-        "max": 1.0,
-        "default": 0.1,
-        "help": "How fast bars fall toward a quieter value (1 is instant)."
+        "max": 5.0,
+        "default": 0.11,
+        "help": "Time constant for bars falling toward a quieter value, in seconds. Higher leaves a longer tail; 0 is instant."
        },
        {
         "name": "dynamic_cycle_speed",
@@ -383,12 +391,68 @@
        {
         "name": "gain",
         "label": "Gain",
-        "group": "range",
+        "group": "level",
         "type": "number",
         "min": 0.1,
         "max": 10.0,
         "default": 1.5,
-        "help": "Multiplies bar height after automatic scaling: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."
+        "help": "Multiplies bar height after auto level: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."
+       },
+       {
+        "name": "auto_level",
+        "label": "Auto level",
+        "group": "level",
+        "type": "boolean",
+        "default": true,
+        "help": "On: bar height follows the music's recent loudness. Off: a fixed reference, so quiet music stays short and loud music tall; set the size with Gain."
+       },
+       {
+        "name": "auto_level_headroom",
+        "label": "Headroom",
+        "group": "level",
+        "shown_when": {
+         "field": "auto_level",
+         "values": [
+          true
+         ]
+        },
+        "type": "number",
+        "min": 1.0,
+        "max": 10.0,
+        "default": 2.5,
+        "help": "Room above the recent loudness before a bar reaches full height. Higher gives shorter bars and fewer that fill the panel."
+       },
+       {
+        "name": "auto_level_attack_seconds",
+        "label": "Attack (s)",
+        "group": "level",
+        "shown_when": {
+         "field": "auto_level",
+         "values": [
+          true
+         ]
+        },
+        "type": "number",
+        "min": 0.01,
+        "max": 30.0,
+        "default": 5.5,
+        "help": "Time constant for adapting to louder music, in seconds. Lower reins in a sudden loud passage sooner; higher lets it fill the panel longer."
+       },
+       {
+        "name": "auto_level_release_seconds",
+        "label": "Release (s)",
+        "group": "level",
+        "shown_when": {
+         "field": "auto_level",
+         "values": [
+          true
+         ]
+        },
+        "type": "number",
+        "min": 0.01,
+        "max": 30.0,
+        "default": 2.75,
+        "help": "Time constant for adapting to quieter music, in seconds. Lower brings a quiet passage back up sooner; higher keeps it short longer."
        }
       ],
       "backend_constraints": {

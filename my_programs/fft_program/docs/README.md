@@ -35,8 +35,9 @@ structure with the revision-checked `structure.set` action:
 
 The child validates the whole document. It then activates it between two frames
 or rejects it whole, with a path such as `structure.layers[2].settings.max_freq`.
-Up to eight layers are allowed. Each submit resets every layer's smoothing and
-peak history. A launch through `POST /api/v1/run` may carry the same document as
+Up to eight layers are allowed. A layer whose `layer_id` survives a submit keeps
+its auto-level state, smoothed bars, and peaks, even when its settings change; a new
+or renamed layer starts fresh. A launch through `POST /api/v1/run` may carry the same document as
 `structure`. If that document is invalid, the program runs the default single
 `current-bars` layer and reports the reason as `structure.launch_error` in the
 snapshot. Without a launch structure, startup is one `current-bars` layer using
@@ -98,7 +99,7 @@ fft_program/
 ├── core/                # Audio processing, scaling, matrix control
 │   ├── audio.py         # Capture and bounded FFT-analysis worker
 │   ├── analysis_plan.py # Compiled FFT/projection configuration
-│   └── scaling.py       # Normalization and temporal smoothing
+│   └── scaling.py       # Per-layer auto level, gain, smoothing, peaks (seconds)
 ├── themes/              # Color themes
 ├── visualizers/         # Display modes
 │   └── bars_unified.py  # Direct-canvas bars visualizer

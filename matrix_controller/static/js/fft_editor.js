@@ -63,6 +63,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   let contextKey = ''; // the bin context the page last drew
   let refreshFrame = 0;
   let submitCount = 0; // so a preset reply that outlived a submit is dropped
+  let applyNote = null; // {uid, text} after an apply-to-all copy (D-018)
 
   // ---- Analyzer row (D-065) -------------------------------------------------
 
@@ -467,6 +468,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     const down = h('button', {type: 'button', className: 'icon-button', 'aria-label': 'Move down'}, '▼');
     const remove = h('button', {type: 'button', className: 'icon-button danger-text', 'aria-label': 'Remove layer'}, '✕');
     const layerError = h('p', {className: 'field-error', role: 'alert', hidden: true});
+    const copyNote = h('p', {className: 'note', role: 'status', hidden: true});
 
     const nameField = createField(
       // No input maxLength: browsers count UTF-16 units; nameError counts characters.
@@ -476,10 +478,19 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       {onInput: edited},
     );
     const fields = new Map();
+    const copyButtons = new Map(); // field name -> its apply-to-all button (D-018)
     let points = null;
     const groups = [];
     const body = h('div', {className: 'layer-body', id: bodyId, hidden: true},
       h('div', {className: 'fields'}, nameField.element), layerError);
+    const addCopyButton = (fieldElement, field) => {
+      const label = field.label || field.name;
+      const button = h('button', {type: 'button', className: 'button secondary small apply-all',
+        title: `Copy this ${label} into every other layer`, 'aria-label': `Apply ${label} to all layers`}, 'All layers');
+      button.addEventListener('click', () => copyToAll(uid, field.name));
+      fieldElement.querySelector('.field-head').append(button);
+      copyButtons.set(field.name, button);
+    };
     for (const group of fft.settingGroups(descriptor)) {
       const container = h('div', {className: 'fields'});
       const heading = h('h3', {className: 'subsection-title'}, group.label);
@@ -487,10 +498,12 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         if (field.type === 'points') {
           points = createPointsEditor(field, uid);
           points.write(layer.settings?.[field.name]);
+          addCopyButton(points.element, field);
           container.append(points.element);
         } else {
           const control = createField(fft.settingParameter(field), layer.settings?.[field.name], {onInput: edited});
           fields.set(field.name, control);
+          addCopyButton(control.element, field);
           container.append(control.element);
         }
       }
@@ -509,7 +522,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     const row = {
       uid, layer_type: layer.layer_type, analyzer_id: layer.analyzer_id, descriptor, extraSettings,
       element, handle, title, unsent, visibleInput, chevron, summary, up, down, remove, body, layerError,
-      nameField, fields, points, groups, graph, saver, graphGood: null,
+      copyNote, nameField, fields, copyButtons, points, groups, graph, saver, graphGood: null,
     };
     title.addEventListener('click', () => setOpen(openUid === uid ? null : uid));
     chevron.addEventListener('click', () => setOpen(openUid === uid ? null : uid));
@@ -960,6 +973,35 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
 
   function edited() {
     serverError = null;
+    applyNote = null;
+    refresh();
+  }
+
+  // Apply to all (D-018, D-029): a draft edit, so nothing is sent until submit and
+  // the receiving layers show unsent. A field with an error isn't copied.
+  function copyToAll(uid, name) {
+    const draft = readDraft();
+    const own = draft.errors.get(uid) || {};
+    if (Object.keys(own).some(key => key === name || key.startsWith(`${name}[`))) return;
+    const {changes} = fft.applyToAll(draft.layers, uid, name, descriptorOf, backend);
+    for (const change of changes) {
+      const row = rows.get(change.uid);
+      const field = (row?.descriptor?.fields || []).find(item => item.name === name);
+      if (field?.type === 'points') row.points.write(change.to);
+      else row?.fields.get(name)?.write(change.to);
+    }
+    const source = rows.get(uid);
+    const label = (source?.descriptor?.fields || []).find(item => item.name === name)?.label || name;
+    // The note sits in the copied field, beside the button that was pressed.
+    source?.copyButtons.get(name)?.closest('.field')?.append(source.copyNote);
+    const count = changes.length;
+    serverError = null;
+    applyNote = {
+      uid,
+      text: count
+        ? `Copied ${label} into ${count} other ${count === 1 ? 'layer' : 'layers'}. Send to apply.`
+        : `Every other layer already has this ${label}.`,
+    };
     refresh();
   }
 
@@ -1071,6 +1113,10 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       row.remove.disabled = busy;
       row.layerError.textContent = rowMessage;
       row.layerError.hidden = !rowMessage;
+      const copyText = applyNote?.uid === layer.uid ? applyNote.text : '';
+      row.copyNote.textContent = copyText;
+      row.copyNote.hidden = !copyText;
+      const peers = draft.layers.some(other => other.uid !== layer.uid && other.layer_type === layer.layer_type);
 
       row.nameField.setChanged(Boolean(base) && name !== base.layer_id);
       row.nameField.setError(errors.layer_id || null);
@@ -1083,6 +1129,11 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         // A field with an error shows even when its condition hides it.
         const shown = fft.isShown(field, layer.settings) || Object.keys(fieldErrors).length > 0;
         shownByName[field.name] = shown;
+        const copyButton = row.copyButtons.get(field.name);
+        if (copyButton) {
+          copyButton.hidden = !peers;
+          copyButton.disabled = busy || locked.has(field.name) || Object.keys(fieldErrors).length > 0;
+        }
         const changed = Boolean(base) && !sameJson(base.settings?.[field.name], layer.settings[field.name]);
         if (field.type === 'points') {
           row.points.setRange(layer.settings.min_freq, layer.settings.max_freq);

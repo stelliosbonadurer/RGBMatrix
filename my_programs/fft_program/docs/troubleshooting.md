@@ -98,8 +98,7 @@ Common issues and their solutions.
 2. **Lower noise_floor:** Try `0.0` to see raw signal
 3. **Increase sensitivity:**
    - Raise the layer's Gain
-   - Decrease `fixed_scale_max` if using fixed scale
-   - Decrease `headroom_multiplier` for RMS scale
+   - Lower the layer's Headroom (auto level on)
 4. **Check audio levels** - is the mic picking up sound?
 
 ### Bars Always at Maximum
@@ -111,8 +110,7 @@ Common issues and their solutions.
 1. **Increase noise_floor:** Try `0.3` or higher
 2. **Increase scaling:**
    - Lower the layer's Gain
-   - Increase `fixed_scale_max`
-   - Increase `headroom_multiplier`
+   - Raise the layer's Headroom (auto level on)
 3. **Check for clipping** in audio input
 
 ### Delayed / Laggy Response
@@ -122,9 +120,9 @@ Common issues and their solutions.
 **Solutions:**
 
 1. **Reduce block_size:** `256` instead of `512`
-2. **Reduce rolling_window_seconds:** `1.5` instead of `3`
-3. **Increase attack_speed:** `0.2` or higher
-4. **Reduce smoothing rise:** `0.9` for more instant response
+2. **Lower the layer's Attack and Release:** for example `1` s, so auto level
+   adapts sooner
+3. **Lower the layer's Rise (s):** `0` is instant
 
 ### Bars Too Twitchy / Noisy
 
@@ -133,9 +131,9 @@ Common issues and their solutions.
 **Solutions:**
 
 1. **Increase noise_floor:** Filter out background noise
-2. **Decrease rise smoothing:** `0.6` for smoother movement
-3. **Increase rolling_window_seconds:** More stable scaling
-4. **Decrease attack_speed:** Less reactive to sudden sounds
+2. **Raise the layer's Rise (s):** for example `0.05` for smoother movement
+3. **Raise the layer's Attack and Release:** steadier scaling, less reactive to
+   sudden sounds
 
 ---
 

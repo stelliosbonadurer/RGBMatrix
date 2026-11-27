@@ -17,7 +17,7 @@ fft_program/
 │   ├── analysis_plan.py   # Immutable FFT/projection plan compilation
 │   ├── audio.py            # Capture and bounded analysis worker
 │   ├── interfaces.py       # Narrow pipeline contracts
-│   ├── scaling.py          # Normalization, smoothing, peak tracking
+│   ├── scaling.py          # Auto level, gain, smoothing, peak tracking (seconds)
 │   └── matrix_app.py       # Native LED-matrix boundary
 ├── themes/                  # Theme implementations and registry
 └── visualizers/
@@ -39,7 +39,7 @@ analysis worker
 
 main/render loop (continuous; never waits for the worker)
     ├── lease latest complete 64-bin result
-    ├── adaptive scaling -> rise/fall smoothing -> peak tracking
+    ├── per layer: auto level -> gain -> rise/fall smoothing -> peak tracking
     ├── release result slot
     ├── direct native-canvas drawing -> optional peak overlay
     └── SwapOnVSync -> configured post-frame sleep
@@ -49,7 +49,7 @@ The callback does no FFT work. Its transport is latest-value and lossy by design
 multiple callbacks may be coalesced while analysis is busy, so work cannot accumulate.
 The worker similarly publishes only its newest complete 64-bin frame. Rendering keeps
 firing at its existing cadence and may reuse a stale analysis result; this is required
-for the scaler's attack/decay and peak behavior to continue smoothly.
+for each layer's smoothing and peak behavior to continue smoothly.
 
 ## Fixed Result Transport
 
@@ -78,13 +78,34 @@ until the new epoch publishes, preserving continuous render cadence.
 
 ## Scaling and Temporal State
 
-`ScalingProcessor.process()` consumes the latest 64-bin magnitudes and returns
-normalized bars, stateful smoothed bars, and falling peaks. The default mode tracks a
-rolling RMS of each frame's largest bar and moves `current_scale` toward RMS times
-headroom. Fixed, rolling-max, and instant-normalization modes also exist.
+Each layer owns one `ScalingProcessor`. `process(bars, now)` consumes the latest
+64-bin magnitudes and returns normalized bars, smoothed bars, and peaks, all
+preallocated arrays with the same identity on every call.
 
-Scaling, attack/decay smoothing, and peaks deliberately remain in the continuously
-running render thread. They are temporal display behavior, not merely FFT projection.
+- **Auto level** (per layer, on by default) is one asymmetric envelope on the square
+  of each frame's largest bar: it rises with `auto_level_attack_seconds` and falls
+  with `auto_level_release_seconds`. The divisor is `sqrt(envelope) × headroom`, never
+  below 0.05. With auto level off the divisor is the constant 0.3 and Gain alone sets
+  the size. The envelope keeps tracking while auto level is off. A fresh layer starts
+  the envelope at its first frame's level.
+- **Gain** multiplies after the divisor.
+- **Rise/fall smoothing and peaks** are in seconds: rise and fall are time constants,
+  peaks hold for `peak_hold_seconds` and then fall at `peak_fall_rate` panel heights
+  per second.
+
+Every time constant becomes `1 − exp(−dt/τ)` per call, where dt is the monotonic-clock
+interval since the layer's previous call, clamped to 0.25 s after a stall (a fresh
+layer's first call advances 1/86 s). So the response is the same at any frame rate.
+One exception: while a bar glides down slowly, a peak marker re-catches it only on a
+call, so the phase of its hold-and-fall cycle depends on the call rate.
+
+When a structure update keeps a layer ID, the render thread copies that layer's
+envelope, bars, peaks, hold timers, and last call time into the new layer as it
+promotes the new plan (`ActiveLayerPlan.begin_frame`). A new ID starts fresh.
+
+Scaling, smoothing, and peaks deliberately remain in the continuously running render
+thread. They are temporal display behavior, not merely FFT projection, and they never
+split a shared projection.
 
 ## Rendering
 

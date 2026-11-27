@@ -116,6 +116,26 @@ test('the catalog and a snapshot shaped like it reconcile unchanged', () => {
   assert.deepEqual(result.layers, structure.layers);
 });
 
+test('a layer saved before seconds-based timing drops its per-call keys and fills the new ones (fft-level-controls D-016, D-023)', () => {
+  const structure = catalog.structure;
+  const current = structure.layers[0].settings;
+  const retired = {peak_fall_speed: 0.2, peak_hold_frames: 20, smoothing_rise: 0.6, smoothing_fall: 0.3};
+  const renamed = ['peak_hold_seconds', 'peak_fall_rate', 'smoothing_rise_seconds', 'smoothing_fall_seconds',
+    'auto_level', 'auto_level_headroom', 'auto_level_attack_seconds', 'auto_level_release_seconds'];
+  const old = Object.fromEntries(Object.entries(current).filter(([name]) => !renamed.includes(name)));
+  const saved = {...structure.layers[0], settings: {...old, ...retired, gain: 2}};
+  const content = {source: 'usb-mic', backend: structure.output_backend, layers: [saved]};
+  const result = presets.reconcile(content, structure, {choices: ['usb-mic'], default: 'usb-mic'});
+  assert.deepEqual([...result.changes.dropped].sort(), Object.keys(retired).sort());
+  const labels = new Map(fft.descriptorFor(structure, 'current-bars').fields.map(field => [field.name, field.label]));
+  assert.deepEqual([...result.changes.filled].sort(), renamed.map(name => labels.get(name)).sort());
+  const settings = result.layers[0].settings;
+  for (const name of renamed) assert.deepEqual(settings[name], current[name]); // the defaults
+  assert.equal(settings.gain, 2); // kept
+  const note = presets.reconcileNote('Warm bass', result.changes);
+  assert.match(note, /smoothing_rise/);
+});
+
 test('Default is the catalog layer, output, and source (D-070)', () => {
   const preset = presets.defaultPreset(catalog, 'usb-mic');
   assert.equal(preset.preset_id, presets.DEFAULT_ID);

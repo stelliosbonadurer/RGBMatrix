@@ -90,8 +90,8 @@ class OverflowSettings:
 class PeakSettings:
     """Peak indicator configuration."""
     enabled: bool = False      # True = show floating peak dots above bars
-    fall_speed: float = 0.08   # How fast peaks fall (0.01 = slow, 0.2 = fast)
-    hold_frames: int = 8       # Frames to hold peak before falling
+    hold_seconds: float = 0.09 # Seconds a peak holds before falling
+    fall_rate: float = 7.0     # Fall speed after the hold, in panel heights per second
     color_mode: Literal['white', 'bar', 'contrast', 'peak'] = 'contrast'
 
 
@@ -144,30 +144,19 @@ def _sensitivity_from_json(data: dict) -> SensitivitySettings:
 
 @dataclass
 class ScalingSettings:
-    """Audio scaling/normalization configuration."""
-    # Only ONE of these should be True, or all False for instant auto-normalize
-    use_fixed_scale: bool = False      # Fixed sensitivity
-    use_rolling_rms_scale: bool = True # Scale to average energy + headroom (RECOMMENDED)
-    use_rolling_max_scale: bool = False # Scale to max in window
-    
-    fixed_scale_max: float = 0.3       # For fixed scale: divide signal by this
-    rolling_window_seconds: float = 3  # Seconds of history for RMS/max calculation
-    headroom_multiplier: float = 2.5   # RMS multiplier for headroom
-    attack_speed: float = 0.1          # How fast scale adapts to LOUDER audio
-    decay_speed: float = 0.06          # How fast scale adapts to QUIETER audio
-    min_scale: float = 0.05            # Minimum scale to prevent infinite gain
-    initial_scale: float = 0.25        # Starting scale (higher = quieter start, prevents initial maxout)
+    """Per-layer level: auto level and gain (fft-level-controls M2)."""
+    auto_level: bool = True            # Off: divide by a fixed reference instead
+    headroom: float = 2.5              # Scale = level x headroom; higher = shorter bars
+    attack_seconds: float = 5.5        # Time constant for adapting to LOUDER audio
+    release_seconds: float = 2.75      # Time constant for adapting to QUIETER audio
     gain: float = 1.5                  # Multiplies bar height after scaling (2 = twice as tall)
 
 
 @dataclass
 class SmoothingSettings:
-    """Bar smoothing configuration."""
-    rise: float = 0.4   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
-    fall: float = 0.1  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
-    
-    #rise: float = 0.55   # How fast bars rise (0.3 = smooth/slow, 1.0 = instant)
-    #fall: float = 0.125  # How fast bars fall (0.2 = slow decay, 0.8 = fast drop)
+    """Bar smoothing configuration, as time constants (0 = instant)."""
+    rise_seconds: float = 0.023  # Seconds to rise toward a louder value
+    fall_seconds: float = 0.11   # Seconds to fall toward a quieter value
 
 
 @dataclass

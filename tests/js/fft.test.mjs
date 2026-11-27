@@ -39,8 +39,9 @@ test('the catalog has the shape the page reads', () => {
   assert.deepEqual(fft.layerTypes(structure).map(item => item.layer_type), ['current-bars']);
   const descriptor = fft.descriptorFor(structure, 'current-bars');
   const groups = fft.settingGroups(descriptor);
-  assert.deepEqual(groups.map(group => group.label), ['Range & weighting', 'Look', 'Peaks', 'Motion', 'Dynamic theme']);
-  assert.deepEqual(groups[0].fields.map(field => field.label), ['Min Hz', 'Max Hz', 'Noise floor', 'Weighting points', 'Gain']);
+  assert.deepEqual(groups.map(group => group.label), ['Range & weighting', 'Level', 'Look', 'Peaks', 'Motion', 'Dynamic theme']);
+  assert.deepEqual(groups[0].fields.map(field => field.label), ['Min Hz', 'Max Hz', 'Noise floor', 'Weighting points']);
+  assert.deepEqual(groups[1].fields.map(field => field.label), ['Gain', 'Auto level', 'Headroom', 'Attack (s)', 'Release (s)']);
   // The default layer is every descriptor default.
   assert.deepEqual(structure.layers[0].settings, fft.defaultSettings(descriptor));
 });
@@ -148,6 +149,38 @@ test('a constrained backend sets and locks its fields; switching back restores t
   const afterSend = fft.switchBackend(locked.layers, descriptorOf, {}, 'fast-path');
   assert.deepEqual(afterSend.layers[0].settings.tint, 'blue');
   assert.deepEqual(afterSend.changes, []);
+});
+
+test('apply to all copies one value into every other same-type layer, not into fixed fields (fft-level-controls D-018, D-029)', () => {
+  const other = {...madeUp, fields: [...madeUp.fields]};
+  const descriptorOf = type => (type === 'other' ? other : madeUp);
+  const from = layer('from', {width: 5, tint: 'cycle'});
+  const same = layer('same', {width: 2});
+  const hidden = layer('hidden', {width: 3}, {visible: false});
+  const already = layer('already', {width: 5});
+  const foreign = {...layer('foreign', {width: 1}), layer_type: 'other'};
+  const layers = [from, same, hidden, already, foreign];
+
+  const width = fft.applyToAll(layers, from.uid, 'width', descriptorOf, 'fast-path');
+  assert.deepEqual(width.changes.map(change => [change.uid, change.from, change.to]),
+    [[same.uid, 2, 5], [hidden.uid, 3, 5]]);
+  assert.equal(width.targets, 3); // same, hidden, already; never another type
+  assert.deepEqual(layers.map(item => item.settings.width), [5, 2, 3, 5, 1]); // not mutated
+
+  // A field the backend fixes is never copied.
+  const fixed = fft.applyToAll(layers, from.uid, 'tint', descriptorOf, 'slow-path');
+  assert.deepEqual([fixed.changes, fixed.targets], [[], 0]);
+  const free = fft.applyToAll(layers, from.uid, 'tint', descriptorOf, 'fast-path');
+  assert.equal(free.changes.length, 3);
+
+  // Values are copies, so editing one layer later can't change another.
+  const points = {...madeUp, fields: [...madeUp.fields, {name: 'marks', type: 'points', default: []}]};
+  const a = layer('a', {marks: [{position: 0, weight: 2}]});
+  const b = layer('b', {marks: []});
+  const copied = fft.applyToAll([a, b], a.uid, 'marks', () => points, 'fast-path');
+  assert.deepEqual(copied.changes[0].to, [{position: 0, weight: 2}]);
+  assert.notEqual(copied.changes[0].to, a.settings.marks);
+  assert.deepEqual(fft.applyToAll([a], a.uid, 'marks', () => points, 'fast-path'), {changes: [], targets: 0});
 });
 
 test('a constraint removed from the descriptor disappears from the page', () => {

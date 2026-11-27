@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 import copy
 from dataclasses import dataclass
 import math
+import time
 from typing import Any, TypeAlias
 
 import numpy as np  # type: ignore
@@ -62,6 +63,17 @@ _ORDERED_PLAN_CONSTRUCTION_TOKEN = object()
 GAIN_MIN = 0.1
 GAIN_MAX = 10.0
 GAIN_DEFAULT = 1.5
+# Auto level and motion bounds and defaults (fft-level-controls M2, D-023, D-025).
+# Defaults approximate the retired per-call constants at about 86 calls/s.
+HEADROOM_MIN, HEADROOM_MAX, HEADROOM_DEFAULT = 1.0, 10.0, 2.5
+AUTO_LEVEL_SECONDS_MIN, AUTO_LEVEL_SECONDS_MAX = 0.01, 30.0
+ATTACK_SECONDS_DEFAULT = 5.5
+RELEASE_SECONDS_DEFAULT = 2.75
+SMOOTHING_SECONDS_MAX = 5.0
+RISE_SECONDS_DEFAULT = 0.023
+FALL_SECONDS_DEFAULT = 0.11
+PEAK_HOLD_SECONDS_MAX, PEAK_HOLD_SECONDS_DEFAULT = 10.0, 0.09
+PEAK_FALL_RATE_MAX, PEAK_FALL_RATE_DEFAULT = 50.0, 7.0
 CURRENT_BARS_SETTING_NAMES = frozenset({
     "theme",
     "gradient",
@@ -71,11 +83,15 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "shadow_enabled",
     "peak_enabled",
     "peak_color_mode",
-    "peak_fall_speed",
-    "peak_hold_frames",
+    "peak_hold_seconds",
+    "peak_fall_rate",
     "gain",
-    "smoothing_rise",
-    "smoothing_fall",
+    "auto_level",
+    "auto_level_headroom",
+    "auto_level_attack_seconds",
+    "auto_level_release_seconds",
+    "smoothing_rise_seconds",
+    "smoothing_fall_seconds",
     "dynamic_cycle_speed",
     "dynamic_frozen",
     "min_freq",
@@ -234,6 +250,22 @@ class OrderedLayerPlan:
             layer.draw(canvas)
         self._end_draw(canvas)
 
+    def adopt_state_from(self, previous: "OrderedLayerPlan") -> None:
+        """Copy each surviving layer ID's presentation state from ``previous``.
+
+        Runs on the render thread between frames, when nothing else reads either
+        plan (D-007, D-028). A layer ID new to this plan keeps its fresh state.
+        """
+
+        if previous is self:
+            return
+        old_by_id = {layer.layer_id: layer for layer in previous._layers}
+        for layer in self._layers:
+            old = old_by_id.get(layer.layer_id)
+            adopt = getattr(layer.presentation_state, "adopt_state", None)
+            if old is not None and adopt is not None:
+                adopt(old.presentation_state)
+
 
 class ActiveLayerPlan:
     """Render-thread owner for complete plan replacement at a frame boundary."""
@@ -262,10 +294,14 @@ class ActiveLayerPlan:
         self._pending = candidate
 
     def begin_frame(self) -> OrderedLayerPlan:
-        """Promote a staged candidate only as the render thread starts a frame."""
+        """Promote a staged candidate only as the render thread starts a frame.
+
+        The candidate takes over the state of the layers that survive (D-007).
+        """
 
         pending = self._pending
         if pending is not None:
+            pending.adopt_state_from(self._active)
             self._active = pending
             self._pending = None
         return self._active
@@ -367,6 +403,7 @@ class _CurrentBarsPresentation:
     """Mutable scaling, peak, and visual state owned by the current bars layer."""
 
     __slots__ = (
+        "clock",
         "peaks",
         "scaler",
         "settings",
@@ -379,19 +416,23 @@ class _CurrentBarsPresentation:
         scaler: ScalingProcessor,
         visualizer: Any,
         settings: Any,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.scaler = scaler
         self.visualizer = visualizer
         self.settings = settings
+        self.clock = clock
+        # The scaler's own arrays: stable identities for every frame (D-028).
         self.smoothed = scaler.smoothed_bars
         self.peaks = scaler.peak_heights
 
     def prepare(self, magnitudes: np.ndarray) -> None:
-        _normalized, self.smoothed, self.peaks = self.scaler.process(
-            magnitudes,
-            peak_hold_frames=self.settings.peak.hold_frames,
-            peak_fall_speed=self.settings.peak.fall_speed,
-        )
+        self.scaler.process(magnitudes, self.clock())
+
+    def adopt_state(self, previous: object) -> None:
+        """Keep a surviving layer's level, bars, and peaks (D-007)."""
+        if isinstance(previous, _CurrentBarsPresentation):
+            self.scaler.adopt_state(previous.scaler)
 
     def smoothed_bars(self) -> np.ndarray:
         return self.smoothed
@@ -455,11 +496,15 @@ def current_bars_settings_from_runtime(
         "shadow_enabled": bool(settings.shadow.enabled),
         "peak_enabled": bool(settings.peak.enabled),
         "peak_color_mode": str(settings.peak.color_mode),
-        "peak_fall_speed": float(settings.peak.fall_speed),
-        "peak_hold_frames": int(settings.peak.hold_frames),
+        "peak_hold_seconds": float(settings.peak.hold_seconds),
+        "peak_fall_rate": float(settings.peak.fall_rate),
         "gain": float(settings.scaling.gain),
-        "smoothing_rise": float(settings.smoothing.rise),
-        "smoothing_fall": float(settings.smoothing.fall),
+        "auto_level": bool(settings.scaling.auto_level),
+        "auto_level_headroom": float(settings.scaling.headroom),
+        "auto_level_attack_seconds": float(settings.scaling.attack_seconds),
+        "auto_level_release_seconds": float(settings.scaling.release_seconds),
+        "smoothing_rise_seconds": float(settings.smoothing.rise_seconds),
+        "smoothing_fall_seconds": float(settings.smoothing.fall_seconds),
         "dynamic_cycle_speed": float(getattr(theme, "cycle_speed", 0.06)),
         "dynamic_frozen": bool(getattr(theme, "frozen", False)),
         "min_freq": float(settings.frequency.active_min_freq),
@@ -474,12 +519,14 @@ def current_bars_settings_from_runtime(
 # value and is still sent; the page only draws what these say.
 CURRENT_BARS_SETTING_GROUPS = (
     {"id": "range", "label": "Range & weighting"},
+    {"id": "level", "label": "Level"},
     {"id": "look", "label": "Look"},
     {"id": "peaks", "label": "Peaks"},
     {"id": "motion", "label": "Motion"},
     {"id": "dynamic", "label": "Dynamic theme"},
 )
 _WHEN_PEAKS = {"field": "peak_enabled", "values": [True]}
+_WHEN_AUTO_LEVEL = {"field": "auto_level", "values": [True]}
 _WHEN_DYNAMIC_THEME = {"field": "theme", "values": ["dynamic", "dynamic_lateral_gradient"]}
 
 
@@ -519,20 +566,24 @@ def current_bars_settings_descriptor() -> dict[str, object]:
              "shown_when": dict(_WHEN_PEAKS),
              "type": "choice", "choices": ["white", "bar", "contrast", "peak"], "default": "contrast",
              "help": "Peak marker color: white, the bar's color, a contrasting color, or the theme's peak color."},
-            {"name": "peak_fall_speed", "label": "Peak fall speed", "group": "peaks",
+            {"name": "peak_hold_seconds", "label": "Peak hold (s)", "group": "peaks",
              "shown_when": dict(_WHEN_PEAKS),
-             "type": "number", "min": 0.0, "max": 1.0, "default": 0.08,
-             "help": "How fast a peak marker drops after its hold ends."},
-            {"name": "peak_hold_frames", "label": "Peak hold (frames)", "group": "peaks",
+             "type": "number", "min": 0.0, "max": PEAK_HOLD_SECONDS_MAX,
+             "default": PEAK_HOLD_SECONDS_DEFAULT,
+             "help": "Seconds a peak marker stays put before falling. Higher holds longer."},
+            {"name": "peak_fall_rate", "label": "Peak fall (heights/s)", "group": "peaks",
              "shown_when": dict(_WHEN_PEAKS),
-             "type": "integer", "min": 0, "max": 600, "default": 8,
-             "help": "Frames a peak marker stays put before falling."},
-            {"name": "smoothing_rise", "label": "Rise", "group": "motion",
-             "type": "number", "min": 0.0, "max": 1.0, "default": 0.4,
-             "help": "How fast bars rise toward a louder value (1 is instant)."},
-            {"name": "smoothing_fall", "label": "Fall", "group": "motion",
-             "type": "number", "min": 0.0, "max": 1.0, "default": 0.1,
-             "help": "How fast bars fall toward a quieter value (1 is instant)."},
+             "type": "number", "min": 0.0, "max": PEAK_FALL_RATE_MAX,
+             "default": PEAK_FALL_RATE_DEFAULT,
+             "help": "How fast a peak marker drops after its hold, in panel heights per second. Higher falls faster; 0 never falls."},
+            {"name": "smoothing_rise_seconds", "label": "Rise (s)", "group": "motion",
+             "type": "number", "min": 0.0, "max": SMOOTHING_SECONDS_MAX,
+             "default": RISE_SECONDS_DEFAULT,
+             "help": "Time constant for bars rising toward a louder value, in seconds. Lower is snappier; 0 is instant."},
+            {"name": "smoothing_fall_seconds", "label": "Fall (s)", "group": "motion",
+             "type": "number", "min": 0.0, "max": SMOOTHING_SECONDS_MAX,
+             "default": FALL_SECONDS_DEFAULT,
+             "help": "Time constant for bars falling toward a quieter value, in seconds. Higher leaves a longer tail; 0 is instant."},
             {"name": "dynamic_cycle_speed", "label": "Cycle speed", "group": "dynamic",
              "shown_when": dict(_WHEN_DYNAMIC_THEME),
              "type": "number", "min": 0.0, "max": 5.0, "default": 0.06,
@@ -565,9 +616,27 @@ def current_bars_settings_descriptor() -> dict[str, object]:
                  for position, weight in DEFAULT_WEIGHT_POINTS
              ],
              "help": "Frequency weighting curve: linear between points, flat beyond the first and last. Points are sorted by position, and two points can't share one."},
-            {"name": "gain", "label": "Gain", "group": "range",
+            {"name": "gain", "label": "Gain", "group": "level",
              "type": "number", "min": GAIN_MIN, "max": GAIN_MAX, "default": GAIN_DEFAULT,
-             "help": "Multiplies bar height after automatic scaling: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."},
+             "help": "Multiplies bar height after auto level: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."},
+            {"name": "auto_level", "label": "Auto level", "group": "level",
+             "type": "boolean", "default": True,
+             "help": "On: bar height follows the music's recent loudness. Off: a fixed reference, so quiet music stays short and loud music tall; set the size with Gain."},
+            {"name": "auto_level_headroom", "label": "Headroom", "group": "level",
+             "shown_when": dict(_WHEN_AUTO_LEVEL),
+             "type": "number", "min": HEADROOM_MIN, "max": HEADROOM_MAX,
+             "default": HEADROOM_DEFAULT,
+             "help": "Room above the recent loudness before a bar reaches full height. Higher gives shorter bars and fewer that fill the panel."},
+            {"name": "auto_level_attack_seconds", "label": "Attack (s)", "group": "level",
+             "shown_when": dict(_WHEN_AUTO_LEVEL),
+             "type": "number", "min": AUTO_LEVEL_SECONDS_MIN, "max": AUTO_LEVEL_SECONDS_MAX,
+             "default": ATTACK_SECONDS_DEFAULT,
+             "help": "Time constant for adapting to louder music, in seconds. Lower reins in a sudden loud passage sooner; higher lets it fill the panel longer."},
+            {"name": "auto_level_release_seconds", "label": "Release (s)", "group": "level",
+             "shown_when": dict(_WHEN_AUTO_LEVEL),
+             "type": "number", "min": AUTO_LEVEL_SECONDS_MIN, "max": AUTO_LEVEL_SECONDS_MAX,
+             "default": RELEASE_SECONDS_DEFAULT,
+             "help": "Time constant for adapting to quieter music, in seconds. Lower brings a quiet passage back up sooner; higher keeps it short longer."},
         ],
         "backend_constraints": {
             PILLOW_BULK_OUTPUT_PATH: {
@@ -638,7 +707,7 @@ def normalize_current_bars_settings(
         raise LayerSettingsError("theme is not registered", field="theme")
     for name in (
         "gradient", "overflow", "bars", "full", "shadow_enabled",
-        "peak_enabled", "dynamic_frozen",
+        "peak_enabled", "dynamic_frozen", "auto_level",
     ):
         if not isinstance(normalized[name], bool):
             raise LayerSettingsError(f"{name} must be a boolean", field=name)
@@ -649,11 +718,22 @@ def normalize_current_bars_settings(
         raise LayerSettingsError(
             "peak_color_mode is unsupported", field="peak_color_mode"
         )
-    normalized["peak_fall_speed"] = _number(normalized, "peak_fall_speed", 0.0, 1.0)
-    normalized["peak_hold_frames"] = _number(normalized, "peak_hold_frames", 0, 600, integer=True)
+    normalized["peak_hold_seconds"] = _number(
+        normalized, "peak_hold_seconds", 0.0, PEAK_HOLD_SECONDS_MAX
+    )
+    normalized["peak_fall_rate"] = _number(
+        normalized, "peak_fall_rate", 0.0, PEAK_FALL_RATE_MAX
+    )
     normalized["gain"] = _number(normalized, "gain", GAIN_MIN, GAIN_MAX)
-    normalized["smoothing_rise"] = _number(normalized, "smoothing_rise", 0.0, 1.0)
-    normalized["smoothing_fall"] = _number(normalized, "smoothing_fall", 0.0, 1.0)
+    normalized["auto_level_headroom"] = _number(
+        normalized, "auto_level_headroom", HEADROOM_MIN, HEADROOM_MAX
+    )
+    for name in ("auto_level_attack_seconds", "auto_level_release_seconds"):
+        normalized[name] = _number(
+            normalized, name, AUTO_LEVEL_SECONDS_MIN, AUTO_LEVEL_SECONDS_MAX
+        )
+    for name in ("smoothing_rise_seconds", "smoothing_fall_seconds"):
+        normalized[name] = _number(normalized, name, 0.0, SMOOTHING_SECONDS_MAX)
     normalized["dynamic_cycle_speed"] = _number(normalized, "dynamic_cycle_speed", 0.0, 5.0)
     normalized["min_freq"] = _number(normalized, "min_freq", 1.0, 24000.0)
     normalized["max_freq"] = _number(normalized, "max_freq", 1.0, 24000.0)
@@ -784,11 +864,15 @@ def _settings_for_layer(
     settings.shadow.enabled = normalized["shadow_enabled"]
     settings.peak.enabled = normalized["peak_enabled"]
     settings.peak.color_mode = normalized["peak_color_mode"]
-    settings.peak.fall_speed = normalized["peak_fall_speed"]
-    settings.peak.hold_frames = normalized["peak_hold_frames"]
+    settings.peak.hold_seconds = normalized["peak_hold_seconds"]
+    settings.peak.fall_rate = normalized["peak_fall_rate"]
     settings.scaling.gain = normalized["gain"]
-    settings.smoothing.rise = normalized["smoothing_rise"]
-    settings.smoothing.fall = normalized["smoothing_fall"]
+    settings.scaling.auto_level = normalized["auto_level"]
+    settings.scaling.headroom = normalized["auto_level_headroom"]
+    settings.scaling.attack_seconds = normalized["auto_level_attack_seconds"]
+    settings.scaling.release_seconds = normalized["auto_level_release_seconds"]
+    settings.smoothing.rise_seconds = normalized["smoothing_rise_seconds"]
+    settings.smoothing.fall_seconds = normalized["smoothing_fall_seconds"]
     return settings
 
 
@@ -823,8 +907,12 @@ def compile_current_bars_layer_plan(
     settings: Any,
     width: int,
     height: int,
+    clock: Callable[[], float] = time.monotonic,
 ) -> OrderedLayerPlan:
-    """Compile every layer's presentation objects and the selected executor."""
+    """Compile every layer's presentation objects and the selected executor.
+
+    ``clock`` gives each layer's scaler its call times in seconds (D-026).
+    """
 
     if any(layer.layer_type != CURRENT_BARS_LAYER_TYPE for layer in graph.layers):
         raise LayerPlanCompilationError("current bars compiler received another layer type")
@@ -870,11 +958,12 @@ def compile_current_bars_layer_plan(
             ScalingProcessor(
                 scaling_settings=layer_settings.scaling,
                 smoothing_settings=layer_settings.smoothing,
+                peak_settings=layer_settings.peak,
                 num_bins=width,
-                frame_rate=1.0 / layer_settings.audio.sleep_delay,
             ),
             layer_visualizer,
             layer_settings,
+            clock,
         )
         if output_backend == DIRECT_OUTPUT_PATH:
             executor = _DirectBarsExecutor(presentation, height)

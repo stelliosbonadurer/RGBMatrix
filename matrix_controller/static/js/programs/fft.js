@@ -229,6 +229,28 @@ export function switchBackend(layers, descriptorOf, stash, to) {
   return {layers: nextLayers, stash: nextStash, changes};
 }
 
+// Apply to all layers (fft-level-controls D-018, D-029): layer `fromUid`'s value
+// for `name` goes into every other layer of the same type in the draft, hidden
+// ones included, except where `backend` fixes the field. Returns each value that
+// changes, [{uid, name, from, to}], and how many layers could take it.
+export function applyToAll(layers, fromUid, name, descriptorOf, backend) {
+  const source = layers.find(layer => layer.uid === fromUid);
+  const changes = [];
+  let targets = 0;
+  if (!source) return {changes, targets};
+  for (const layer of layers) {
+    if (layer.uid === fromUid || layer.layer_type !== source.layer_type) continue;
+    const descriptor = descriptorOf(layer.layer_type);
+    if (!(descriptor?.fields || []).some(field => field.name === name)) continue;
+    if (lockedNames(descriptor, backend).has(name)) continue;
+    targets += 1;
+    if (!sameJson(layer.settings[name], source.settings[name])) {
+      changes.push({uid: layer.uid, name, from: copy(layer.settings[name]), to: copy(source.settings[name])});
+    }
+  }
+  return {changes, targets};
+}
+
 // ---- Weighting points (D-021, D-060) ---------------------------------------
 
 export const sortedPoints = points => [...points].sort((a, b) => a.position - b.position);

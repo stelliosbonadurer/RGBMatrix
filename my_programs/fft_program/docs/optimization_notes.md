@@ -123,14 +123,20 @@ layer_ratio = j / height
 The numpy vectorization in `scaling.py` for smoothing and peak tracking was kept because:
 
 - It operates on arrays of 64 elements once per frame (not per pixel)
-- The vectorized operations (`np.where`, `np.maximum`) are genuinely faster than Python loops for this size
+- The vectorized operations are genuinely faster than Python loops for this size
 - These run once per frame, not thousands of times per frame
 
+Since fft-level-controls M2 they write into preallocated buffers (`out=`,
+`np.copyto(..., where=)`), so the scaler allocates no arrays per frame:
+
 ```python
-# This is fine - runs once per frame on 64 elements
-delta = normalized - self.smoothed_bars
-rates = np.where(delta > 0, self.smoothing.rise, self.smoothing.fall)
-self.smoothed_bars += delta * rates
+# Runs once per frame on 64 elements, into reused buffers
+np.subtract(normalized, self.smoothed_bars, out=delta)
+np.greater(delta, 0.0, out=mask)
+rates.fill(fall)
+np.copyto(rates, np.float32(rise), where=mask)
+np.multiply(delta, rates, out=delta)
+np.add(self.smoothed_bars, delta, out=self.smoothed_bars)
 ```
 
 ## Conclusion

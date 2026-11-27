@@ -414,9 +414,21 @@ def _scaler(settings: Settings, width: int) -> ScalingProcessor:
     return ScalingProcessor(
         settings.scaling,
         settings.smoothing,
+        settings.peak,
         width,
-        frame_rate=1.0 / settings.audio.sleep_delay,
     )
+
+
+class _StepClock:
+    """A monotonic clock that advances a fixed step per read."""
+
+    def __init__(self, step: float = 1.0 / 86.0) -> None:
+        self.step = step
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
 
 
 def _current_plan(
@@ -425,6 +437,7 @@ def _current_plan(
     backend: str,
     width: int,
     height: int,
+    clock=None,
 ):
     graph = compile_current_bars_graph(
         audio_settings=settings.audio,
@@ -446,6 +459,7 @@ def _current_plan(
         settings=settings,
         width=width,
         height=height,
+        clock=clock or _StepClock(),
     )
 
 
@@ -461,23 +475,22 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
             np.linspace(0.8, 0.1, width, dtype=np.float32),
         )
         analyzer = RecordingAnalyzer(raw_frames[0])
+        plan_clock = _StepClock()
+        legacy_clock = _StepClock()
         plan = _current_plan(
             planned_settings,
             analyzer,
             DIRECT_OUTPUT_PATH,
             width,
             height,
+            plan_clock,
         )
         legacy_canvas = PixelCanvas(width, height)
         planned_canvas = PixelCanvas(width, height)
 
         for raw in raw_frames:
             analyzer.result = raw
-            _normalized, smoothed, peaks = legacy_scaler.process(
-                raw,
-                peak_hold_frames=legacy_settings.peak.hold_frames,
-                peak_fall_speed=legacy_settings.peak.fall_speed,
-            )
+            _normalized, smoothed, peaks = legacy_scaler.process(raw, legacy_clock())
             legacy_visualizer.draw(legacy_canvas, smoothed, None)
             draw_peaks(
                 legacy_canvas,
@@ -523,11 +536,7 @@ class CurrentSceneEquivalenceTests(unittest.TestCase):
         legacy_canvas = BulkCanvas(width, height)
         planned_canvas = BulkCanvas(width, height)
 
-        _normalized, smoothed, _peaks = legacy_scaler.process(
-            raw,
-            peak_hold_frames=legacy_settings.peak.hold_frames,
-            peak_fall_speed=legacy_settings.peak.fall_speed,
-        )
+        _normalized, smoothed, _peaks = legacy_scaler.process(raw, _StepClock()())
         legacy_output.draw(legacy_canvas, smoothed, None)
         plan.prepare_frame()
         plan.draw_frame(planned_canvas)
@@ -602,7 +611,9 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
         # the descriptor alone.
         descriptor = current_bars_settings_descriptor()
         group_ids = [group["id"] for group in descriptor["groups"]]
-        self.assertEqual(group_ids, ["range", "look", "peaks", "motion", "dynamic"])
+        self.assertEqual(
+            group_ids, ["range", "level", "look", "peaks", "motion", "dynamic"]
+        )
         self.assertTrue(all(group["label"].strip() for group in descriptor["groups"]))
         labels = []
         for field in descriptor["fields"]:
@@ -628,8 +639,11 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
             {name: condition["field"] for name, condition in conditional.items()},
             {
                 "peak_color_mode": "peak_enabled",
-                "peak_fall_speed": "peak_enabled",
-                "peak_hold_frames": "peak_enabled",
+                "peak_hold_seconds": "peak_enabled",
+                "peak_fall_rate": "peak_enabled",
+                "auto_level_headroom": "auto_level",
+                "auto_level_attack_seconds": "auto_level",
+                "auto_level_release_seconds": "auto_level",
                 "dynamic_cycle_speed": "theme",
                 "dynamic_frozen": "theme",
             },

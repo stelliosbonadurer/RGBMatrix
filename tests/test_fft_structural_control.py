@@ -278,10 +278,16 @@ class StructureDocumentTests(unittest.TestCase):
             (one(settings={**settings, "gain": 10.5}), "invalid_value", "structure.layers[0].settings.gain"),
             (one(settings={**settings, "sensitivity_scalar": 1.0}), "invalid_value", "structure.layers[0].settings"),
             (one(settings={**settings, "overflow_multiplier": 1.5}), "invalid_value", "structure.layers[0].settings"),
-            (one(settings={**settings, "peak_hold_frames": True}), "invalid_value", "structure.layers[0].settings.peak_hold_frames"),
-            (one(settings={**settings, "smoothing_rise": float("nan")}), "invalid_value", "structure.layers[0].settings.smoothing_rise"),
+            (one(settings={**settings, "peak_hold_seconds": True}), "invalid_value", "structure.layers[0].settings.peak_hold_seconds"),
+            (one(settings={**settings, "smoothing_rise_seconds": float("nan")}), "invalid_value", "structure.layers[0].settings.smoothing_rise_seconds"),
+            # fft-level-controls M2 (D-023): retired per-call keys are unknown fields.
+            (one(settings={**settings, "smoothing_rise": 0.4}), "invalid_value", "structure.layers[0].settings"),
+            (one(settings={**settings, "peak_hold_frames": 8}), "invalid_value", "structure.layers[0].settings"),
+            (one(settings={**settings, "auto_level": "yes"}), "invalid_value", "structure.layers[0].settings.auto_level"),
+            (one(settings={**settings, "auto_level_attack_seconds": 0}), "invalid_value", "structure.layers[0].settings.auto_level_attack_seconds"),
+            (one(settings={**settings, "auto_level_headroom": 0.5}), "invalid_value", "structure.layers[0].settings.auto_level_headroom"),
             (one(settings={**settings, "gain": 10**400}), "invalid_value", "structure.layers[0].settings.gain"),
-            (one(settings={**settings, "peak_hold_frames": 10**400}), "invalid_value", "structure.layers[0].settings.peak_hold_frames"),
+            (one(settings={**settings, "peak_fall_rate": 10**400}), "invalid_value", "structure.layers[0].settings.peak_fall_rate"),
             (one(settings={**settings, "max_freq": 50.0}), "invalid_value", "structure.layers[0].settings.max_freq"),
             (one(settings={**settings, "weight_points": []}), "invalid_value", "structure.layers[0].settings.weight_points"),
             (one(settings={**settings, "weight_points": {"position": 0, "weight": 1}}), "invalid_value", "structure.layers[0].settings.weight_points"),
@@ -553,6 +559,18 @@ class StructuralExecutionTests(unittest.TestCase):
             self.assertEqual(ocean_on_top.pixels[pixel], ocean_only[pixel])
 
 
+class _StepClock:
+    """A monotonic clock that advances a fixed step per read."""
+
+    def __init__(self, step: float = 1.0 / 86.0) -> None:
+        self.step = step
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        self.now += self.step
+        return self.now
+
+
 class GainTests(unittest.TestCase):
     """fft-level-controls M1: gain multiplies bar height (D-001, D-002, D-021)."""
 
@@ -566,7 +584,8 @@ class GainTests(unittest.TestCase):
         graph = compile_runtime_graph(replace(definition, layers=(layer,)), capabilities)
         width = 64 if backend == PILLOW_BULK_OUTPUT_PATH else 8
         plan = compile_current_bars_layer_plan(
-            graph, registry, settings=settings, width=width, height=width
+            graph, registry, settings=settings, width=width, height=width,
+            clock=_StepClock(),
         )
         return plan, width
 
@@ -785,6 +804,79 @@ class StructuralCoordinatorTests(unittest.TestCase):
         self.assertEqual(len(self.owner.active.layers), 2)
         self.assertEqual(self.registry.projection_count, 2)
         json.dumps(snapshot)
+
+    def test_surviving_layers_keep_level_bars_and_peaks_across_an_update(self) -> None:
+        # fft-level-controls D-007, D-028: state carries over by layer ID when the
+        # render thread promotes the new plan, even with changed settings.
+        for _frame in range(6):
+            self.assertIsNotNone(self.owner.begin_frame().prepare_frame())
+        old = self.plan.layers[0].presentation_state.scaler
+        self.assertTrue(old.started)
+        self.assertGreater(float(old.smoothed_bars.max()), 0.0)
+        before = (
+            old.envelope,
+            old.last_time,
+            old.smoothed_bars.copy(),
+            old.peak_heights.copy(),
+            old.peak_hold_remaining.copy(),
+        )
+
+        coordinator = self._coordinator()
+        document = _document([
+            _layer({**self.base, "gain": 3.0, "auto_level_release_seconds": 1.0}),
+            _layer(self.base, layer_id="added"),
+        ])
+        result = self._exchange(coordinator, _payload(document))
+        self.assertNotIn("error", result)
+        active = self.owner.active
+        self.assertIsNot(active, self.plan)
+        kept, added = (layer.presentation_state for layer in active.layers)
+        self.assertIsNot(kept.scaler, old)
+        self.assertEqual(kept.scaler.scaling.gain, 3.0)
+        self.assertEqual((kept.scaler.envelope, kept.scaler.last_time), before[:2])
+        np.testing.assert_array_equal(kept.scaler.smoothed_bars, before[2])
+        np.testing.assert_array_equal(kept.scaler.peak_heights, before[3])
+        np.testing.assert_array_equal(kept.scaler.peak_hold_remaining, before[4])
+        # The presentation still hands out the scaler's own arrays.
+        self.assertIs(kept.smoothed_bars(), kept.scaler.smoothed_bars)
+        # A layer ID new to the structure starts fresh.
+        self.assertFalse(added.scaler.started)
+        self.assertIsNone(added.scaler.last_time)
+        self.assertEqual(float(added.scaler.smoothed_bars.max()), 0.0)
+
+    def test_state_is_copied_when_the_plan_is_promoted_not_when_compiled(self) -> None:
+        # D-028: frames the old plan renders after the candidate is compiled and
+        # staged still reach the new layer, so the copy happens at promotion on
+        # the render thread, not on the compiling (listener) thread.
+        for _frame in range(3):
+            self.owner.begin_frame().prepare_frame()
+        prepared = self._compiler(
+            replace(self.definition, layers=(
+                replace(self.definition.layers[0], settings={**self.base, "gain": 2.0}),
+            ))
+        )
+        self.owner.stage(prepared.plan)
+        old = self.plan.layers[0].presentation_state.scaler
+        for _frame in range(4):
+            self.plan.prepare_frame()  # still the active plan
+        latest = (old.envelope, old.last_time, old.smoothed_bars.copy())
+        self.assertIs(self.owner.begin_frame(), prepared.plan)
+        prepared.commit()
+        kept = prepared.plan.layers[0].presentation_state.scaler
+        self.assertEqual((kept.envelope, kept.last_time), latest[:2])
+        np.testing.assert_array_equal(kept.smoothed_bars, latest[2])
+
+    def test_a_renamed_layer_starts_fresh(self) -> None:
+        for _frame in range(3):
+            self.owner.begin_frame().prepare_frame()
+        coordinator = self._coordinator()
+        result = self._exchange(
+            coordinator, _payload(_document([_layer(self.base, layer_id="renamed")]))
+        )
+        self.assertNotIn("error", result)
+        scaler = self.owner.active.layers[0].presentation_state.scaler
+        self.assertFalse(scaler.started)
+        self.assertEqual(float(scaler.smoothed_bars.max()), 0.0)
 
     def test_an_empty_structure_activates_renders_blank_and_can_be_refilled(self) -> None:
         # M5 slice 1 criterion 5: the page may send an empty layer list.

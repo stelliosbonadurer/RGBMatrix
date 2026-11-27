@@ -958,3 +958,6 @@ details.panel[open] > summary { margin-bottom: 12px; }
   font-weight: 650;
 }
 body.has-action-bar:has(.action-reason:not([hidden])) { padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
+
+/* Apply one setting to every layer (fft-level-controls D-018). */
+.field-head .apply-all { min-height: 30px; padding: 0 10px; font-size: 13px; }

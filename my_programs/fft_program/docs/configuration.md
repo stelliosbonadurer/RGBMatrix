@@ -101,17 +101,26 @@ the file also has `weight_points`, those win and the old keys are ignored. The r
 ### ScalingSettings
 
 ```python
-use_fixed_scale: bool = False       # Fixed sensitivity
-use_rolling_rms_scale: bool = True  # Adaptive RMS (recommended)
-use_rolling_max_scale: bool = False # Adaptive max
-
-rolling_window_seconds: float = 3   # History for adaptation
-headroom_multiplier: float = 2.5    # Higher = punchier peaks
-attack_speed: float = 0.1           # Adapt to loud (0.1=slow, 0.5=instant)
-decay_speed: float = 0.06           # Adapt to quiet (lower=slower)
-min_scale: float = 0.05             # Prevent infinite gain in silence
-gain: float = 1.5                   # Multiplies bar height (2 = twice as tall)
+auto_level: bool = True       # Off: divide by a fixed reference (0.3) instead
+headroom: float = 2.5         # Scale = level x headroom; higher = shorter bars
+attack_seconds: float = 5.5   # Time constant for adapting to louder audio
+release_seconds: float = 2.75 # Time constant for adapting to quieter audio
+gain: float = 1.5             # Multiplies bar height (2 = twice as tall)
 ```
+
+These, `SmoothingSettings`, and the peak timing are the startup values for the
+default layer. Each layer carries its own copies in its structure settings
+(`auto_level`, `auto_level_headroom`, `auto_level_attack_seconds`,
+`auto_level_release_seconds`, `gain`, `smoothing_rise_seconds`,
+`smoothing_fall_seconds`, `peak_hold_seconds`, `peak_fall_rate`), and the FFT page
+can copy any one of them to every layer.
+
+The defaults approximate the retired rolling-RMS scaler at about 86 calls per
+second. The retired keys `use_fixed_scale`, `use_rolling_rms_scale`,
+`use_rolling_max_scale`, `fixed_scale_max`, `rolling_window_seconds`,
+`headroom_multiplier`, `attack_speed`, `decay_speed`, `min_scale`, and
+`initial_scale` make a settings file fail to load, because their per-call meanings
+have no exact seconds equivalent. Remove them, or use the new keys.
 
 `gain` is the startup value for the default layer; each layer carries its own `gain`
 (0.1–10) in its structure settings. It replaces the retired `sensitivity_scalar`
@@ -122,25 +131,26 @@ replace them with `gain = multiplier / sensitivity_scalar` for overflow layers, 
 
 **Tips:**
 
-- `use_rolling_rms_scale=True` gives the best results for most music
-- Increase `headroom_multiplier` for punchier, more dynamic visuals
-- Decrease `attack_speed` if loud sounds cause jarring jumps
-- Increase `decay_speed` if quiet sections feel sluggish
+- Lower `attack_seconds` (for example 1) if a sudden loud passage stays pegged too long
+- Lower `release_seconds` if bars stay short too long after a loud passage
+- Lower `headroom` for taller bars relative to the recent level, raise it for shorter
 - Raise `gain` for taller bars (and more overflow), lower it for shorter ones
+- Turn `auto_level` off for a fixed reference: quiet music stays short, loud music tall
 
 ### SmoothingSettings
 
 ```python
-rise: float = 0.8   # Bar rise speed (0.3=smooth, 1.0=instant)
-fall: float = 0.20  # Bar fall speed (0.2=slow, 0.8=fast)
+rise_seconds: float = 0.023  # Time constant toward a louder value (0 = instant)
+fall_seconds: float = 0.11   # Time constant toward a quieter value (0 = instant)
 ```
+
+The retired `rise` and `fall` were per-call fractions; a settings file with them
+fails to load.
 
 **Tips:**
 
-- Higher `rise` = snappier response to beats
-- Lower `fall` = smoother, more flowing decay
-- For EDM: `rise=0.9, fall=0.3`
-- For classical: `rise=0.6, fall=0.15`
+- Lower `rise_seconds` = snappier response to beats
+- Higher `fall_seconds` = smoother, more flowing decay
 
 ### OverflowSettings
 
@@ -159,10 +169,13 @@ color_3: Tuple[int,int,int] = (255,0,255)   # 4th+ layer color
 
 ```python
 enabled: bool = False       # Show peak indicators
-fall_speed: float = 0.08    # Peak descent rate
-hold_frames: int = 8        # Frames to hold at peak
+hold_seconds: float = 0.09  # Seconds to hold at peak
+fall_rate: float = 7.0      # Fall after the hold, in panel heights per second
 color_mode: str = 'contrast' # 'white', 'bar', 'contrast', 'peak'
 ```
+
+The retired `fall_speed` and `hold_frames` were per-call values; a settings file with
+them fails to load.
 
 ### ColorSettings
 
@@ -191,7 +204,7 @@ Create a JSON file with your settings:
     "brightness_boost": 1.0
   },
   "scaling": {
-    "headroom_multiplier": 2.5
+    "headroom": 2.5
   }
 }
 ```
