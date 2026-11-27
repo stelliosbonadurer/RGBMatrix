@@ -8,7 +8,9 @@ JSON snapshot. It has no live per-control state and no patch operation; every
 other action is rejected (web-control-refactor D-001, D-051).
 
 Calls arrive on the render thread through ``FrameBoundaryRuntimeBridge``, so the
-revision is only ever changed there.
+revision is only ever changed there. The one exception is ``stats()``, which the
+coordinator answers on the listener thread (fft-live-fps D-007): it only reads
+integers, so it never queues work for the render thread.
 """
 
 from __future__ import annotations
@@ -50,6 +52,7 @@ class FftRuntimeController:
         self.run_id = str(run_id)
         self.visualization_id = str(visualization_id)
         self._structure_snapshot_provider: Callable[[], Dict[str, Any]] | None = None
+        self._stats_provider: Callable[[], Dict[str, Any]] | None = None
         self.revision = 0
 
     def bind_structure_snapshot(
@@ -61,6 +64,28 @@ class FftRuntimeController:
         if not callable(provider):
             raise TypeError("structure snapshot provider must be callable")
         self._structure_snapshot_provider = provider
+
+    def bind_stats(self, provider: Callable[[], Dict[str, Any]]) -> None:
+        """Attach the frame-counter sampler that ``stats()`` reports."""
+
+        if not callable(provider):
+            raise TypeError("stats provider must be callable")
+        self._stats_provider = provider
+
+    def stats(self) -> Dict[str, Any]:
+        """Return live frame counters; safe to call off the render thread."""
+
+        provider = self._stats_provider
+        if provider is None:
+            raise RuntimeControlError("invalid_operation", "runtime operation is unsupported")
+        result: Dict[str, Any] = {
+            "protocol_version": PROTOCOL_VERSION,
+            "run_id": self.run_id,
+            "visualization_id": self.visualization_id,
+            "revision": self.revision,
+        }
+        result.update(provider())
+        return result
 
     def snapshot(self) -> Dict[str, Any]:
         """Return the authoritative current state."""

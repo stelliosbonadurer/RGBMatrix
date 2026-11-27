@@ -452,6 +452,10 @@ class StructuralRuntimeCoordinator:
     def handle_runtime_operation(self, operation: str, payload: Any) -> Any:
         """Run structural compilation here; bridge ordinary work to rendering."""
 
+        if operation == "stats":
+            # Counters only: answered here, never queued for the render thread
+            # (fft-live-fps D-007).
+            return self._controller.stats()
         if operation != "command" or not isinstance(payload, Mapping):
             return self._bridge.handle(operation, payload)
         command = payload.get("command")

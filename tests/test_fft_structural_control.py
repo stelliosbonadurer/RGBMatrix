@@ -835,6 +835,19 @@ class StructuralCoordinatorTests(unittest.TestCase):
         self.assertEqual(self.registry.projection_count, 1)
         self.assertEqual(self.analyzer.projections, [])
 
+    def test_stats_is_answered_without_queueing_render_work(self) -> None:
+        # fft-live-fps D-007: nobody drains the bridge here, so a bridged
+        # request would time out instead of returning.
+        coordinator = self._coordinator()
+        self.controller.bind_stats(lambda: {"swap_frames": 5})
+        started = time.monotonic()
+        stats = coordinator.handle_runtime_operation("stats", {})
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertEqual(stats["swap_frames"], 5)
+        self.assertEqual(stats["revision"], self.controller.revision)
+        self.assertTrue(self.bridge._pending.empty())
+        self.assertEqual(coordinator.process_pending(max_items=4), 0)
+
     def test_success_returns_the_normalized_document_after_one_revision(self) -> None:
         coordinator = self._coordinator()
         document = self._two_ranges()

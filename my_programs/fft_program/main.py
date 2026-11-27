@@ -62,6 +62,7 @@ from matrix_controller.runtime_transport import (
 )
 from runtime_control import FftRuntimeController
 from structural_control import PreparedStructuralPlan, StructuralRuntimeCoordinator
+from core.frame_rate import FrameRateCounter
 from core.telemetry import (
     TelemetryConfigurationError,
     add_telemetry_arguments,
@@ -217,6 +218,16 @@ def main():
         controller = FftRuntimeController(
             run_id=os.environ.get("RGB_MATRIX_RUN_ID", "local"),
         )
+        # Always-on live counters for the runtime "stats" operation
+        # (fft-live-fps D-002/D-007/D-008), separate from CLI telemetry.
+        frame_counter = FrameRateCounter()
+
+        def frame_stats() -> dict:
+            stats = frame_counter.sample()
+            stats["published_content_frames"] = int(audio.analysis_sequence)
+            return stats
+
+        controller.bind_stats(frame_stats)
         runtime_client = RuntimeControlClient.from_environment()
         runtime_bridge = FrameBoundaryRuntimeBridge(
             max_pending=32,
@@ -358,6 +369,9 @@ def main():
                     ):
                         break
                 
+                # After telemetry's swap timestamps, so its latencies stay unchanged.
+                frame_counter.record_swap(audio.last_acquired_analysis_sequence)
+
                 # Frame delay
                 time.sleep(settings.audio.sleep_delay)
 
