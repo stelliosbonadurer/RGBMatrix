@@ -349,10 +349,10 @@ class WebServiceTests(unittest.TestCase):
     def _structure_payload(self) -> dict:
         settings = {
             "theme": "ocean", "gradient": False, "overflow": True,
-            "overflow_multiplier": 1.5, "bars": True, "full": False,
+            "bars": True, "full": False,
             "shadow_enabled": False, "peak_enabled": False,
             "peak_color_mode": "contrast", "peak_fall_speed": 0.08,
-            "peak_hold_frames": 8, "sensitivity_scalar": 1.0,
+            "peak_hold_frames": 8, "gain": 1.5,
             "smoothing_rise": 0.4, "smoothing_fall": 0.1,
             "dynamic_cycle_speed": 0.06, "dynamic_frozen": False,
         }
@@ -383,10 +383,10 @@ class WebServiceTests(unittest.TestCase):
         """8 layers with 64-character IDs, every setting, and 16 weight points."""
         settings = {
             "theme": "dynamic_lateral_gradient", "gradient": False, "overflow": True,
-            "overflow_multiplier": 1.523456789012345, "bars": True, "full": False,
+            "bars": True, "full": False,
             "shadow_enabled": False, "peak_enabled": False,
             "peak_color_mode": "contrast", "peak_fall_speed": 0.08123456789012345,
-            "peak_hold_frames": 600, "sensitivity_scalar": 1.0123456789012345,
+            "peak_hold_frames": 600, "gain": 1.5234567890123457,
             "smoothing_rise": 0.4123456789012345, "smoothing_fall": 0.1123456789012345,
             "dynamic_cycle_speed": 0.06123456789012345, "dynamic_frozen": False,
             "min_freq": 100.12345678901234, "max_freq": 6300.123456789012,

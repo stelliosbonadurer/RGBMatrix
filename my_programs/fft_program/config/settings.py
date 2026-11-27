@@ -82,7 +82,6 @@ class FrequencySettings:
 class OverflowSettings:
     """Overflow mode configuration for bars that exceed display height."""
     enabled: bool = True       # True = bars wrap/stack when exceeding height
-    multiplier: float = 1.5    # Sensitivity for overflow
     color_2: Tuple[int, int, int] = (0, 50, 255)    # 3rd layer color (cyan)
     color_3: Tuple[int, int, int] = (255, 255, 255)    # 4th+ layer color (magenta)
 
@@ -158,7 +157,7 @@ class ScalingSettings:
     decay_speed: float = 0.06          # How fast scale adapts to QUIETER audio
     min_scale: float = 0.05            # Minimum scale to prevent infinite gain
     initial_scale: float = 0.25        # Starting scale (higher = quieter start, prevents initial maxout)
-    sensitivity_scalar: float = 1.0    # Manual sensitivity boost on top of auto-scaling
+    gain: float = 1.5                  # Multiplies bar height after scaling (2 = twice as tall)
 
 
 @dataclass

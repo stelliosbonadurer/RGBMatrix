@@ -32,7 +32,6 @@ class PillowBulkBarsOutputPlan:
         "_geometry_boxes",
         "_height",
         "_image",
-        "_overflow_multiplier",
         "_overflow_colors",
         "_width",
     )
@@ -42,14 +41,12 @@ class PillowBulkBarsOutputPlan:
         width: int,
         height: int,
         image: Any,
-        overflow_multiplier: float,
         overflow_colors: tuple[tuple[tuple[int, int, int], ...], ...],
     ) -> None:
         self._width = width
         self._height = height
         self._image = image
         self._full_frame_box = (0, 0, width, height)
-        self._overflow_multiplier = overflow_multiplier
         self._overflow_colors = overflow_colors
         self._geometry_boxes = tuple(
             tuple(
@@ -86,15 +83,13 @@ class PillowBulkBarsOutputPlan:
         self,
         smoothed_bars: np.ndarray,
         peak_heights: Optional[np.ndarray] = None,
-        overflow_multiplier: Optional[float] = None,
     ) -> None:
         """Paint one qualified bars layer without clearing or uploading.
 
         ``peak_heights`` is intentionally unused because the candidate compiler
         rejects peak mode.  The argument keeps the same call shape as the accepted
         direct renderer without introducing an adapter or per-frame message.
-        ``overflow_multiplier`` lets each ordered layer paint with its own
-        compile-time multiplier; ``None`` uses the plan's compiled value.
+        Each layer's gain is already in ``smoothed_bars`` (fft-level-controls D-002).
         """
 
         del peak_heights
@@ -102,8 +97,6 @@ class PillowBulkBarsOutputPlan:
 
         height = self._height
         width = self._width
-        if overflow_multiplier is None:
-            overflow_multiplier = self._overflow_multiplier
         geometry_boxes = self._geometry_boxes
         overflow_colors = self._overflow_colors
 
@@ -112,7 +105,7 @@ class PillowBulkBarsOutputPlan:
             if np.isnan(raw_ratio):
                 raw_ratio = 0.0
 
-            total_pixels = int(raw_ratio * height * overflow_multiplier)
+            total_pixels = int(raw_ratio * height)
             if total_pixels <= 0:
                 continue
 
@@ -196,7 +189,6 @@ def compile_pillow_bulk_bars_output(
         width=width,
         height=height,
         image=image,
-        overflow_multiplier=visualizer.settings.overflow.multiplier,
         overflow_colors=overflow_colors,
     )
 

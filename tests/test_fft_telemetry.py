@@ -169,10 +169,11 @@ def _two_frame_run(output_path: Path) -> tuple[FrameTelemetry, SimpleNamespace]:
     )
     audio = _audio()
     telemetry.arm(audio, now_ns=1_000_000_000)
-    bars = np.full(64, 0.5, dtype=np.float32)
+    # Gain is already in the smoothed bars (fft-level-controls D-002).
+    bars = np.full(64, 0.75, dtype=np.float32)
     telemetry.begin_frame(audio, now_ns=2_000_000_000)
     telemetry.record_frame(
-        audio, bars, 64, 1.5,
+        audio, bars, 64,
         2_000_000_000, 2_002_000_000, 2_003_000_000, 2_004_000_000,
         10, time.monotonic_ns(),
     )
@@ -181,7 +182,7 @@ def _two_frame_run(output_path: Path) -> tuple[FrameTelemetry, SimpleNamespace]:
     audio.last_analyzed_generation = 200
     audio.analysis_sequence = 190
     telemetry.record_frame(
-        audio, bars, 64, 1.5,
+        audio, bars, 64,
         3_000_000_000, 3_003_000_000, 3_004_000_000, 4_000_000_000,
         11, time.monotonic_ns(),
     )
@@ -207,9 +208,10 @@ class FrameTelemetryRecorderTests(unittest.TestCase):
             self.assertFalse(telemetry.begin_frame(audio, now_ns=1_500_000_000))
             self.assertTrue(telemetry.begin_frame(audio, now_ns=2_000_000_000))
 
-            bars = np.full(64, 0.5, dtype=np.float32)
+            # Gain is already in the smoothed bars (fft-level-controls D-002).
+            bars = np.full(64, 0.75, dtype=np.float32)
             self.assertFalse(telemetry.record_frame(
-                audio, bars, 64, 1.5,
+                audio, bars, 64,
                 2_000_000_000, 2_002_000_000, 2_003_000_000, 2_004_000_000,
                 10, time.monotonic_ns(),
             ))
@@ -218,7 +220,7 @@ class FrameTelemetryRecorderTests(unittest.TestCase):
             audio.last_analyzed_generation = 200
             audio.analysis_sequence = 190
             self.assertTrue(telemetry.record_frame(
-                audio, bars, 64, 1.5,
+                audio, bars, 64,
                 3_000_000_000, 3_003_000_000, 3_004_000_000, 4_000_000_000,
                 11, time.monotonic_ns(),
             ))
@@ -252,7 +254,7 @@ class FrameTelemetryRecorderTests(unittest.TestCase):
             self.assertTrue(telemetry.begin_frame(audio, now_ns=1))
             bars = np.zeros(64, dtype=np.float32)
             self.assertFalse(telemetry.record_frame(
-                audio, bars, 64, 1.5, 1, 2, 2, 3, 1,
+                audio, bars, 64, 1, 2, 2, 3, 1,
                 time.monotonic_ns(),
             ))
             self.assertFalse(telemetry.begin_frame(audio, now_ns=4))

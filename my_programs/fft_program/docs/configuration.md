@@ -110,8 +110,15 @@ headroom_multiplier: float = 2.5    # Higher = punchier peaks
 attack_speed: float = 0.1           # Adapt to loud (0.1=slow, 0.5=instant)
 decay_speed: float = 0.06           # Adapt to quiet (lower=slower)
 min_scale: float = 0.05             # Prevent infinite gain in silence
-sensitivity_scalar: float = 1.0     # Manual boost on top
+gain: float = 1.5                   # Multiplies bar height (2 = twice as tall)
 ```
+
+`gain` is the startup value for the default layer; each layer carries its own `gain`
+(0.1–10) in its structure settings. It replaces the retired `sensitivity_scalar`
+(which divided, so higher was shorter) and `overflow.multiplier` (which applied only
+to overflow drawing). A settings file that still has either key fails to load;
+replace them with `gain = multiplier / sensitivity_scalar` for overflow layers, or
+`1 / sensitivity_scalar` otherwise.
 
 **Tips:**
 
@@ -119,6 +126,7 @@ sensitivity_scalar: float = 1.0     # Manual boost on top
 - Increase `headroom_multiplier` for punchier, more dynamic visuals
 - Decrease `attack_speed` if loud sounds cause jarring jumps
 - Increase `decay_speed` if quiet sections feel sluggish
+- Raise `gain` for taller bars (and more overflow), lower it for shorter ones
 
 ### SmoothingSettings
 
@@ -138,7 +146,6 @@ fall: float = 0.20  # Bar fall speed (0.2=slow, 0.8=fast)
 
 ```python
 enabled: bool = True                    # Enable overflow mode
-multiplier: float = 1.5                 # Sensitivity (higher=more overflow)
 color_2: Tuple[int,int,int] = (0,150,255)   # 3rd layer color
 color_3: Tuple[int,int,int] = (255,0,255)   # 4th+ layer color
 ```
@@ -146,7 +153,7 @@ color_3: Tuple[int,int,int] = (255,0,255)   # 4th+ layer color
 **Tips:**
 
 - Enable for loud electronic music, disable for quieter acoustic
-- Increase `multiplier` for more dramatic overflow effects
+- Raise the layer's `gain` for more dramatic overflow effects
 
 ### PeakSettings
 

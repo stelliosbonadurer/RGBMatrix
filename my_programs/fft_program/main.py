@@ -349,7 +349,6 @@ def main():
                         audio=audio,
                         smoothed_bars=smoothed,
                         height=app.height,
-                        overflow_multiplier=settings.overflow.multiplier,
                         draw_started_ns=draw_started_ns,
                         draw_completed_ns=draw_completed_ns,
                         swap_started_ns=swap_started_ns,

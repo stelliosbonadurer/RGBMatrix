@@ -343,7 +343,6 @@ class FrameTelemetry:
         audio: Any,
         smoothed_bars: np.ndarray,
         height: int,
-        overflow_multiplier: float,
         draw_started_ns: int,
         draw_completed_ns: int,
         swap_started_ns: int,
@@ -375,7 +374,7 @@ class FrameTelemetry:
             for value in smoothed_bars:
                 if np.isnan(value):
                     continue
-                total_pixels = int(value * height * overflow_multiplier)
+                total_pixels = int(value * height)
                 visible_pixels += min(max(total_pixels, 0), height)
             density_index = self.density_count
             self.density_frame_indices[density_index] = index

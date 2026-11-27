@@ -274,10 +274,13 @@ class StructureDocumentTests(unittest.TestCase):
             (one(settings={**settings, "theme": "unknown"}), "invalid_value", "structure.layers[0].settings.theme"),
             (one(settings={**settings, "gradient": "yes"}), "invalid_value", "structure.layers[0].settings.gradient"),
             (one(settings={**settings, "peak_color_mode": "x"}), "invalid_value", "structure.layers[0].settings.peak_color_mode"),
-            (one(settings={**settings, "sensitivity_scalar": 0}), "invalid_value", "structure.layers[0].settings.sensitivity_scalar"),
+            (one(settings={**settings, "gain": 0}), "invalid_value", "structure.layers[0].settings.gain"),
+            (one(settings={**settings, "gain": 10.5}), "invalid_value", "structure.layers[0].settings.gain"),
+            (one(settings={**settings, "sensitivity_scalar": 1.0}), "invalid_value", "structure.layers[0].settings"),
+            (one(settings={**settings, "overflow_multiplier": 1.5}), "invalid_value", "structure.layers[0].settings"),
             (one(settings={**settings, "peak_hold_frames": True}), "invalid_value", "structure.layers[0].settings.peak_hold_frames"),
             (one(settings={**settings, "smoothing_rise": float("nan")}), "invalid_value", "structure.layers[0].settings.smoothing_rise"),
-            (one(settings={**settings, "sensitivity_scalar": 10**400}), "invalid_value", "structure.layers[0].settings.sensitivity_scalar"),
+            (one(settings={**settings, "gain": 10**400}), "invalid_value", "structure.layers[0].settings.gain"),
             (one(settings={**settings, "peak_hold_frames": 10**400}), "invalid_value", "structure.layers[0].settings.peak_hold_frames"),
             (one(settings={**settings, "max_freq": 50.0}), "invalid_value", "structure.layers[0].settings.max_freq"),
             (one(settings={**settings, "weight_points": []}), "invalid_value", "structure.layers[0].settings.weight_points"),
@@ -311,13 +314,13 @@ class StructureDocumentTests(unittest.TestCase):
         )
         self.assertTrue(candidate.layers[0].settings["gradient"])
 
-    def test_pillow_startup_accepts_any_bounded_overflow_multiplier(self) -> None:
+    def test_pillow_startup_accepts_any_bounded_gain(self) -> None:
         constraints = current_bars_settings_descriptor()["backend_constraints"]
-        self.assertNotIn("overflow_multiplier", constraints[PILLOW_BULK_OUTPUT_PATH])
+        self.assertNotIn("gain", constraints[PILLOW_BULK_OUTPUT_PATH])
         settings = Settings()
         settings.shadow.enabled = False
         settings.peak.enabled = False
-        settings.overflow.multiplier = 2.0
+        settings.scaling.gain = 2.0
         definition = current_bars_runtime_definition(
             audio_settings=settings.audio,
             frequency_settings=settings.frequency,
@@ -326,7 +329,7 @@ class StructureDocumentTests(unittest.TestCase):
             output_backend=PILLOW_BULK_OUTPUT_PATH,
             layer_settings=current_bars_settings_from_runtime(settings),
         )
-        self.assertEqual(definition.layers[0].settings["overflow_multiplier"], 2.0)
+        self.assertEqual(definition.layers[0].settings["gain"], 2.0)
 
 
 class StructuralExecutionTests(unittest.TestCase):
@@ -472,18 +475,18 @@ class StructuralExecutionTests(unittest.TestCase):
             plan.draw_frame(canvas)
         self.assertEqual(canvas.set_image_calls, 1)
 
-    def test_pillow_paints_layers_bottom_to_top_with_their_own_multipliers(self) -> None:
+    def test_pillow_paints_layers_bottom_to_top_with_their_own_gains(self) -> None:
         settings, definition, capabilities, registry, _analyzer, _plan, _controller = _runtime(
             PILLOW_BULK_OUTPUT_PATH
         )
         base = dict(definition.layers[0].settings)
         short = replace(
             definition.layers[0], layer_id="short",
-            settings={**base, "overflow_multiplier": 1.5},
+            settings={**base, "gain": 1.5},
         )
         tall = replace(
             definition.layers[0], layer_id="tall",
-            settings={**base, "overflow_multiplier": 3.0},
+            settings={**base, "gain": 3.0},
         )
 
         def frame(*layers):
@@ -548,6 +551,97 @@ class StructuralExecutionTests(unittest.TestCase):
         for pixel in contested:
             self.assertEqual(forest_on_top.pixels[pixel], forest_only[pixel])
             self.assertEqual(ocean_on_top.pixels[pixel], ocean_only[pixel])
+
+
+class GainTests(unittest.TestCase):
+    """fft-level-controls M1: gain multiplies bar height (D-001, D-002, D-021)."""
+
+    @staticmethod
+    def _plan(backend, **overrides):
+        settings, definition, capabilities, registry, _analyzer, _plan, _ = _runtime(backend)
+        layer = replace(
+            definition.layers[0],
+            settings={**definition.layers[0].settings, **overrides},
+        )
+        graph = compile_runtime_graph(replace(definition, layers=(layer,)), capabilities)
+        width = 64 if backend == PILLOW_BULK_OUTPUT_PATH else 8
+        plan = compile_current_bars_layer_plan(
+            graph, registry, settings=settings, width=width, height=width
+        )
+        return plan, width
+
+    def test_doubling_gain_doubles_bars_on_both_backends_and_modes(self) -> None:
+        cases = (
+            (DIRECT_OUTPUT_PATH, True),
+            (DIRECT_OUTPUT_PATH, False),
+            (PILLOW_BULK_OUTPUT_PATH, True),
+        )
+        for backend, overflow in cases:
+            with self.subTest(backend=backend, overflow=overflow):
+                bars = {}
+                for gain in (1.0, 2.0):
+                    plan, _width = self._plan(backend, overflow=overflow, gain=gain)
+                    for _ in range(3):
+                        plan.prepare_frame()
+                    bars[gain] = np.array(plan.layers[0].smoothed_bars(), dtype=np.float64)
+                self.assertGreater(bars[1.0].max(), 0.0)
+                np.testing.assert_allclose(bars[2.0], 2.0 * bars[1.0], rtol=1e-5)
+
+    def test_painted_height_follows_gain_on_both_backends(self) -> None:
+        for backend in (DIRECT_OUTPUT_PATH, PILLOW_BULK_OUTPUT_PATH):
+            with self.subTest(backend=backend):
+                lit = {}
+                for gain in (0.5, 1.0):
+                    plan, width = self._plan(backend, gain=gain)
+                    plan.prepare_frame()
+                    if backend == DIRECT_OUTPUT_PATH:
+                        canvas = _RecordingCanvas()
+                        plan.draw_frame(canvas)
+                        lit[gain] = len(canvas.pixels)
+                    else:
+                        canvas = _BulkCanvas()
+                        plan.draw_frame(canvas)
+                        lit[gain] = int(np.array(canvas.images[0]).any(axis=-1).sum())
+                    expected = sum(
+                        min(int(value * width), width)
+                        for value in plan.layers[0].smoothed_bars()
+                    )
+                    self.assertEqual(lit[gain], expected)
+                self.assertGreater(lit[1.0], lit[0.5])
+
+    def test_direct_peaks_track_gain(self) -> None:
+        peaks = {}
+        for gain in (1.0, 3.0):
+            plan, _width = self._plan(DIRECT_OUTPUT_PATH, peak_enabled=True, gain=gain)
+            plan.prepare_frame()
+            presentation = plan.layers[0].presentation_state
+            np.testing.assert_array_equal(presentation.peaks, presentation.smoothed)
+            peaks[gain] = np.array(presentation.peaks, dtype=np.float64)
+        self.assertGreater(peaks[1.0].max(), 0.0)
+        np.testing.assert_allclose(peaks[3.0], 3.0 * peaks[1.0], rtol=1e-5)
+
+    def test_default_layer_paints_what_the_retired_multiplier_painted(self) -> None:
+        # Before M1 the default layer drew int(s * h * 1.5) pixels from bars s
+        # scaled with sensitivity scalar 1.0; now gain 1.5 is in the bars.
+        default_gain = next(
+            field["default"]
+            for field in current_bars_settings_descriptor()["fields"]
+            if field["name"] == "gain"
+        )
+        self.assertEqual(default_gain, 1.5)
+        self.assertEqual(Settings().scaling.gain, 1.5)
+        unit, width = self._plan(DIRECT_OUTPUT_PATH, gain=1.0)
+        unit.prepare_frame()
+        expected = sum(
+            min(int(value * width * 1.5), width)
+            for value in unit.layers[0].smoothed_bars()
+        )
+        plan, _width = self._plan(DIRECT_OUTPUT_PATH)
+        plan.prepare_frame()
+        canvas = _RecordingCanvas()
+        plan.draw_frame(canvas)
+        self.assertGreater(expected, 0)
+        self.assertEqual(len(canvas.pixels), expected)
 
 
 class _BlockingActivePlan(ActiveLayerPlan):

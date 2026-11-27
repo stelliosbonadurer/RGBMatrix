@@ -83,8 +83,8 @@ class ScalingProcessor:
         # Get normalization scale
         max_val = self._calculate_scale(peak)
         
-        # Normalize
-        normalized = bars / max_val
+        # Normalize, then apply gain: higher is taller (fft-level-controls D-001)
+        normalized = bars * (self.scaling.gain / max_val)
         
         # Vectorized asymmetric smoothing: fast rise, slow fall
         delta = normalized - self.smoothed_bars
@@ -155,10 +155,7 @@ class ScalingProcessor:
         else:
             # Instant auto-normalize (loudest bar always max)
             max_val = peak + 1e-9
-        
-        # Apply manual sensitivity scalar
-        max_val = max_val * self.scaling.sensitivity_scalar
-        
+
         return max_val
     
     def _update_peaks_vectorized(self, hold_frames: int, fall_speed: float) -> None:

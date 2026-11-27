@@ -162,10 +162,12 @@ class PillowBulkBarsOutputTests(unittest.TestCase):
         visualizer = _qualification_visualizer()
         plan = compile_pillow_bulk_bars_output(visualizer, WIDTH, HEIGHT)
         canvas = _BulkCanvas()
+        # Gain is already in the bars (fft-level-controls D-002), so these are
+        # the drawn heights the retired 1.5 multiplier made of 2/3, 1.0, and 1.5.
         cases = (
-            ("full first layer", 2.0 / 3.0, (247, 251, 253)),
-            ("second layer", 1.0, (123, 255, 255)),
-            ("third layer", 1.5, (235, 255, 255)),
+            ("full first layer", 1.0, (247, 251, 253)),
+            ("second layer", 1.5, (123, 255, 255)),
+            ("third layer", 2.25, (235, 255, 255)),
         )
 
         for name, raw_ratio, expected_color in cases:

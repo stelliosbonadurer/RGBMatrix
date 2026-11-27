@@ -57,11 +57,15 @@ from visualizers.peaks import draw_peaks
 CURRENT_BARS_LAYER_ID = "current-bars"
 CURRENT_BARS_LAYER_TYPE = "current-bars"
 _ORDERED_PLAN_CONSTRUCTION_TOKEN = object()
+# Gain bounds and default (fft-level-controls D-001, D-021, D-022). The default
+# matches the retired overflow multiplier 1.5 over sensitivity scalar 1.0.
+GAIN_MIN = 0.1
+GAIN_MAX = 10.0
+GAIN_DEFAULT = 1.5
 CURRENT_BARS_SETTING_NAMES = frozenset({
     "theme",
     "gradient",
     "overflow",
-    "overflow_multiplier",
     "bars",
     "full",
     "shadow_enabled",
@@ -69,7 +73,7 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "peak_color_mode",
     "peak_fall_speed",
     "peak_hold_frames",
-    "sensitivity_scalar",
+    "gain",
     "smoothing_rise",
     "smoothing_fall",
     "dynamic_cycle_speed",
@@ -419,22 +423,15 @@ class _DirectBarsExecutor:
 class _PillowBulkBarsExecutor:
     """Existing reusable Pillow image and one SetImage upload per frame."""
 
-    __slots__ = ("_output", "_overflow_multiplier", "_presentation")
+    __slots__ = ("_output", "_presentation")
 
     def __init__(self, presentation: _CurrentBarsPresentation, output: Any) -> None:
         self._presentation = presentation
         self._output = output
-        # Layer settings change only by recompiling the plan, so the
-        # compile-time multiplier stays authoritative for this plan.
-        self._overflow_multiplier = float(presentation.settings.overflow.multiplier)
 
     def draw(self, canvas: Any) -> None:
         del canvas
-        self._output.paint_bars(
-            self._presentation.smoothed,
-            None,
-            self._overflow_multiplier,
-        )
+        self._output.paint_bars(self._presentation.smoothed, None)
 
 
 def current_bars_settings_from_runtime(
@@ -453,7 +450,6 @@ def current_bars_settings_from_runtime(
         "overflow": bool(
             getattr(visualizer, "overflow_mode", settings.overflow.enabled)
         ),
-        "overflow_multiplier": float(settings.overflow.multiplier),
         "bars": bool(getattr(visualizer, "bars_enabled", True)),
         "full": bool(getattr(visualizer, "full_mode", False)),
         "shadow_enabled": bool(settings.shadow.enabled),
@@ -461,7 +457,7 @@ def current_bars_settings_from_runtime(
         "peak_color_mode": str(settings.peak.color_mode),
         "peak_fall_speed": float(settings.peak.fall_speed),
         "peak_hold_frames": int(settings.peak.hold_frames),
-        "sensitivity_scalar": float(settings.scaling.sensitivity_scalar),
+        "gain": float(settings.scaling.gain),
         "smoothing_rise": float(settings.smoothing.rise),
         "smoothing_fall": float(settings.smoothing.fall),
         "dynamic_cycle_speed": float(getattr(theme, "cycle_speed", 0.06)),
@@ -483,7 +479,6 @@ CURRENT_BARS_SETTING_GROUPS = (
     {"id": "motion", "label": "Motion"},
     {"id": "dynamic", "label": "Dynamic theme"},
 )
-_WHEN_OVERFLOW = {"field": "overflow", "values": [True]}
 _WHEN_PEAKS = {"field": "peak_enabled", "values": [True]}
 _WHEN_DYNAMIC_THEME = {"field": "theme", "values": ["dynamic", "dynamic_lateral_gradient"]}
 
@@ -508,10 +503,6 @@ def current_bars_settings_descriptor() -> dict[str, object]:
             {"name": "overflow", "label": "Overflow", "group": "look",
              "type": "boolean", "default": True,
              "help": "On: loud bars wrap past the top in layered colors. Off: bars stop at the top."},
-            {"name": "overflow_multiplier", "label": "Overflow multiplier", "group": "look",
-             "shown_when": dict(_WHEN_OVERFLOW),
-             "type": "number", "min": 0.1, "max": 10.0, "default": 1.5,
-             "help": "How readily bars overflow; higher means more overflow."},
             {"name": "bars", "label": "Bars", "group": "look",
              "type": "boolean", "default": True,
              "help": "Draw the bars. Turn off to show only the peak markers."},
@@ -574,9 +565,9 @@ def current_bars_settings_descriptor() -> dict[str, object]:
                  for position, weight in DEFAULT_WEIGHT_POINTS
              ],
              "help": "Frequency weighting curve: linear between points, flat beyond the first and last. Points are sorted by position, and two points can't share one."},
-            {"name": "sensitivity_scalar", "label": "Gain", "group": "range",
-             "type": "number", "min": 0.01, "max": 20.0, "default": 1.0,
-             "help": "Overall gain on top of automatic scaling; higher makes bars taller."},
+            {"name": "gain", "label": "Gain", "group": "range",
+             "type": "number", "min": GAIN_MIN, "max": GAIN_MAX, "default": GAIN_DEFAULT,
+             "help": "Multiplies bar height after automatic scaling: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."},
         ],
         "backend_constraints": {
             PILLOW_BULK_OUTPUT_PATH: {
@@ -658,10 +649,9 @@ def normalize_current_bars_settings(
         raise LayerSettingsError(
             "peak_color_mode is unsupported", field="peak_color_mode"
         )
-    normalized["overflow_multiplier"] = _number(normalized, "overflow_multiplier", 0.1, 10.0)
     normalized["peak_fall_speed"] = _number(normalized, "peak_fall_speed", 0.0, 1.0)
     normalized["peak_hold_frames"] = _number(normalized, "peak_hold_frames", 0, 600, integer=True)
-    normalized["sensitivity_scalar"] = _number(normalized, "sensitivity_scalar", 0.01, 20.0)
+    normalized["gain"] = _number(normalized, "gain", GAIN_MIN, GAIN_MAX)
     normalized["smoothing_rise"] = _number(normalized, "smoothing_rise", 0.0, 1.0)
     normalized["smoothing_fall"] = _number(normalized, "smoothing_fall", 0.0, 1.0)
     normalized["dynamic_cycle_speed"] = _number(normalized, "dynamic_cycle_speed", 0.0, 5.0)
@@ -791,13 +781,12 @@ def _settings_for_layer(
     settings.sensitivity = base_settings.sensitivity
     settings.color.theme = normalized["theme"]
     settings.overflow.enabled = normalized["overflow"]
-    settings.overflow.multiplier = normalized["overflow_multiplier"]
     settings.shadow.enabled = normalized["shadow_enabled"]
     settings.peak.enabled = normalized["peak_enabled"]
     settings.peak.color_mode = normalized["peak_color_mode"]
     settings.peak.fall_speed = normalized["peak_fall_speed"]
     settings.peak.hold_frames = normalized["peak_hold_frames"]
-    settings.scaling.sensitivity_scalar = normalized["sensitivity_scalar"]
+    settings.scaling.gain = normalized["gain"]
     settings.smoothing.rise = normalized["smoothing_rise"]
     settings.smoothing.fall = normalized["smoothing_fall"]
     return settings

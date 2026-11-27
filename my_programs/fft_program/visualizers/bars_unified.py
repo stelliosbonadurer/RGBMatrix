@@ -231,8 +231,7 @@ class BarsUnifiedVisualizer(BaseVisualizer):
         shadow_enabled: bool
     ) -> None:
         """Draw a bar with overflow stacking."""
-        overflow = self.settings.overflow
-        total_pixels = int(raw_ratio * height * overflow.multiplier)
+        total_pixels = int(raw_ratio * height)
         
         if total_pixels <= 0:
             return

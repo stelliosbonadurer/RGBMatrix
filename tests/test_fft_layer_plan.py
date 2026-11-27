@@ -627,7 +627,6 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
         self.assertEqual(
             {name: condition["field"] for name, condition in conditional.items()},
             {
-                "overflow_multiplier": "overflow",
                 "peak_color_mode": "peak_enabled",
                 "peak_fall_speed": "peak_enabled",
                 "peak_hold_frames": "peak_enabled",

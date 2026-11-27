@@ -26,7 +26,6 @@
      "theme": "ocean",
      "gradient": false,
      "overflow": true,
-     "overflow_multiplier": 1.5,
      "bars": true,
      "full": false,
      "shadow_enabled": false,
@@ -34,7 +33,7 @@
      "peak_color_mode": "contrast",
      "peak_fall_speed": 0.08,
      "peak_hold_frames": 8,
-     "sensitivity_scalar": 1.0,
+     "gain": 1.5,
      "smoothing_rise": 0.4,
      "smoothing_fall": 0.1,
      "dynamic_cycle_speed": 0.06,
@@ -165,22 +164,6 @@
         "type": "boolean",
         "default": true,
         "help": "On: loud bars wrap past the top in layered colors. Off: bars stop at the top."
-       },
-       {
-        "name": "overflow_multiplier",
-        "label": "Overflow multiplier",
-        "group": "look",
-        "shown_when": {
-         "field": "overflow",
-         "values": [
-          true
-         ]
-        },
-        "type": "number",
-        "min": 0.1,
-        "max": 10.0,
-        "default": 1.5,
-        "help": "How readily bars overflow; higher means more overflow."
        },
        {
         "name": "bars",
@@ -398,14 +381,14 @@
         "help": "Frequency weighting curve: linear between points, flat beyond the first and last. Points are sorted by position, and two points can't share one."
        },
        {
-        "name": "sensitivity_scalar",
+        "name": "gain",
         "label": "Gain",
         "group": "range",
         "type": "number",
-        "min": 0.01,
-        "max": 20.0,
-        "default": 1.0,
-        "help": "Overall gain on top of automatic scaling; higher makes bars taller."
+        "min": 0.1,
+        "max": 10.0,
+        "default": 1.5,
+        "help": "Multiplies bar height after automatic scaling: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."
        }
       ],
       "backend_constraints": {

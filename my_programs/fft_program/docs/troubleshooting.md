@@ -97,6 +97,7 @@ Common issues and their solutions.
 1. **Check audio device** is correct
 2. **Lower noise_floor:** Try `0.0` to see raw signal
 3. **Increase sensitivity:**
+   - Raise the layer's Gain
    - Decrease `fixed_scale_max` if using fixed scale
    - Decrease `headroom_multiplier` for RMS scale
 4. **Check audio levels** - is the mic picking up sound?
@@ -109,6 +110,7 @@ Common issues and their solutions.
 
 1. **Increase noise_floor:** Try `0.3` or higher
 2. **Increase scaling:**
+   - Lower the layer's Gain
    - Increase `fixed_scale_max`
    - Increase `headroom_multiplier`
 3. **Check for clipping** in audio input
