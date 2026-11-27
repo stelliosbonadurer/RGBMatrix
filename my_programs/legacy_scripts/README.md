@@ -1,8 +1,9 @@
 # Legacy FFT scripts
 
 Standalone scripts from before the modular FFT program (`my_programs/fft_program`).
-They are kept for reference only: nothing launches, imports, or tests them, and the
-web controller doesn't list them. They keep their own hard-coded constants, so
+They are kept for reference only: nothing imports or tests them, and the web
+controller doesn't list them. `launch_rgbmatrix.py --list` still finds them (it scans
+`my_programs/` recursively), as `my_programs.legacy_scripts.<name>`. They keep their own hard-coded constants, so
 changes to the FFT program (for example the normalized spectrum and dBFS noise
 floor) don't apply to them.
 
