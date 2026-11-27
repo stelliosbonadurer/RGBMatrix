@@ -69,6 +69,7 @@ _PROJECTION_SETTING_NAMES = (
     "min_freq",
     "max_freq",
     "noise_floor_dbfs",
+    "aggregation",
     "weight_points",
 )
 
@@ -108,6 +109,7 @@ def _projection_candidate(
             min_freq=settings["min_freq"],  # type: ignore[arg-type]
             max_freq=settings["max_freq"],  # type: ignore[arg-type]
             weight_points=canonical_weight_points(settings["weight_points"]),
+            aggregation=settings["aggregation"],  # type: ignore[arg-type]
         ),
         float(settings["noise_floor_dbfs"]),
     )
@@ -163,6 +165,7 @@ def standard_analyzer_definition(
             "min_freq": frequency_settings.active_min_freq,
             "max_freq": frequency_settings.active_max_freq,
             "noise_floor_dbfs": sensitivity_settings.noise_floor_dbfs,
+            "aggregation": sensitivity_settings.aggregation,
             "weight_points": weight_points_document(
                 sensitivity_settings.weight_points
             ),
@@ -270,6 +273,9 @@ class AnalyzerRegistry:
             settings["min_freq"],
             settings["max_freq"],
             settings["noise_floor_dbfs"],
+            # How bins combine is a projection setting (D-012); curve and spread
+            # are presentation and never reach this key.
+            settings["aggregation"],
             # Lists are unhashable; the canonical tuple also makes key equality
             # independent of the order points arrived in.
             canonical_weight_points(settings["weight_points"]),

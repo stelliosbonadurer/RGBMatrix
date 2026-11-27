@@ -127,7 +127,13 @@ The numpy vectorization in `scaling.py` for smoothing and peak tracking was kept
 - These run once per frame, not thousands of times per frame
 
 Since fft-level-controls M2 they write into preallocated buffers (`out=`,
-`np.copyto(..., where=)`), so the scaler allocates no arrays per frame:
+`np.copyto(..., where=)`), so the scaler allocates no arrays per frame. M4's
+response curve (`np.power(..., out=)`) and column spread (steps of precomputed views,
+two per column of radius) follow the same rule. On a Mac, a layer's scaler takes
+about 8 µs a frame by default, 12 µs with spread radius 4, and 24 µs with a curve
+and radius 16. For comparison, one 64-bar projection takes about 121 µs with mean
+aggregation, 66 µs with max, and 29 µs with band energy (the per-bar `np.mean`
+call dominates); see the pending bar-mapping speedup:
 
 ```python
 # Runs once per frame on 64 elements, into reused buffers

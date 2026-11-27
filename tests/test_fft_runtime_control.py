@@ -248,6 +248,16 @@ class SettingsFileTests(unittest.TestCase):
         settings, _output = self._load({})
         self.assertEqual(settings.sensitivity.noise_floor_dbfs, -65.0)
 
+    def test_aggregation_loads_and_an_unknown_method_fails(self) -> None:
+        # fft-level-controls M4 criterion 8.
+        settings, _output = self._load({"aggregation": "band_energy"})
+        self.assertEqual(settings.sensitivity.aggregation, "band_energy")
+        settings, _output = self._load({})
+        self.assertEqual(settings.sensitivity.aggregation, "mean")
+        with self.assertRaises(ValueError) as caught:
+            self._load({"aggregation": "median"})
+        self.assertIn("sensitivity.aggregation", str(caught.exception))
+
     def test_silence_threshold_is_dropped_with_a_note(self) -> None:
         settings, output = self._load({"silence_threshold": 0.1, "noise_floor_dbfs": -40.0})
         self.assertEqual(settings.sensitivity.noise_floor_dbfs, -40.0)

@@ -33,6 +33,14 @@ from config.weighting import (
 
 STANDARD_ANALYSIS_SCHEMA_VERSION = 1
 
+# How the FFT bins inside one bar combine into its reading (D-012). Each method has
+# its own full-scale constant, so a full-scale sine reads 1.0 (D-017, D-037, D-038).
+AGGREGATION_MEAN = "mean"
+AGGREGATION_BAND_ENERGY = "band_energy"
+AGGREGATION_MAX = "max"
+AGGREGATIONS = (AGGREGATION_MEAN, AGGREGATION_BAND_ENERGY, AGGREGATION_MAX)
+AGGREGATION_DEFAULT = AGGREGATION_MEAN
+
 
 class AnalysisPlanValidationError(ValueError):
     """Raised before an invalid standard-analysis candidate can be activated."""
@@ -79,6 +87,7 @@ class StandardAnalysisCandidate:
     min_freq: float
     max_freq: float
     weight_points: WeightPoints
+    aggregation: str = AGGREGATION_DEFAULT
 
     def __post_init__(self) -> None:
         _require_integer("schema_version", self.schema_version)
@@ -106,6 +115,10 @@ class StandardAnalysisCandidate:
                 "weight_points must be canonical (position, weight) tuples "
                 "sorted by position"
             )
+        if not isinstance(self.aggregation, str) or self.aggregation not in AGGREGATIONS:
+            raise AnalysisPlanValidationError(
+                f"aggregation must be one of {', '.join(AGGREGATIONS)}"
+            )
 
     @classmethod
     def from_settings(
@@ -124,6 +137,7 @@ class StandardAnalysisCandidate:
             min_freq=frequency_settings.active_min_freq,
             max_freq=frequency_settings.active_max_freq,
             weight_points=canonical_weight_points(sensitivity_settings.weight_points),
+            aggregation=sensitivity_settings.aggregation,
         )
 
 
@@ -132,8 +146,9 @@ class StandardAnalysisPlan:
     """Array-oriented runtime inputs used by the standard FFT hot path.
 
     ``bin_weights`` is the weighting curve times ``spectrum_scale``, so one multiply
-    both weights and normalizes a bar (D-017, D-031). ``spectrum_scale`` turns a raw
-    FFT magnitude into full-scale units: a full-scale sine centred on a bin reads 1.0.
+    both weights and normalizes a bar (D-017, D-031). ``spectrum_scale`` turns the
+    ``aggregation`` method's raw reading of a bar into full-scale units, where a
+    full-scale sine reads 1.0 (:func:`aggregation_scale`).
     """
 
     fft_size: int
@@ -141,6 +156,7 @@ class StandardAnalysisPlan:
     bin_indices: tuple[np.ndarray, ...]
     bin_weights: np.ndarray
     spectrum_scale: float = 1.0
+    aggregation: str = AGGREGATION_DEFAULT
 
 
 # The noise floor's bounds and default, in dBFS (D-017, D-030, D-033). The default
@@ -157,6 +173,28 @@ def spectrum_scale(window: np.ndarray) -> float:
     there, whatever the zero padding.
     """
     return 2.0 / float(np.sum(window))
+
+
+def band_energy_scale(window: np.ndarray, fft_size: int) -> float:
+    """What a bar's raw ``sqrt(Σ|X|²)`` is multiplied by so a full-scale sine reads 1.0.
+
+    By Parseval, a sine of amplitude A puts ``fft_size × A² × Σwindow² / 4`` of
+    energy into the positive-frequency bins, whatever the zero padding, so a bar
+    that holds all of it reads 1.0 (D-038). A narrower bar holds a share and reads
+    less.
+    """
+    return 2.0 / math.sqrt(float(fft_size) * float(np.sum(window * window)))
+
+
+def aggregation_scale(aggregation: str, window: np.ndarray, fft_size: int) -> float:
+    """The full-scale constant for one aggregation method (D-017, D-037, D-038).
+
+    Mean and max share :func:`spectrum_scale`: for max, a full-scale sine centred on
+    any bin in a bar reads 1.0; for mean, in a bar that bin fills.
+    """
+    if aggregation == AGGREGATION_BAND_ENERGY:
+        return band_energy_scale(window, fft_size)
+    return spectrum_scale(window)
 
 
 def raw_noise_floor(noise_floor_dbfs: float, scale: float) -> float:
@@ -254,7 +292,7 @@ def compile_standard_analysis_plan(
     )
     window = np.hanning(candidate.block_size)
     window.flags.writeable = False
-    scale = spectrum_scale(window)
+    scale = aggregation_scale(candidate.aggregation, window, candidate.fft_size)
     # Normalization folds into the weights: no per-frame cost (D-017). float32
     # matches the transport slots, so the hot-path multiply needs no cast.
     weights = (layout.weights * scale).astype(np.float32)
@@ -266,6 +304,7 @@ def compile_standard_analysis_plan(
         bin_indices=layout.bin_indices,
         bin_weights=weights,
         spectrum_scale=scale,
+        aggregation=candidate.aggregation,
     )
 
 
@@ -286,6 +325,11 @@ __all__ = [
     "legacy_weight_points",
     "weight_points_document",
     # Defined here.
+    "AGGREGATIONS",
+    "AGGREGATION_BAND_ENERGY",
+    "AGGREGATION_DEFAULT",
+    "AGGREGATION_MAX",
+    "AGGREGATION_MEAN",
     "AnalysisPlanValidationError",
     "NOISE_FLOOR_DBFS_DEFAULT",
     "NOISE_FLOOR_DBFS_MAX",
@@ -294,6 +338,8 @@ __all__ = [
     "STANDARD_ANALYSIS_SCHEMA_VERSION",
     "StandardAnalysisCandidate",
     "StandardAnalysisPlan",
+    "aggregation_scale",
+    "band_energy_scale",
     "compile_standard_analysis_plan",
     "projection_layout",
     "raw_noise_floor",

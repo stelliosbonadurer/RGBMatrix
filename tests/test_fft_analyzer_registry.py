@@ -415,6 +415,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
             "min_freq": 80.0,
             "max_freq": 1950.0,
             "noise_floor_dbfs": -120.0,
+            "aggregation": "mean",
             "weight_points": legacy_weight_points(),
         }
         high_settings = {
@@ -443,6 +444,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
                 "min_freq": frequency.active_min_freq,
                 "max_freq": frequency.active_max_freq,
                 "noise_floor_dbfs": sensitivity.noise_floor_dbfs,
+                "aggregation": sensitivity.aggregation,
                 "weight_points": legacy_weight_points(),
             },
         )
@@ -486,6 +488,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
                 "min_freq": 80.0,
                 "max_freq": 1950.0,
                 "noise_floor_dbfs": -120.0,
+                "aggregation": "mean",
                 "weight_points": legacy_weight_points(),
             },
         )
@@ -526,7 +529,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
         )
         low = {
             "min_freq": 80.0, "max_freq": 1950.0, "noise_floor_dbfs": -65.0,
-            "weight_points": legacy_weight_points(),
+            "aggregation": "mean", "weight_points": legacy_weight_points(),
         }
         high = {**low, "min_freq": 2000.0, "max_freq": 6300.0}
 

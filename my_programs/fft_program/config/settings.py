@@ -110,6 +110,9 @@ class SensitivitySettings:
     # Lower is more sensitive; raise it if bars move with no audio. -65 is provisional
     # until a silence run on the Pi (fft-level-controls D-033).
     noise_floor_dbfs: float = -65.0
+    # How the FFT bins in one bar combine: 'mean', 'band_energy' (sqrt of the summed
+    # squares), or 'max'. Each reads a full-scale sine as 1.0 (fft-level-controls D-012).
+    aggregation: str = 'mean'
     # Frequency weighting: {"position": 0-1 along the log range, "weight": 0-100}.
     # Linear between points, flat beyond the ends. The default approximates the
     # retired low_freq_weight=0.45 / high_freq_weight=10.0 curve.
@@ -117,6 +120,8 @@ class SensitivitySettings:
 
 
 _LEGACY_WEIGHT_KEYS = ("low_freq_weight", "high_freq_weight")
+# Mirrors core.analysis_plan.AGGREGATIONS, which config can't import.
+_AGGREGATIONS = ("mean", "band_energy", "max")
 
 
 def _sensitivity_from_json(data: dict) -> SensitivitySettings:
@@ -148,6 +153,10 @@ def _sensitivity_from_json(data: dict) -> SensitivitySettings:
             "Settings note: converted retired "
             f"{', '.join(sorted(legacy))} to sensitivity.weight_points"
         )
+    if "aggregation" in data and data["aggregation"] not in _AGGREGATIONS:
+        raise ValueError(
+            "sensitivity.aggregation must be one of " + ", ".join(_AGGREGATIONS)
+        )
     return SensitivitySettings(**data)
 
 
@@ -160,6 +169,7 @@ class ScalingSettings:
     release_seconds: float = 2.75      # Time constant for adapting to QUIETER audio
     gain: float = 1.5                  # Multiplies bar height after scaling (2 = twice as tall)
     max_boost_db: float = 68.0         # Most auto level may raise quiet input, in dB re full scale
+    response_curve: float = 1.0        # Height = ratio ** curve after gain; < 1 lifts quiet bars
 
 
 @dataclass
@@ -167,6 +177,10 @@ class SmoothingSettings:
     """Bar smoothing configuration, as time constants (0 = instant)."""
     rise_seconds: float = 0.023  # Seconds to rise toward a louder value
     fall_seconds: float = 0.11   # Seconds to fall toward a quieter value
+    # Column spread, before rise/fall: each bar lifts neighbors within spread_radius
+    # columns to its height x spread_falloff per column of distance (0 = off).
+    spread_radius: int = 0
+    spread_falloff: float = 0.5
 
 
 @dataclass

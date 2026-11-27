@@ -39,7 +39,8 @@ analysis worker
 
 main/render loop (continuous; never waits for the worker)
     ├── lease latest complete 64-bin result
-    ├── per layer: auto level -> gain -> rise/fall smoothing -> peak tracking
+    ├── per layer: auto level -> gain -> response curve -> column spread
+    │              -> rise/fall smoothing -> peak tracking
     ├── release result slot
     ├── direct native-canvas drawing -> optional peak overlay
     └── SwapOnVSync -> configured post-frame sleep
@@ -71,11 +72,18 @@ weights. Compilation occurs only at startup or after a successful relevant Apply
 
 The spectrum is in full-scale units: a full-scale sine centred on an FFT bin reads 1.0
 whatever the block or FFT size. The plan's weights are the layer's weighting curve
-times `spectrum_scale` (`2 / Σ window`), so one multiply weights and normalizes a bar.
-Each bar is the mean of its bins, minus the noise floor (set in dBFS and converted to
-raw units once per published state), clipped at 0, then times its weight: the floor
-comes off before weighting. Auto level, gain, and max auto boost act later, per layer,
-in `core/scaling.py`; they never split a projection.
+times `spectrum_scale`, so one multiply weights and normalizes a bar. Each bar
+combines its bins by the layer's `aggregation`: the mean, the band energy
+`sqrt(Σ|X|²)`, or the max. `spectrum_scale` is that method's full-scale constant
+(`aggregation_scale`): `2 / Σ window` for mean and max, `2 / sqrt(fft_size × Σ window²)`
+for band energy (Parseval). The method is chosen once per projection in
+`_project_into`, not per bar. The bar then has the noise floor taken off (set in dBFS
+and converted to raw units with the same constant once per published state), is
+clipped at 0, and is multiplied by its weight: the floor comes off before weighting.
+Range, floor, aggregation, and weighting points are the projection settings
+(`CURRENT_BARS_PROJECTION_SETTING_NAMES`). Auto level, gain, max auto boost, the
+response curve, and column spread act later, per layer, in `core/scaling.py`; they
+never split a projection.
 
 The worker reads one versioned state containing the plan and noise floor. Applying a
 new plan/noise floor replaces that state atomically and advances its epoch. A result
@@ -87,16 +95,23 @@ until the new epoch publishes, preserving continuous render cadence.
 ## Scaling and Temporal State
 
 Each layer owns one `ScalingProcessor`. `process(bars, now)` consumes the latest
-64-bin magnitudes and returns normalized bars, smoothed bars, and peaks, all
-preallocated arrays with the same identity on every call.
+64-bin magnitudes and returns the presented bars (after gain, curve, and spread),
+smoothed bars, and peaks, all preallocated arrays with the same identity on every
+call.
 
 - **Auto level** (per layer, on by default) is one asymmetric envelope on the square
   of each frame's largest bar: it rises with `auto_level_attack_seconds` and falls
   with `auto_level_release_seconds`. The divisor is `sqrt(envelope) × headroom`, never
-  below 0.05. With auto level off the divisor is the constant 0.3 and Gain alone sets
-  the size. The envelope keeps tracking while auto level is off. A fresh layer starts
+  below `10^(−auto_level_max_boost_db/20)`. With auto level off the divisor is the
+  constant `FIXED_SCALE` and Gain alone sets the size. The envelope keeps tracking while auto level is off. A fresh layer starts
   the envelope at its first frame's level.
 - **Gain** multiplies after the divisor.
+- **Response curve** raises the result to `response_curve` in place (skipped at 1).
+- **Column spread** writes `max(x[i], x[j] × falloff^|i−j|)` within `spread_radius`
+  into its own array. Its steps, `falloff^d` with the array views each reads and
+  writes, are built when the processor is, so a frame makes no slices or arrays.
+  Spread is a max, and auto level reads the frame's input, so neither the curve nor
+  spread changes the level auto level tracks.
 - **Rise/fall smoothing and peaks** are in seconds: rise and fall are time constants,
   peaks hold for `peak_hold_seconds` and then fall at `peak_fall_rate` panel heights
   per second.

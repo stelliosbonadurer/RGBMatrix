@@ -154,6 +154,26 @@ test('a layer saved with the raw noise floor drops it and fills the dBFS floor a
   assert.match(presets.reconcileNote('Warm bass', result.changes), /noise_floor/);
 });
 
+test('a layer saved before curve, spread, and aggregation fills their defaults and names them (fft-level-controls D-040)', () => {
+  const structure = catalog.structure;
+  const current = structure.layers[0].settings;
+  const added = ['response_curve', 'spread_radius', 'spread_falloff', 'aggregation'];
+  const old = Object.fromEntries(Object.entries(current).filter(([name]) => !added.includes(name)));
+  const saved = {...structure.layers[0], settings: {...old, gain: 2}};
+  const content = {source: 'usb-mic', backend: structure.output_backend, layers: [saved]};
+  const result = presets.reconcile(content, structure, {choices: ['usb-mic'], default: 'usb-mic'});
+  assert.deepEqual(result.changes.dropped, []);
+  const labels = new Map(fft.descriptorFor(structure, 'current-bars').fields.map(field => [field.name, field.label]));
+  assert.deepEqual([...result.changes.filled].sort(), added.map(name => labels.get(name)).sort());
+  const settings = result.layers[0].settings;
+  assert.equal(settings.response_curve, 1);
+  assert.equal(settings.spread_radius, 0);
+  assert.equal(settings.spread_falloff, 0.5);
+  assert.equal(settings.aggregation, 'mean');
+  assert.equal(settings.gain, 2);
+  assert.match(presets.reconcileNote('Warm bass', result.changes), /Response curve/);
+});
+
 test('Default is the catalog layer, output, and source (D-070)', () => {
   const preset = presets.defaultPreset(catalog, 'usb-mic');
   assert.equal(preset.preset_id, presets.DEFAULT_ID);

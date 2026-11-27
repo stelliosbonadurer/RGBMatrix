@@ -66,6 +66,7 @@ zoom_max_freq: int = 6300   # Zoom maximum Hz
 
 ```python
 noise_floor_dbfs: float = -65.0  # Subtracted before weighting, in dBFS
+aggregation: str = 'mean'        # How a bar's FFT bins combine: mean, band_energy, max
 weight_points: list = [    # Frequency weighting curve
     {"position": 0.0, "weight": 0.45},
     {"position": 0.1, "weight": 0.752},
@@ -76,7 +77,9 @@ weight_points: list = [    # Frequency weighting curve
 ```
 
 These are the startup values for the default layer and the analyzer. At runtime each
-layer carries its own `noise_floor_dbfs` and `weight_points` in its structure settings.
+layer carries its own `noise_floor_dbfs`, `aggregation`, and `weight_points` in its
+structure settings. These pick the layer's projection: layers that differ in any of
+them (or in range) each cost one projection of the shared spectrum.
 
 Bars are measured in full-scale units, where a full-scale sine reads 1.0 (0 dBFS), so
 they don't change with `block_size` or `fft_size`. `noise_floor_dbfs` (−120 to −20)
@@ -84,6 +87,23 @@ is subtracted from each bar's level before the weighting curve multiplies it, so
 floor cuts quiet bass and quiet treble alike. A bar below the floor is dark. The
 default −65 dBFS is provisional until a silence measurement on the Pi; it keeps
 white noise at −60 dBFS RMS dark at block 512.
+
+`aggregation` sets how the FFT bins inside one bar combine into its level. Each method
+has its own full-scale constant, computed when the layer is compiled, so a full-scale
+sine still reads 1.0 and the floor keeps its dBFS meaning:
+
+| Method | Bar level | Full-scale constant | Reads a full-scale tone as 1.0 |
+| --- | --- | --- | --- |
+| `mean` (default) | average of the bins' magnitudes | `2 / Σ window` | in a bar no wider than the tone's peak |
+| `band_energy` | `sqrt(Σ magnitude²)` | `2 / sqrt(fft_size × Σ window²)` | in a bar wide enough to hold the tone's whole main lobe |
+| `max` | the loudest bin | `2 / Σ window` | in any bar holding the tone's centre bin |
+
+So with the same weighting curve, `mean` reads a tone lower in wide treble bars and
+`band_energy` reads it lower in narrow bass bars (about −11 dB at the default
+100–6300 Hz range, block 512), because the Hann window spreads a tone over several
+narrow bars. None of the three changes with `fft_size`. At the default −65 dBFS
+floor, white noise at −60 dBFS RMS stays dark with every method. A settings file
+with another value fails to load.
 
 The retired `noise_floor` (raw units, subtracted after weighting) has no exact dBFS
 equivalent, so a settings file that still has it fails to load with a message naming
@@ -119,7 +139,14 @@ attack_seconds: float = 5.5   # Time constant for adapting to louder audio
 release_seconds: float = 2.75 # Time constant for adapting to quieter audio
 gain: float = 1.5             # Multiplies bar height (2 = twice as tall)
 max_boost_db: float = 68.0    # Most auto level may raise quiet input, in dB
+response_curve: float = 1.0   # Height = level ** curve after gain; 1 is linear
 ```
+
+`response_curve` (0.25–4) raises each bar's height, after auto level and gain, to that
+power. Below 1 lifts quiet bars toward loud ones (0.5 turns a quarter-height bar into
+half height); above 1 makes loud bars stand out more (2 turns half height into a
+quarter). Gain and the curve combine, so gain `g` then curve `γ` scales a bar by
+`g^γ`. At exactly 1 the curve is skipped.
 
 Auto level divides each bar by `sqrt(envelope) × headroom` but never by less than
 `10^(−max_boost_db/20)` (in full-scale units), so it lifts quiet music by at most
@@ -130,9 +157,10 @@ block 512 (about −52.6 dBFS), so bars look as they did at the default block si
 These, `SmoothingSettings`, and the peak timing are the startup values for the
 default layer. Each layer carries its own copies in its structure settings
 (`auto_level`, `auto_level_headroom`, `auto_level_attack_seconds`,
-`auto_level_release_seconds`, `auto_level_max_boost_db`, `gain`, `smoothing_rise_seconds`,
-`smoothing_fall_seconds`, `peak_hold_seconds`, `peak_fall_rate`), and the FFT page
-can copy any one of them to every layer.
+`auto_level_release_seconds`, `auto_level_max_boost_db`, `gain`, `response_curve`,
+`smoothing_rise_seconds`, `smoothing_fall_seconds`, `spread_radius`, `spread_falloff`,
+`peak_hold_seconds`, `peak_fall_rate`), and the FFT page can copy any one of them to
+every layer. None of them splits a projection.
 
 The defaults approximate the retired rolling-RMS scaler at about 86 calls per
 second. The retired keys `use_fixed_scale`, `use_rolling_rms_scale`,
@@ -161,7 +189,16 @@ replace them with `gain = multiplier / sensitivity_scalar` for overflow layers, 
 ```python
 rise_seconds: float = 0.023  # Time constant toward a louder value (0 = instant)
 fall_seconds: float = 0.11   # Time constant toward a quieter value (0 = instant)
+spread_radius: int = 0       # Columns to each side a bar lifts (0 = off)
+spread_falloff: float = 0.5  # Fraction of height kept per column of distance
 ```
+
+Column spread runs after the response curve and before rise/fall smoothing. Each bar
+lifts its neighbors within `spread_radius` columns (0–16) to at least its own height
+times `spread_falloff` (0–1) per column of distance, so with radius 2 and falloff 0.5
+a lone full-height bar shows as ¼, ½, 1, ½, ¼. It takes the larger value, so the
+tallest bar and the level auto level reads never change, and it stops at the panel's
+edges. Peak markers follow the spread bars.
 
 The retired `rise` and `fall` were per-call fractions; a settings file with them
 fails to load.
@@ -170,6 +207,7 @@ fails to load.
 
 - Lower `rise_seconds` = snappier response to beats
 - Higher `fall_seconds` = smoother, more flowing decay
+- Raise `spread_radius` (2–4) with `spread_falloff` around 0.5 for a fuller, rounder look
 
 ### OverflowSettings
 

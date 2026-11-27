@@ -1,14 +1,16 @@
-"""fft-level-controls M2: per-layer auto level and seconds-based timing.
+"""fft-level-controls M2 and M4: per-layer auto level, timing, curve, and spread.
 
 Covers the frame-rate independence the design depends on (D-008, D-026), the
-defaults' fit to the retired scaler (D-014, D-025), auto level off (D-015), and the
-allocation-free hot path.
+defaults' fit to the retired scaler (D-014, D-025), auto level off (D-015), the
+response curve and column spread (D-013, D-019, D-039), and the allocation-free
+hot path.
 """
 from __future__ import annotations
 
 import math
 from pathlib import Path
 import sys
+import tracemalloc
 from types import ModuleType
 import unittest
 
@@ -314,6 +316,157 @@ class TimingTests(unittest.TestCase):
         np.testing.assert_array_equal(scaler.peak_heights, 0.0)  # floored
 
 
+def _shaper(*, curve: float = 1.0, radius: int = 0, falloff: float = 0.5) -> ScalingProcessor:
+    """A scaler that passes bars through: gain/scale is exactly 1, no smoothing."""
+    return ScalingProcessor(
+        ScalingSettings(auto_level=False, gain=FIXED_SCALE, response_curve=curve),
+        SmoothingSettings(
+            rise_seconds=0.0, fall_seconds=0.0,
+            spread_radius=radius, spread_falloff=falloff,
+        ),
+        PeakSettings(),
+        WIDTH,
+    )
+
+
+def _spike(column: int, height: float = 1.0) -> np.ndarray:
+    bars = np.zeros(WIDTH, dtype=np.float32)
+    bars[column] = height
+    return bars
+
+
+class ResponseCurveTests(unittest.TestCase):
+    """fft-level-controls D-013: height = ratio ** curve, after gain."""
+
+    def test_curve_one_is_the_plain_gain_over_scale(self) -> None:
+        scaler = _scaler(gain=2.0)
+        bars = SHAPE * 0.01
+        presented, _smoothed, _peaks = scaler.process(bars, 0.0)
+        # The envelope updates first, so the frame used the scale read after it.
+        expected = np.multiply(bars, 2.0 / scaler.scale, dtype=np.float32)
+        np.testing.assert_array_equal(presented, expected)
+
+    def test_curve_below_one_lifts_and_above_one_lowers(self) -> None:
+        for curve, given, shown in ((0.5, 0.25, 0.5), (2.0, 0.5, 0.25), (0.25, 0.0625, 0.5)):
+            with self.subTest(curve=curve):
+                presented, _smoothed, _peaks = _shaper(curve=curve).process(
+                    _spike(3, given), 0.0
+                )
+                self.assertAlmostEqual(float(presented[3]), shown, places=6)
+                self.assertEqual(float(presented[0]), 0.0)
+
+    def test_curve_applies_after_gain(self) -> None:
+        scaler = ScalingProcessor(
+            ScalingSettings(auto_level=False, gain=FIXED_SCALE * 4.0, response_curve=0.5),
+            SmoothingSettings(rise_seconds=0.0, fall_seconds=0.0),
+            PeakSettings(),
+            WIDTH,
+        )
+        presented, _smoothed, _peaks = scaler.process(_spike(2, 0.25), 0.0)
+        self.assertAlmostEqual(float(presented[2]), 1.0, places=6)  # (0.25 × 4) ** 0.5
+
+    def test_bars_and_peaks_follow_the_curve(self) -> None:
+        presented, smoothed, peaks = _shaper(curve=0.5).process(_spike(5, 0.25), 0.0)
+        np.testing.assert_array_equal(smoothed, presented)
+        np.testing.assert_array_equal(peaks, presented)
+
+
+def _smoothed_shaper(*, curve: float = 1.0, radius: int = 0, rise: float = 0.0, fall: float = 0.0):
+    return ScalingProcessor(
+        ScalingSettings(auto_level=False, gain=FIXED_SCALE, response_curve=curve),
+        SmoothingSettings(
+            rise_seconds=rise, fall_seconds=fall,
+            spread_radius=radius, spread_falloff=0.5,
+        ),
+        PeakSettings(),
+        WIDTH,
+    )
+
+
+class PipelineOrderTests(unittest.TestCase):
+    """Curve and spread run before rise/fall smoothing (D-019's pipeline)."""
+
+    def test_the_curve_comes_before_rise_smoothing(self) -> None:
+        rise_seconds = 0.05
+        r = 1.0 - math.exp(-FIRST_STEP_SECONDS / rise_seconds)
+        _presented, smoothed, _peaks = _smoothed_shaper(curve=0.5, rise=rise_seconds).process(
+            _spike(3, 0.25), 0.0
+        )
+        # Curve then smoothing: r × 0.25^0.5. The other order gives (r × 0.25)^0.5.
+        self.assertAlmostEqual(float(smoothed[3]), r * 0.5, places=6)
+        self.assertGreater(abs(math.sqrt(r * 0.25) - r * 0.5), 0.05)
+
+    def test_spread_comes_before_fall_smoothing(self) -> None:
+        # Instant rise, half the distance per call falling.
+        step = 1.0 / 86.0
+        scaler = _smoothed_shaper(radius=1, fall=step / math.log(2.0))
+        scaler.process(_spike(6, 1.0), 0.0)
+        _presented, smoothed, _peaks = scaler.process(_spike(7, 0.6), step)
+        # Spread first: column 6 falls from 1.0 toward 0.6 × 0.5 = 0.3, to 0.65.
+        # Spread after smoothing would give max(0.5, 0.3) = 0.5.
+        self.assertAlmostEqual(float(smoothed[6]), 0.65, places=5)
+        self.assertAlmostEqual(float(smoothed[7]), 0.6, places=6)
+
+
+class ColumnSpreadTests(unittest.TestCase):
+    """fft-level-controls D-019, D-039: a max-based spread in display terms."""
+
+    def test_radius_zero_changes_nothing(self) -> None:
+        bars = SHAPE[::-1].copy()
+        presented, _smoothed, _peaks = _shaper(radius=0, falloff=0.9).process(bars, 0.0)
+        np.testing.assert_array_equal(presented, bars)
+
+    def test_a_lone_bar_lifts_its_neighbors_by_falloff_per_column(self) -> None:
+        presented, smoothed, peaks = _shaper(radius=2, falloff=0.5).process(_spike(10), 0.0)
+        expected = np.zeros(WIDTH, dtype=np.float32)
+        expected[8:13] = (0.25, 0.5, 1.0, 0.5, 0.25)
+        np.testing.assert_array_equal(presented, expected)
+        np.testing.assert_array_equal(smoothed, expected)
+        np.testing.assert_array_equal(peaks, expected)
+
+    def test_spread_does_not_wrap_at_the_edges(self) -> None:
+        for column, lit in ((0, range(0, 3)), (WIDTH - 1, range(WIDTH - 3, WIDTH))):
+            with self.subTest(column=column):
+                presented, _smoothed, _peaks = _shaper(radius=2, falloff=0.5).process(
+                    _spike(column), 0.0
+                )
+                self.assertEqual(set(np.flatnonzero(presented)), set(lit))
+
+    def test_spread_is_a_max_so_the_tallest_column_is_unchanged(self) -> None:
+        bars = (SHAPE * np.float32(0.7))[::-1].copy()
+        bars[4] = 1.2
+        presented, _smoothed, _peaks = _shaper(radius=16, falloff=0.95).process(bars, 0.0)
+        self.assertEqual(float(presented.max()), float(bars.max()))
+        self.assertTrue(np.all(presented >= bars))
+
+    def test_falloff_zero_lifts_nothing(self) -> None:
+        bars = SHAPE.copy()
+        presented, _smoothed, _peaks = _shaper(radius=4, falloff=0.0).process(bars, 0.0)
+        np.testing.assert_array_equal(presented, bars)
+
+    def test_spread_runs_after_the_curve(self) -> None:
+        # (0.25 ** 0.5) × 0.5 = 0.25 one column away; the other order gives 0.354.
+        presented, _smoothed, _peaks = _shaper(curve=0.5, radius=1, falloff=0.5).process(
+            _spike(6, 0.25), 0.0
+        )
+        self.assertAlmostEqual(float(presented[6]), 0.5, places=6)
+        self.assertAlmostEqual(float(presented[7]), 0.25, places=6)
+
+    def test_auto_level_reads_the_input_not_the_spread_or_curve(self) -> None:
+        plain = _scaler()
+        shaped = ScalingProcessor(
+            ScalingSettings(response_curve=0.5),
+            SmoothingSettings(spread_radius=8, spread_falloff=0.9),
+            PeakSettings(),
+            WIDTH,
+        )
+        for step in range(20):
+            bars = SHAPE * (0.01 * (step % 5 + 1))
+            plain.process(bars, step / 86)
+            shaped.process(bars, step / 86)
+        self.assertEqual(plain.envelope, shaped.envelope)
+
+
 class HotPathTests(unittest.TestCase):
     def test_process_returns_the_same_arrays_every_call(self) -> None:
         scaler = _scaler()
@@ -325,6 +478,45 @@ class HotPathTests(unittest.TestCase):
             self.assertEqual(ids, identities)
         self.assertIs(result[1], scaler.smoothed_bars)
         self.assertIs(result[2], scaler.peak_heights)
+
+    def test_curve_and_spread_keep_the_same_arrays_every_call(self) -> None:
+        scaler = _shaper(curve=0.5, radius=16, falloff=0.8)
+        identities = None
+        for step in range(5):
+            result = scaler.process(SHAPE * (step + 1), step / 86)
+            ids = tuple(id(array) for array in result)
+            identities = identities or ids
+            self.assertEqual(ids, identities)
+        # Every spread step reads and writes views of the processor's own arrays.
+        for _factor, source, target, scratch in scaler._spread_steps:
+            self.assertIs(source.base, scaler._normalized)
+            self.assertIs(target.base, scaler._spread)
+            self.assertIs(scratch.base, scaler._spread_scratch)
+        self.assertEqual(len(scaler._spread_steps), 2 * (WIDTH - 1))
+
+    def test_curve_and_spread_retain_no_memory_per_call(self) -> None:
+        # Criterion 9. tracemalloc catches growth per call (one kept 64-float array
+        # a call would be hundreds of KB here), not short-lived temporaries; the
+        # spread's views are built once (see the identity test above).
+        scaler = ScalingProcessor(
+            ScalingSettings(response_curve=0.5),
+            SmoothingSettings(spread_radius=16, spread_falloff=0.8),
+            PeakSettings(enabled=True),
+            WIDTH,
+        )
+        bars = SHAPE * np.float32(0.1)
+        for step in range(50):
+            scaler.process(bars, step / 86)
+        tracemalloc.start()
+        try:
+            before = tracemalloc.take_snapshot()
+            for step in range(50, 2050):
+                scaler.process(bars, step / 86)
+            after = tracemalloc.take_snapshot()
+        finally:
+            tracemalloc.stop()
+        grown = sum(stat.size_diff for stat in after.compare_to(before, "filename"))
+        self.assertLess(grown, 16 * 1024)
 
     def test_adopt_state_copies_into_the_existing_arrays(self) -> None:
         old = _scaler()

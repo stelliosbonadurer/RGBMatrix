@@ -17,6 +17,8 @@ from typing import Any, TypeAlias
 import numpy as np  # type: ignore
 
 from core.analysis_plan import (
+    AGGREGATIONS,
+    AGGREGATION_DEFAULT,
     DEFAULT_WEIGHT_POINTS,
     NOISE_FLOOR_DBFS_DEFAULT,
     NOISE_FLOOR_DBFS_MAX,
@@ -56,6 +58,15 @@ from core.scaling import (
     MAX_BOOST_DB_DEFAULT,
     MAX_BOOST_DB_MAX,
     MAX_BOOST_DB_MIN,
+    RESPONSE_CURVE_DEFAULT,
+    RESPONSE_CURVE_MAX,
+    RESPONSE_CURVE_MIN,
+    SPREAD_FALLOFF_DEFAULT,
+    SPREAD_FALLOFF_MAX,
+    SPREAD_FALLOFF_MIN,
+    SPREAD_RADIUS_DEFAULT,
+    SPREAD_RADIUS_MAX,
+    SPREAD_RADIUS_MIN,
     ScalingProcessor,
 )
 from themes import get_theme, list_themes
@@ -99,6 +110,9 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "auto_level_attack_seconds",
     "auto_level_release_seconds",
     "auto_level_max_boost_db",
+    "response_curve",
+    "spread_radius",
+    "spread_falloff",
     "smoothing_rise_seconds",
     "smoothing_fall_seconds",
     "dynamic_cycle_speed",
@@ -106,8 +120,18 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "min_freq",
     "max_freq",
     "noise_floor_dbfs",
+    "aggregation",
     "weight_points",
 })
+# The settings that pick a layer's projection (D-012, D-017); every other setting
+# is presentation and never splits a shared projection.
+CURRENT_BARS_PROJECTION_SETTING_NAMES = (
+    "min_freq",
+    "max_freq",
+    "noise_floor_dbfs",
+    "aggregation",
+    "weight_points",
+)
 
 
 class LayerPlanCompilationError(ValueError):
@@ -513,6 +537,11 @@ def current_bars_settings_from_runtime(
         "auto_level_attack_seconds": float(settings.scaling.attack_seconds),
         "auto_level_release_seconds": float(settings.scaling.release_seconds),
         "auto_level_max_boost_db": float(settings.scaling.max_boost_db),
+        "response_curve": float(settings.scaling.response_curve),
+        # Not cast: a settings file's 1.5 or true must fail validation, not
+        # truncate to 1.
+        "spread_radius": settings.smoothing.spread_radius,
+        "spread_falloff": float(settings.smoothing.spread_falloff),
         "smoothing_rise_seconds": float(settings.smoothing.rise_seconds),
         "smoothing_fall_seconds": float(settings.smoothing.fall_seconds),
         "dynamic_cycle_speed": float(getattr(theme, "cycle_speed", 0.06)),
@@ -520,6 +549,7 @@ def current_bars_settings_from_runtime(
         "min_freq": float(settings.frequency.active_min_freq),
         "max_freq": float(settings.frequency.active_max_freq),
         "noise_floor_dbfs": float(settings.sensitivity.noise_floor_dbfs),
+        "aggregation": str(settings.sensitivity.aggregation),
         "weight_points": weight_points_document(settings.sensitivity.weight_points),
     }
 
@@ -537,6 +567,10 @@ CURRENT_BARS_SETTING_GROUPS = (
 )
 _WHEN_PEAKS = {"field": "peak_enabled", "values": [True]}
 _WHEN_AUTO_LEVEL = {"field": "auto_level", "values": [True]}
+_WHEN_SPREAD = {
+    "field": "spread_radius",
+    "values": list(range(SPREAD_RADIUS_MIN + 1, SPREAD_RADIUS_MAX + 1)),
+}
 _WHEN_DYNAMIC_THEME = {"field": "theme", "values": ["dynamic", "dynamic_lateral_gradient"]}
 
 
@@ -566,6 +600,15 @@ def current_bars_settings_descriptor() -> dict[str, object]:
             {"name": "full", "label": "Full columns", "group": "look",
              "type": "boolean", "default": False,
              "help": "Light the whole column, crossfading at the bar height."},
+            {"name": "spread_radius", "label": "Spread (columns)", "group": "look",
+             "type": "integer", "min": SPREAD_RADIUS_MIN, "max": SPREAD_RADIUS_MAX,
+             "default": SPREAD_RADIUS_DEFAULT,
+             "help": "How many columns to each side a bar lifts its neighbors toward its height. Higher spreads wider; 0 is off."},
+            {"name": "spread_falloff", "label": "Spread falloff", "group": "look",
+             "shown_when": dict(_WHEN_SPREAD),
+             "type": "number", "min": SPREAD_FALLOFF_MIN, "max": SPREAD_FALLOFF_MAX,
+             "default": SPREAD_FALLOFF_DEFAULT,
+             "help": "Fraction of a bar's visible height kept per column of distance, 0 to 1. Higher gives broader, flatter shoulders; 0 lifts nothing."},
             {"name": "shadow_enabled", "label": "Shadows", "group": "motion",
              "type": "boolean", "default": False,
              "help": "Let pixels fade out over a few frames instead of switching off."},
@@ -612,6 +655,9 @@ def current_bars_settings_descriptor() -> dict[str, object]:
              "type": "number", "min": NOISE_FLOOR_DBFS_MIN, "max": NOISE_FLOOR_DBFS_MAX,
              "default": NOISE_FLOOR_DBFS_DEFAULT,
              "help": "Level subtracted from every bar before weighting, in dB below full scale. Raise it (toward -20) if bars move with no audio; lower it (toward -120) to show quieter sound."},
+            {"name": "aggregation", "label": "Bar aggregation", "group": "range",
+             "type": "choice", "choices": list(AGGREGATIONS), "default": AGGREGATION_DEFAULT,
+             "help": "How the FFT bins in one bar combine: mean (their average), band_energy (their total energy, so wide treble bars read higher), or max (the loudest bin). Each reads a full-scale tone as 0 dBFS in a bar that holds the tone."},
             {"name": "weight_points", "label": "Weighting points", "group": "range",
              "type": "points",
              "min_items": MIN_WEIGHT_POINTS, "max_items": MAX_WEIGHT_POINTS,
@@ -630,6 +676,10 @@ def current_bars_settings_descriptor() -> dict[str, object]:
             {"name": "gain", "label": "Gain", "group": "level",
              "type": "number", "min": GAIN_MIN, "max": GAIN_MAX, "default": GAIN_DEFAULT,
              "help": "Multiplies bar height after auto level: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."},
+            {"name": "response_curve", "label": "Response curve", "group": "level",
+             "type": "number", "min": RESPONSE_CURVE_MIN, "max": RESPONSE_CURVE_MAX,
+             "default": RESPONSE_CURVE_DEFAULT,
+             "help": "Shapes bar height after auto level and gain (height = level ^ curve). Below 1 lifts quiet bars toward loud ones; above 1 makes loud bars stand out more. 1 is linear."},
             {"name": "auto_level", "label": "Auto level", "group": "level",
              "type": "boolean", "default": True,
              "help": "On: bar height follows the music's recent loudness. Off: a fixed reference, so quiet music stays short and loud music tall; set the size with Gain."},
@@ -741,6 +791,16 @@ def normalize_current_bars_settings(
         normalized, "peak_fall_rate", 0.0, PEAK_FALL_RATE_MAX
     )
     normalized["gain"] = _number(normalized, "gain", GAIN_MIN, GAIN_MAX)
+    normalized["response_curve"] = _number(
+        normalized, "response_curve", RESPONSE_CURVE_MIN, RESPONSE_CURVE_MAX
+    )
+    normalized["spread_radius"] = _number(
+        normalized, "spread_radius", SPREAD_RADIUS_MIN, SPREAD_RADIUS_MAX,
+        integer=True,
+    )
+    normalized["spread_falloff"] = _number(
+        normalized, "spread_falloff", SPREAD_FALLOFF_MIN, SPREAD_FALLOFF_MAX
+    )
     normalized["auto_level_max_boost_db"] = _number(
         normalized, "auto_level_max_boost_db", MAX_BOOST_DB_MIN, MAX_BOOST_DB_MAX
     )
@@ -763,6 +823,14 @@ def normalize_current_bars_settings(
     normalized["noise_floor_dbfs"] = _number(
         normalized, "noise_floor_dbfs", NOISE_FLOOR_DBFS_MIN, NOISE_FLOOR_DBFS_MAX
     )
+    if (
+        not isinstance(normalized["aggregation"], str)
+        or normalized["aggregation"] not in AGGREGATIONS
+    ):
+        raise LayerSettingsError(
+            "aggregation must be one of " + ", ".join(AGGREGATIONS),
+            field="aggregation",
+        )
     try:
         normalized["weight_points"] = weight_points_document(
             normalized["weight_points"]
@@ -893,6 +961,9 @@ def _settings_for_layer(
     settings.scaling.attack_seconds = normalized["auto_level_attack_seconds"]
     settings.scaling.release_seconds = normalized["auto_level_release_seconds"]
     settings.scaling.max_boost_db = normalized["auto_level_max_boost_db"]
+    settings.scaling.response_curve = normalized["response_curve"]
+    settings.smoothing.spread_radius = normalized["spread_radius"]
+    settings.smoothing.spread_falloff = normalized["spread_falloff"]
     settings.smoothing.rise_seconds = normalized["smoothing_rise_seconds"]
     settings.smoothing.fall_seconds = normalized["smoothing_fall_seconds"]
     return settings
@@ -1024,12 +1095,7 @@ def compile_current_bars_layer_plan(
                 definition.analyzer,
                 {
                     name: normalized[name]
-                    for name in (
-                        "min_freq",
-                        "max_freq",
-                        "noise_floor_dbfs",
-                        "weight_points",
-                    )
+                    for name in CURRENT_BARS_PROJECTION_SETTING_NAMES
                 },
             )
         except ValueError as exc:
@@ -1052,6 +1118,7 @@ __all__ = [
     "ActiveLayerPlan",
     "CURRENT_BARS_LAYER_ID",
     "CURRENT_BARS_LAYER_TYPE",
+    "CURRENT_BARS_PROJECTION_SETTING_NAMES",
     "CURRENT_BARS_SETTING_NAMES",
     "CompiledLayerRuntime",
     "LayerPlanCompilationError",

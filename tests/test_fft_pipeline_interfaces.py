@@ -887,3 +887,153 @@ class NormalizedSpectrumTests(unittest.TestCase):
         expected = retired / 0.3 * 1.5
         self.assertGreater(float(expected.max()), 1.0)  # bars of real height
         np.testing.assert_allclose(normalized, expected, rtol=1e-5, atol=7e-4)
+
+
+def _aggregation_processor(
+    aggregation: str,
+    *,
+    fft_size: int = 8192,
+    floor_dbfs: float = -120.0,
+    weight: float = 1.0,
+) -> AudioProcessor:
+    """The default 100–6300 Hz layout, flat weights, and one aggregation method."""
+    processor = AudioProcessor(
+        AudioSettings(fft_size=fft_size),
+        FrequencySettings(),
+        SensitivitySettings(
+            noise_floor_dbfs=floor_dbfs,
+            aggregation=aggregation,
+            weight_points=[{"position": 0.0, "weight": weight}],
+        ),
+        64,
+    )
+    processor.setup()
+    return processor
+
+
+def _centre_bin_frequency(processor: AudioProcessor, index: int) -> float:
+    """The frequency of the FFT bin in the middle of bar ``index``."""
+    plan = processor.active_plan
+    bins = plan.bin_indices[index]
+    return int(bins[len(bins) // 2]) * processor.sample_rate / plan.fft_size
+
+
+class AggregationTests(unittest.TestCase):
+    """fft-level-controls M4: mean, band energy, and max in full-scale units."""
+
+    NARROW = 5  # 2 bins at fft_size 8192, 1 at 4096
+    WIDE = 63  # 74 bins at 8192: holds the whole Hann main lobe at block 512
+
+    def test_max_reads_a_full_scale_sine_as_one_in_narrow_and_wide_bars(self) -> None:
+        # Criterion 1 (D-037).
+        for fft_size in (8192, 4096):
+            processor = _aggregation_processor("max", fft_size=fft_size)
+            for index in (self.NARROW, self.WIDE):
+                with self.subTest(fft_size=fft_size, bar=index):
+                    frequency = _centre_bin_frequency(processor, index)
+                    bars = _bars(processor, _sine(frequency, 1.0, 512, processor.sample_rate))
+                    self.assertAlmostEqual(float(bars[index]), 1.0, delta=0.01)
+
+    def test_band_energy_reads_a_full_scale_sine_as_one_in_a_bar_that_holds_it(self) -> None:
+        # Criterion 1 (D-038): independent of zero padding.
+        for fft_size in (8192, 4096):
+            with self.subTest(fft_size=fft_size):
+                processor = _aggregation_processor("band_energy", fft_size=fft_size)
+                frequency = _centre_bin_frequency(processor, self.WIDE)
+                bars = _bars(processor, _sine(frequency, 1.0, 512, processor.sample_rate))
+                self.assertAlmostEqual(float(bars[self.WIDE]), 1.0, delta=0.01)
+                # A narrow bar holds only part of the tone's energy.
+                narrow = _centre_bin_frequency(processor, self.NARROW)
+                bars = _bars(processor, _sine(narrow, 1.0, 512, processor.sample_rate))
+                self.assertLess(float(bars[self.NARROW]), 0.5)
+
+    def test_each_method_reads_its_own_formula(self) -> None:
+        rng = np.random.default_rng(12)
+        samples = (rng.standard_normal(512) * 0.1).astype(np.float32)
+        for aggregation in ("mean", "band_energy", "max"):
+            with self.subTest(aggregation=aggregation):
+                processor = _aggregation_processor(aggregation)
+                plan = processor.active_plan
+                self.assertEqual(plan.aggregation, aggregation)
+                bars = _bars(processor, samples)
+                spectrum = np.abs(np.fft.rfft(samples * plan.window, n=plan.fft_size))
+                reduce = {
+                    "mean": np.mean,
+                    "band_energy": lambda values: np.sqrt(np.sum(values * values)),
+                    "max": np.max,
+                }[aggregation]
+                expected = np.array([
+                    reduce(spectrum[bins]) if len(bins) else 0.0
+                    for bins in plan.bin_indices
+                ])
+                expected = np.maximum(expected - 1e-6 / plan.spectrum_scale, 0.0)
+                np.testing.assert_allclose(
+                    bars, expected * plan.spectrum_scale, rtol=1e-5, atol=1e-7
+                )
+
+    def test_the_floor_comes_off_each_methods_full_scale_reading(self) -> None:
+        # Criterion 2: max(level − 10^(floor/20), 0) × weight, per method.
+        floor = 10 ** (-40 / 20)
+        for aggregation in ("mean", "band_energy", "max"):
+            reference = _aggregation_processor(aggregation)
+            frequency = _centre_bin_frequency(reference, self.WIDE)
+            samples = _sine(frequency, 10 ** (-30 / 20), 512, reference.sample_rate)
+            level = float(_bars(reference, samples)[self.WIDE])
+            self.assertGreater(level, floor)
+            for weight in (1.0, 4.0):
+                with self.subTest(aggregation=aggregation, weight=weight):
+                    bars = _bars(
+                        _aggregation_processor(aggregation, floor_dbfs=-40.0, weight=weight),
+                        samples,
+                    )
+                    self.assertAlmostEqual(
+                        float(bars[self.WIDE]), max(level - floor, 0.0) * weight, delta=1e-5
+                    )
+
+    def test_default_floor_keeps_quiet_noise_dark_for_every_method(self) -> None:
+        # Criterion 3: -60 dBFS RMS white noise at the default -65 dBFS floor.
+        for aggregation in ("mean", "band_energy", "max"):
+            with self.subTest(aggregation=aggregation):
+                processor = _aggregation_processor(aggregation, floor_dbfs=-65.0)
+                rng = np.random.default_rng(20261126)
+                loudest = 0.0
+                for _frame in range(300):
+                    noise = rng.standard_normal(512) * 10 ** (-60 / 20)
+                    loudest = max(loudest, float(np.max(_bars(processor, noise))))
+                self.assertEqual(loudest, 0.0)
+
+    def test_projection_retains_no_memory_per_call_for_any_method(self) -> None:
+        # Criterion 9: growth per call only (see the scaler's matching test).
+        import tracemalloc
+
+        rng = np.random.default_rng(3)
+        samples = (rng.standard_normal(512) * 0.1).astype(np.float32)
+        for aggregation in ("mean", "band_energy", "max"):
+            with self.subTest(aggregation=aggregation):
+                plan = _aggregation_processor(aggregation).active_plan
+                spectrum = np.abs(np.fft.rfft(samples * plan.window, n=plan.fft_size))
+                destination = np.zeros(64, dtype=np.float32)
+                for _ in range(50):
+                    AudioProcessor._project_into(spectrum, plan, 1e-4, destination)
+                tracemalloc.start()
+                try:
+                    before = tracemalloc.take_snapshot()
+                    for _ in range(2000):
+                        AudioProcessor._project_into(spectrum, plan, 1e-4, destination)
+                    after = tracemalloc.take_snapshot()
+                finally:
+                    tracemalloc.stop()
+                grown = sum(stat.size_diff for stat in after.compare_to(before, "filename"))
+                self.assertLess(grown, 16 * 1024)
+
+    def test_a_projection_with_another_method_shares_the_one_rfft(self) -> None:
+        processor = _aggregation_processor("mean")
+        candidate = replace(processor.analysis_candidate, aggregation="max")
+        view = processor.create_projection(candidate, -120.0)
+        frequency = _centre_bin_frequency(processor, self.WIDE)
+        samples = _sine(frequency, 1.0, 512, processor.sample_rate)
+        primary = _bars(processor, samples)
+        loudest = view.get_fft_magnitudes().copy()
+        view.release_fft_magnitudes()
+        self.assertAlmostEqual(float(loudest[self.WIDE]), 1.0, delta=0.01)
+        self.assertLess(float(primary[self.WIDE]), 0.5)  # the mean of a wide bar

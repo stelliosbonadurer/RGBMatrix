@@ -356,11 +356,14 @@ export function draftChanges(baseline, draft) {
 
 // ---- Bar mappings and their cost (D-066) -----------------------------------
 
-// Layers with the same range, floor, and points share one bucketing of the
-// spectrum (core/analyzer_registry.py); hidden layers count too.
+// Layers with the same range, floor, aggregation, and points share one bucketing
+// of the spectrum (core/analyzer_registry.py); hidden layers count too. Every
+// other setting, such as the response curve and spread, is per layer and free.
 export function mappingKey(settings) {
   const points = sortedPoints(settings?.weight_points || []).map(point => [point.position, point.weight]);
-  return JSON.stringify([settings?.min_freq, settings?.max_freq, settings?.noise_floor_dbfs, points]);
+  return JSON.stringify([
+    settings?.min_freq, settings?.max_freq, settings?.noise_floor_dbfs, settings?.aggregation, points,
+  ]);
 }
 
 export function mappingCount(layers) {
@@ -371,7 +374,7 @@ export function costNote(layers) {
   const count = mappingCount(layers);
   if (count <= 1) return '';
   return `${layers.length} layers use ${count} different bar mappings of the one spectrum. ` +
-    'Layers with the same range, floor, and points share one. Each extra one costs frame rate; ' +
+    'Layers with the same range, floor, aggregation, and points share one. Each extra one costs frame rate; ' +
     'two were measured at about 35% missed refreshes.';
 }
 

@@ -108,11 +108,15 @@ fft_program/
 ```
 
 The modular runtime supports multiple ordered instances of the standard bars layer.
-Every layer's complete settings include `min_freq`, `max_freq`, `noise_floor_dbfs`, and
-`weight_points` (see [configuration](configuration.md#sensitivitysettings)); bars are
-in full-scale units, with the floor in dBFS. Level settings, including max auto boost,
-are per layer (see [configuration](configuration.md#scalingsettings)).
-Equivalent settings share one projected
+Every layer's complete settings include `min_freq`, `max_freq`, `noise_floor_dbfs`,
+`aggregation` (mean, band energy, or max), and `weight_points` (see
+[configuration](configuration.md#sensitivitysettings)); bars are in full-scale units,
+with the floor in dBFS. Level settings, including max auto boost and the response
+curve (see [configuration](configuration.md#scalingsettings)), and column spread (see
+[configuration](configuration.md#smoothingsettings)) are per layer and never split a
+projection. Per layer, bars go through auto level, gain, the response curve, column
+spread, then rise/fall smoothing and peaks.
+Equivalent projection settings share one projected
 result; different ranges are projected from the same microphone block and the same
 full FFT instead of opening another capture stream. Every layer retains independent
 presentation state. Layer structure is runtime-only; restarting the visualization

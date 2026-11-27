@@ -106,6 +106,7 @@ class _Analyzer:
                 f"max_freq must not exceed the {NYQUIST:g} Hz Nyquist frequency"
             )
         projection = _Analyzer(len(self.result))
+        projection.candidate = candidate
         self.projections.append(projection)
         return projection
 
@@ -391,6 +392,47 @@ class StructuralExecutionTests(unittest.TestCase):
 
         self.assertIs(plan.layers[0].analyzer, plan.layers[1].analyzer)
         self.assertIsNot(plan.layers[0].analyzer, plan.layers[2].analyzer)
+
+    def test_aggregation_splits_projections_and_curve_and_spread_do_not(self) -> None:
+        # fft-level-controls M4 criterion 4 (D-012, D-040).
+        settings, definition, capabilities, registry, analyzer, _plan, _controller = _runtime()
+        base = dict(definition.layers[0].settings)
+        first = replace(definition.layers[0], layer_id="first", settings=dict(base))
+        shaped = replace(
+            definition.layers[0],
+            layer_id="shaped",
+            settings={
+                **base,
+                "response_curve": 0.5,
+                "spread_radius": 4,
+                "spread_falloff": 0.8,
+            },
+        )
+        energy = replace(
+            definition.layers[0],
+            layer_id="energy",
+            settings={**base, "aggregation": "band_energy"},
+        )
+        loudest = replace(
+            definition.layers[0],
+            layer_id="loudest",
+            settings={**base, "aggregation": "max"},
+        )
+        graph = compile_runtime_graph(
+            replace(definition, layers=(first, shaped, energy, loudest)),
+            capabilities,
+        )
+        plan = compile_current_bars_layer_plan(
+            graph, registry, settings=settings, width=8, height=8
+        )
+
+        self.assertIs(plan.layers[0].analyzer, plan.layers[1].analyzer)
+        analyzers = {id(layer.analyzer) for layer in plan.layers}
+        self.assertEqual(len(analyzers), 3)
+        self.assertEqual(
+            sorted(projection.candidate.aggregation for projection in analyzer.projections),
+            ["band_energy", "max"],
+        )
 
     def test_equivalent_analyzer_references_share_one_physical_lease(self) -> None:
         settings, definition, capabilities, _registry, _analyzer, _plan, _controller = _runtime()

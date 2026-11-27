@@ -39,6 +39,9 @@
      "auto_level_attack_seconds": 5.5,
      "auto_level_release_seconds": 2.75,
      "auto_level_max_boost_db": 68.0,
+     "response_curve": 1.0,
+     "spread_radius": 0,
+     "spread_falloff": 0.5,
      "smoothing_rise_seconds": 0.023,
      "smoothing_fall_seconds": 0.11,
      "dynamic_cycle_speed": 0.06,
@@ -46,6 +49,7 @@
      "min_freq": 100.0,
      "max_freq": 6300.0,
      "noise_floor_dbfs": -65.0,
+     "aggregation": "mean",
      "weight_points": [
       {
        "position": 0.0,
@@ -189,6 +193,47 @@
         "type": "boolean",
         "default": false,
         "help": "Light the whole column, crossfading at the bar height."
+       },
+       {
+        "name": "spread_radius",
+        "label": "Spread (columns)",
+        "group": "look",
+        "type": "integer",
+        "min": 0,
+        "max": 16,
+        "default": 0,
+        "help": "How many columns to each side a bar lifts its neighbors toward its height. Higher spreads wider; 0 is off."
+       },
+       {
+        "name": "spread_falloff",
+        "label": "Spread falloff",
+        "group": "look",
+        "shown_when": {
+         "field": "spread_radius",
+         "values": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16
+         ]
+        },
+        "type": "number",
+        "min": 0.0,
+        "max": 1.0,
+        "default": 0.5,
+        "help": "Fraction of a bar's visible height kept per column of distance, 0 to 1. Higher gives broader, flatter shoulders; 0 lifts nothing."
        },
        {
         "name": "shadow_enabled",
@@ -341,6 +386,19 @@
         "help": "Level subtracted from every bar before weighting, in dB below full scale. Raise it (toward -20) if bars move with no audio; lower it (toward -120) to show quieter sound."
        },
        {
+        "name": "aggregation",
+        "label": "Bar aggregation",
+        "group": "range",
+        "type": "choice",
+        "choices": [
+         "mean",
+         "band_energy",
+         "max"
+        ],
+        "default": "mean",
+        "help": "How the FFT bins in one bar combine: mean (their average), band_energy (their total energy, so wide treble bars read higher), or max (the loudest bin). Each reads a full-scale tone as 0 dBFS in a bar that holds the tone."
+       },
+       {
         "name": "weight_points",
         "label": "Weighting points",
         "group": "range",
@@ -398,6 +456,16 @@
         "max": 10.0,
         "default": 1.5,
         "help": "Multiplies bar height after auto level: 2 is twice as tall, 0.5 half. With overflow on, taller bars wrap into the next color."
+       },
+       {
+        "name": "response_curve",
+        "label": "Response curve",
+        "group": "level",
+        "type": "number",
+        "min": 0.25,
+        "max": 4.0,
+        "default": 1.0,
+        "help": "Shapes bar height after auto level and gain (height = level ^ curve). Below 1 lifts quiet bars toward loud ones; above 1 makes loud bars stand out more. 1 is linear."
        },
        {
         "name": "auto_level",

@@ -5,6 +5,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import math
 import numpy as np  # type: ignore
 from dataclasses import dataclass
 import threading
@@ -14,6 +15,8 @@ import sounddevice as sd  # type: ignore
 
 from config.settings import AudioSettings, FrequencySettings, SensitivitySettings
 from core.analysis_plan import (
+    AGGREGATION_BAND_ENERGY,
+    AGGREGATION_MEAN,
     StandardAnalysisCandidate,
     StandardAnalysisPlan,
     compile_standard_analysis_plan,
@@ -504,14 +507,28 @@ class AudioProcessor:
     ) -> None:
         """Map one shared full spectrum into one configured 64-bin view.
 
-        The floor is subtracted before weighting (D-005); the weights also carry the
-        full-scale normalization (D-031), so the result is in full-scale units.
+        Each bar combines its bins by the plan's aggregation: mean, band energy
+        ``sqrt(Σ|X|²)``, or max (D-012). The floor is subtracted before weighting
+        (D-005); the weights also carry the method's full-scale normalization
+        (D-031, D-037, D-038), so the result is in full-scale units. The method is
+        chosen once per projection, not per bar.
         """
 
         destination.fill(0)
-        for index, bin_indices in enumerate(plan.bin_indices):
-            if len(bin_indices) > 0:
-                destination[index] = np.mean(magnitudes[bin_indices])
+        aggregation = plan.aggregation
+        if aggregation == AGGREGATION_MEAN:
+            for index, bin_indices in enumerate(plan.bin_indices):
+                if len(bin_indices) > 0:
+                    destination[index] = np.mean(magnitudes[bin_indices])
+        elif aggregation == AGGREGATION_BAND_ENERGY:
+            for index, bin_indices in enumerate(plan.bin_indices):
+                if len(bin_indices) > 0:
+                    values = magnitudes[bin_indices]
+                    destination[index] = math.sqrt(np.dot(values, values))
+        else:
+            for index, bin_indices in enumerate(plan.bin_indices):
+                if len(bin_indices) > 0:
+                    destination[index] = np.max(magnitudes[bin_indices])
         np.subtract(destination, noise_floor, out=destination)
         np.maximum(destination, 0, out=destination)
         np.multiply(destination, plan.bin_weights, out=destination)

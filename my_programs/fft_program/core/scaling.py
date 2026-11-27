@@ -8,6 +8,12 @@ constant ``FIXED_SCALE`` (D-015). Auto level never divides by less than
 ``10^(−max_boost_db/20)`` (D-006, D-035). Gain multiplies afterwards (D-001). Bars
 arrive in full-scale units: a full-scale sine reads 1.0 (D-017).
 
+The response curve raises the result to ``response_curve`` (D-013), then column
+spread lifts each bar's neighbors within ``spread_radius`` columns to its height
+times ``spread_falloff`` per column of distance, as a max (D-019, D-039). Both run
+before rise/fall smoothing, so bars and peaks follow them; neither touches the
+frame peak that auto level reads.
+
 Every time constant is in seconds. Each call measures the interval since the
 previous call (clamped to ``MAX_STEP_SECONDS`` after stalls) and turns each
 constant into ``1 − exp(−dt/τ)``, so the response is the same at any call rate
@@ -35,6 +41,11 @@ FIXED_SCALE = 0.3 * _RAW_TO_FULL_SCALE_AT_BLOCK_512
 MAX_BOOST_DB_MIN = 0.0
 MAX_BOOST_DB_MAX = 120.0
 MAX_BOOST_DB_DEFAULT = 68.0
+# Response curve exponent (D-013, D-040): 1 is linear and skipped.
+RESPONSE_CURVE_MIN, RESPONSE_CURVE_MAX, RESPONSE_CURVE_DEFAULT = 0.25, 4.0, 1.0
+# Column spread (D-019, D-039, D-040): radius 0 is off.
+SPREAD_RADIUS_MIN, SPREAD_RADIUS_MAX, SPREAD_RADIUS_DEFAULT = 0, 16, 0
+SPREAD_FALLOFF_MIN, SPREAD_FALLOFF_MAX, SPREAD_FALLOFF_DEFAULT = 0.0, 1.0, 0.5
 
 
 def min_scale(max_boost_db: float) -> float:
@@ -86,6 +97,41 @@ class ScalingProcessor:
         self._mask = np.zeros(num_bins, dtype=bool)
         self._mask_2 = np.zeros(num_bins, dtype=bool)
 
+        # Column spread: the output array, plus one precomputed step per distance
+        # (falloff^d and the array views it reads and writes), so process() makes
+        # no slices. Settings are fixed for a processor's life; a structure update
+        # builds a new one.
+        self._spread = np.zeros(num_bins, dtype=np.float32)
+        self._spread_scratch = np.zeros(num_bins, dtype=np.float32)
+        self._spread_steps = self._spread_plan(
+            int(smoothing_settings.spread_radius),
+            float(smoothing_settings.spread_falloff),
+        )
+        # What process() returns first: the bars as presented, before smoothing.
+        self._presented = self._spread if self._spread_steps else self._normalized
+
+    def _spread_plan(self, radius: int, falloff: float) -> tuple:
+        """Precompute ``(factor, source, target, scratch)`` views for each direction."""
+        steps = []
+        n = self.num_bins
+        for distance in range(1, min(radius, n - 1) + 1):
+            factor = np.float32(falloff ** distance)
+            scratch = self._spread_scratch[: n - distance]
+            # Rightward: column i lifts i + d. Leftward: column i lifts i − d.
+            steps.append((
+                factor,
+                self._normalized[: n - distance],
+                self._spread[distance:],
+                scratch,
+            ))
+            steps.append((
+                factor,
+                self._normalized[distance:],
+                self._spread[: n - distance],
+                scratch,
+            ))
+        return tuple(steps)
+
     @property
     def scale(self) -> float:
         """The divisor the next frame uses before gain."""
@@ -99,8 +145,10 @@ class ScalingProcessor:
     def process(self, bars: np.ndarray, now: float) -> tuple:
         """Advance one call at monotonic time ``now`` (seconds).
 
-        Returns ``(normalized, smoothed_bars, peak_heights)``; all three are this
-        processor's own arrays, the same objects on every call.
+        Returns ``(presented, smoothed_bars, peak_heights)``: the bars after gain,
+        curve, and spread but before smoothing, then the smoothed bars and the peak
+        markers. All three are this processor's own arrays, the same objects on
+        every call.
         """
         if self.last_time is None:
             dt = FIRST_STEP_SECONDS
@@ -125,11 +173,24 @@ class ScalingProcessor:
         normalized = self._normalized
         np.multiply(bars, self.scaling.gain / self.scale, out=normalized)
 
+        # Response curve (D-013). Bars are never negative after the floor.
+        curve = self.scaling.response_curve
+        if curve != 1.0:
+            np.power(normalized, curve, out=normalized)
+
+        # Column spread, a max, so the tallest column is unchanged (D-019).
+        presented = self._presented
+        if self._spread_steps:
+            np.copyto(presented, normalized)
+            for factor, source, target, scratch in self._spread_steps:
+                np.multiply(source, factor, out=scratch)
+                np.maximum(target, scratch, out=target)
+
         # Asymmetric smoothing toward the new value.
         rise = step_fraction(dt, self.smoothing.rise_seconds)
         fall = step_fraction(dt, self.smoothing.fall_seconds)
         delta = self._delta
-        np.subtract(normalized, self.smoothed_bars, out=delta)
+        np.subtract(presented, self.smoothed_bars, out=delta)
         np.greater(delta, 0.0, out=self._mask)
         self._rates.fill(fall)
         np.copyto(self._rates, np.float32(rise), where=self._mask)
@@ -137,7 +198,7 @@ class ScalingProcessor:
         np.add(self.smoothed_bars, delta, out=self.smoothed_bars)
 
         self._update_peaks(dt)
-        return normalized, self.smoothed_bars, self.peak_heights
+        return presented, self.smoothed_bars, self.peak_heights
 
     def _update_peaks(self, dt: float) -> None:
         """Hold each peak for ``hold_seconds``, then fall at ``fall_rate`` heights/s."""

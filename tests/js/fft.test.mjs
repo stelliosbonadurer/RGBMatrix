@@ -40,8 +40,9 @@ test('the catalog has the shape the page reads', () => {
   const descriptor = fft.descriptorFor(structure, 'current-bars');
   const groups = fft.settingGroups(descriptor);
   assert.deepEqual(groups.map(group => group.label), ['Range & weighting', 'Level', 'Look', 'Peaks', 'Motion', 'Dynamic theme']);
-  assert.deepEqual(groups[0].fields.map(field => field.label), ['Min Hz', 'Max Hz', 'Noise floor (dBFS)', 'Weighting points']);
-  assert.deepEqual(groups[1].fields.map(field => field.label), ['Gain', 'Auto level', 'Headroom', 'Attack (s)', 'Release (s)', 'Max auto boost (dB)']);
+  assert.deepEqual(groups[0].fields.map(field => field.label), ['Min Hz', 'Max Hz', 'Noise floor (dBFS)', 'Bar aggregation', 'Weighting points']);
+  assert.deepEqual(groups[1].fields.map(field => field.label), ['Gain', 'Response curve', 'Auto level', 'Headroom', 'Attack (s)', 'Release (s)', 'Max auto boost (dB)']);
+  assert.deepEqual(groups[2].fields.map(field => field.label).slice(-2), ['Spread (columns)', 'Spread falloff']);
   // The default layer is every descriptor default.
   assert.deepEqual(structure.layers[0].settings, fft.defaultSettings(descriptor));
 });
@@ -261,6 +262,28 @@ test('the cost note counts distinct bar mappings over every layer (D-066)', () =
   assert.match(fft.costNote(more), /^4 layers use 3 different bar mappings of the one spectrum\./);
   assert.match(fft.costNote(more), /35% missed refreshes/);
   assert.equal(fft.costNote([]), '');
+});
+
+test('aggregation splits a bar mapping; response curve and spread do not (fft-level-controls D-012, D-040)', () => {
+  const settings = {min_freq: 100, max_freq: 6300, noise_floor_dbfs: -65, aggregation: 'mean',
+    weight_points: [{position: 0, weight: 1}], response_curve: 1, spread_radius: 0, spread_falloff: 0.5};
+  const shaped = {...settings, response_curve: 0.5, spread_radius: 3, spread_falloff: 0.8};
+  assert.equal(fft.mappingCount([{settings}, {settings: shaped}]), 1);
+  const energy = {...settings, aggregation: 'band_energy'};
+  const loudest = {...settings, aggregation: 'max'};
+  assert.equal(fft.mappingCount([{settings}, {settings: energy}, {settings: loudest}]), 3);
+  assert.match(fft.costNote([{settings}, {settings: energy}]), /same range, floor, aggregation, and points/);
+});
+
+test('spread falloff shows only while spread is on (fft-level-controls D-039)', () => {
+  const descriptor = fft.descriptorFor(catalog.structure, 'current-bars');
+  const falloff = descriptor.fields.find(field => field.name === 'spread_falloff');
+  const radius = descriptor.fields.find(field => field.name === 'spread_radius');
+  assert.equal(radius.type, 'integer');
+  assert.equal(fft.settingParameter(radius).type, 'int');
+  assert.equal(fft.isShown(falloff, {spread_radius: 0}), false);
+  assert.equal(fft.isShown(falloff, {spread_radius: 1}), true);
+  assert.equal(fft.isShown(falloff, {spread_radius: 16}), true);
 });
 
 test('error paths map to the layer and field that holds them', () => {

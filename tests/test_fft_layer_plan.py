@@ -39,7 +39,9 @@ try:
     )
     from core.layer_plan import (  # noqa: E402
         ActiveLayerPlan,
+        CURRENT_BARS_PROJECTION_SETTING_NAMES,
         LayerRuntimeComponents,
+        LayerSettingsError,
         compile_current_bars_graph,
         compile_current_bars_layer_plan,
         compile_ordered_layer_plan,
@@ -647,6 +649,7 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
                 "auto_level_max_boost_db": "auto_level",
                 "dynamic_cycle_speed": "theme",
                 "dynamic_frozen": "theme",
+                "spread_falloff": "spread_radius",
             },
         )
         for name, condition in conditional.items():
@@ -660,6 +663,8 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
                     allowed = [True, False]
                 elif target["type"] == "choice":
                     allowed = target["choices"]
+                elif target["type"] == "integer":
+                    allowed = list(range(target["min"], target["max"] + 1))
                 else:
                     self.fail(f"{name} depends on a {target['type']} field")
                 for value in condition["values"]:
@@ -667,6 +672,10 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
         self.assertEqual(
             fields["dynamic_frozen"]["shown_when"]["values"],
             ["dynamic", "dynamic_lateral_gradient"],
+        )
+        # Falloff shows for every radius but 0, which is off (D-039).
+        self.assertEqual(
+            fields["spread_falloff"]["shown_when"]["values"], list(range(1, 17))
         )
 
     def test_weight_points_field_describes_its_items(self) -> None:
@@ -690,6 +699,96 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
             [point["position"] for point in points["default"]],
             [0.0, 0.1, 0.3, 0.6, 1.0],
         )
+
+
+
+class CurveSpreadAggregationFieldTests(unittest.TestCase):
+    """fft-level-controls M4 criterion 8 (D-039, D-040)."""
+
+    def setUp(self) -> None:
+        self.fields = {
+            field["name"]: field
+            for field in current_bars_settings_descriptor()["fields"]
+        }
+        self.defaults = current_bars_settings_from_runtime(Settings())
+
+    def test_the_four_fields_have_their_bounds_defaults_and_groups(self) -> None:
+        expected = {
+            "response_curve": ("level", "number", 0.25, 4.0, 1.0),
+            "spread_radius": ("look", "integer", 0, 16, 0),
+            "spread_falloff": ("look", "number", 0.0, 1.0, 0.5),
+        }
+        for name, (group, kind, low, high, default) in expected.items():
+            with self.subTest(field=name):
+                field = self.fields[name]
+                self.assertEqual(
+                    (field["group"], field["type"], field["min"], field["max"], field["default"]),
+                    (group, kind, low, high, default),
+                )
+        aggregation = self.fields["aggregation"]
+        self.assertEqual(
+            (aggregation["group"], aggregation["type"], aggregation["choices"], aggregation["default"]),
+            ("range", "choice", ["mean", "band_energy", "max"], "mean"),
+        )
+        names = [field["name"] for field in current_bars_settings_descriptor()["fields"]]
+        self.assertEqual(names.index("response_curve"), names.index("gain") + 1)
+
+    def test_bad_values_fail_naming_the_field(self) -> None:
+        cases = (
+            ("spread_radius", 1.5),
+            ("spread_radius", 17),
+            ("spread_radius", -1),
+            ("spread_radius", True),
+            ("spread_falloff", 1.5),
+            ("response_curve", 0.2),
+            ("response_curve", 4.5),
+            ("aggregation", "median"),
+            ("aggregation", 1),
+        )
+        for name, value in cases:
+            with self.subTest(field=name, value=value):
+                with self.assertRaises(LayerSettingsError) as caught:
+                    normalize_current_bars_settings(
+                        {**self.defaults, name: value}, DIRECT_OUTPUT_PATH
+                    )
+                self.assertEqual(caught.exception.field, name)
+
+    def test_a_settings_file_radius_that_is_not_an_integer_fails(self) -> None:
+        # Review finding 1: the launch path must not truncate 1.5 or true to 1.
+        for bad in (1.5, True):
+            with self.subTest(spread_radius=bad):
+                settings = Settings()
+                settings.smoothing.spread_radius = bad
+                with self.assertRaises(LayerSettingsError) as caught:
+                    normalize_current_bars_settings(
+                        current_bars_settings_from_runtime(settings), DIRECT_OUTPUT_PATH
+                    )
+                self.assertEqual(caught.exception.field, "spread_radius")
+
+    def test_the_launch_layer_takes_the_settings_files_aggregation(self) -> None:
+        settings = Settings()
+        settings.sensitivity.aggregation = "band_energy"
+        self.assertEqual(
+            current_bars_settings_from_runtime(settings)["aggregation"], "band_energy"
+        )
+
+    def test_only_range_floor_aggregation_and_points_pick_a_projection(self) -> None:
+        self.assertEqual(
+            CURRENT_BARS_PROJECTION_SETTING_NAMES,
+            ("min_freq", "max_freq", "noise_floor_dbfs", "aggregation", "weight_points"),
+        )
+
+    def test_layer_settings_reach_the_scaler(self) -> None:
+        from core.layer_plan import _settings_for_layer
+
+        normalized = normalize_current_bars_settings(
+            {**self.defaults, "response_curve": 0.5, "spread_radius": 3, "spread_falloff": 0.7},
+            DIRECT_OUTPUT_PATH,
+        )
+        settings = _settings_for_layer(Settings(), normalized)
+        self.assertEqual(settings.scaling.response_curve, 0.5)
+        self.assertEqual(settings.smoothing.spread_radius, 3)
+        self.assertEqual(settings.smoothing.spread_falloff, 0.7)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ from matrix_controller.runtime_transport import (
     PROGRAM_CONFIG_ENVIRONMENT,
 )
 from matrix_controller.web_service import (
+    MAX_RUNTIME_CHANGES,
     PAGE_CONTENT_SECURITY_POLICY,
     STATIC_ASSETS,
     _is_loopback_address,
@@ -36,6 +37,11 @@ from matrix_controller.web_service import (
     validate_launch_structure,
 )
 from matrix_controller.pairing import PairingManager
+
+FFT_CATALOG_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "matrix_controller" / "static" / "fft_catalog.json"
+)
 
 
 class FakeSupervisor:
@@ -380,22 +386,35 @@ class WebServiceTests(unittest.TestCase):
 
     @staticmethod
     def _largest_structure_document() -> dict:
-        """8 layers with 64-character IDs, every setting, and 16 weight points."""
-        settings = {
-            "theme": "dynamic_lateral_gradient", "gradient": False, "overflow": True,
-            "bars": True, "full": False,
-            "shadow_enabled": False, "peak_enabled": False,
-            "peak_color_mode": "contrast", "peak_fall_speed": 0.08123456789012345,
-            "peak_hold_frames": 600, "gain": 1.5234567890123457,
-            "smoothing_rise": 0.4123456789012345, "smoothing_fall": 0.1123456789012345,
-            "dynamic_cycle_speed": 0.06123456789012345, "dynamic_frozen": False,
-            "min_freq": 100.12345678901234, "max_freq": 6300.123456789012,
-            "noise_floor": 0.3123456789012345,
-            "weight_points": [
-                {"position": index / 15 + 1e-13, "weight": 99.12345678901234}
-                for index in range(15)
-            ] + [{"position": 1.0, "weight": 0.123456789012345}],
+        """8 layers with 64-character IDs, every setting, and 16 weight points.
+
+        The keys come from the generated FFT catalog's default layer, so the
+        fixture follows the real settings; values are lengthened to their longest
+        plausible JSON (the web service doesn't validate layer keys).
+        """
+        catalog = json.loads(FFT_CATALOG_PATH.read_text(encoding="utf-8"))
+        defaults = catalog["structure"]["layers"][0]["settings"]
+        longest_text = {
+            "theme": "dynamic_lateral_gradient",
+            "peak_color_mode": "contrast",
+            "aggregation": "band_energy",
         }
+        settings = {}
+        for name, value in defaults.items():
+            if isinstance(value, bool):
+                settings[name] = value
+            elif isinstance(value, int):
+                settings[name] = value + 10
+            elif isinstance(value, float):
+                settings[name] = value + 0.0123456789012345
+            elif isinstance(value, str):
+                settings[name] = longest_text.get(name, value)
+            else:
+                settings[name] = value
+        settings["weight_points"] = [
+            {"position": index / 15 + 1e-13, "weight": 99.12345678901234}
+            for index in range(15)
+        ] + [{"position": 1.0, "weight": 0.123456789012345}]
         return {
             "output_backend": "pillow-bulk",
             "layers": [
@@ -411,7 +430,12 @@ class WebServiceTests(unittest.TestCase):
     def test_largest_weighted_structure_fits_the_web_and_launch_bounds(self) -> None:
         # web-control-refactor M2 AC 8: weight_points[k].weight sits at depth 6
         # of _bounded_runtime_value's 8, and 16 points stay under the 32-item cap.
+        # fft-level-controls M4: a layer's settings (28 keys) stay under the
+        # 32-field cap on every object.
         document = self._largest_structure_document()
+        settings = document["layers"][0]["settings"]
+        self.assertEqual(len(settings), 28)
+        self.assertLessEqual(len(settings), MAX_RUNTIME_CHANGES)
         encoded = json.dumps(document, separators=(",", ":"), allow_nan=False)
         self.assertLessEqual(len(encoded.encode("utf-8")), MAX_LAUNCH_STRUCTURE_BYTES)
 

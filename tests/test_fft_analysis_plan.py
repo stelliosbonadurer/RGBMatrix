@@ -31,8 +31,11 @@ _prior_core_modules = {
 }
 sys.modules["sounddevice"] = _sounddevice
 try:
+    from config.settings import Settings, _AGGREGATIONS  # noqa: E402
     from core.analysis_plan import (  # noqa: E402
+        AGGREGATIONS,
         AnalysisPlanValidationError,
+        aggregation_scale,
         DEFAULT_WEIGHT_POINTS,
         STANDARD_ANALYSIS_SCHEMA_VERSION,
         StandardAnalysisCandidate,
@@ -398,6 +401,59 @@ class ProjectionLayoutTests(unittest.TestCase):
                 np.testing.assert_allclose(actual["weights"], stored["weights"], rtol=1e-12)
         empty_case = fixture["cases"][1]
         self.assertIn(0, empty_case["bin_counts"])
+
+
+
+class AggregationPlanTests(unittest.TestCase):
+    """fft-level-controls M4: aggregation picks the plan's full-scale constant."""
+
+    def test_candidate_accepts_only_the_three_methods(self) -> None:
+        self.assertEqual(_candidate().aggregation, "mean")
+        for aggregation in AGGREGATIONS:
+            self.assertEqual(_candidate(aggregation=aggregation).aggregation, aggregation)
+        for bad in ("median", "", None, 1):
+            with self.subTest(aggregation=bad):
+                with self.assertRaises(AnalysisPlanValidationError):
+                    _candidate(aggregation=bad)
+
+    def test_config_mirror_matches_the_methods(self) -> None:
+        # config can't import core (sounddevice); keep its copy in step.
+        self.assertEqual(_AGGREGATIONS, AGGREGATIONS)
+
+    def test_each_method_compiles_its_constant(self) -> None:
+        window = np.hanning(512)
+        mean_scale = 2.0 / float(np.sum(window))
+        for fft_size in (8192, 4096):
+            energy_scale = 2.0 / np.sqrt(fft_size * float(np.sum(window * window)))
+            for aggregation, scale in (
+                ("mean", mean_scale), ("max", mean_scale), ("band_energy", energy_scale),
+            ):
+                with self.subTest(fft_size=fft_size, aggregation=aggregation):
+                    plan = compile_standard_analysis_plan(
+                        _candidate(fft_size=fft_size, aggregation=aggregation),
+                        sample_rate=44_100,
+                    )
+                    self.assertEqual(plan.aggregation, aggregation)
+                    self.assertAlmostEqual(plan.spectrum_scale, scale, places=15)
+                    self.assertEqual(
+                        aggregation_scale(aggregation, plan.window, fft_size),
+                        plan.spectrum_scale,
+                    )
+                    layout = projection_layout(
+                        100, 6300, DEFAULT_WEIGHT_POINTS, 44_100, fft_size, 64
+                    )
+                    np.testing.assert_array_equal(
+                        plan.bin_weights,
+                        (layout.weights * plan.spectrum_scale).astype(np.float32),
+                    )
+
+    def test_launch_settings_carry_the_method_into_the_candidate(self) -> None:
+        settings = Settings()
+        settings.sensitivity.aggregation = "band_energy"
+        candidate = StandardAnalysisCandidate.from_settings(
+            settings.audio, settings.frequency, settings.sensitivity, 64
+        )
+        self.assertEqual(candidate.aggregation, "band_energy")
 
 
 if __name__ == "__main__":
