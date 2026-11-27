@@ -4,7 +4,9 @@
 // A program's config file editor (M4b, D-044, D-048) is part of the same draft:
 // a submit saves a changed file first, then launches. A program module with
 // `createEditor` (Music FFT, M5) owns its own draft and submit instead of the
-// options form; this file keeps the shell around it.
+// options form; this file keeps the shell around it. A module's `fileEditors`
+// replace the generic editor for a file; one with `selfSaving` has its own Save
+// and Discard and is never saved by a submit (fft-themes D-014, D-016).
 
 import {api} from './api.js';
 import {createFileEditor} from './file_editor.js';
@@ -78,7 +80,7 @@ let baseline = {};
 let knownRunKey = null;
 let pending = null; // 'launch' | 'update' | 'stop'
 let submits = 0; // counts submits, so a poll that overlapped one is dropped
-let fileBusy = false; // a program file removal is in flight
+let fileBusy = false; // a program file removal or own-section save is in flight
 let polling = false;
 let previousMst = false;
 let ruleErrors = {};
@@ -104,10 +106,24 @@ function fileChangesOf(entry) {
   return fileChanges(entry.snapshot.fields, entry.editor.read().document, entry.snapshot.document);
 }
 
+// Unsaved edits in a file's section: slots for the generic editor, the
+// editor's own count for a self-saving one.
+function fileDirtyCount(entry) {
+  return entry.editor.selfSaving ? entry.editor.changeCount() : fileChangesOf(entry).length;
+}
+
+// Everything leaving the page would lose, including self-saving sections.
 function unsentCount() {
   let count = editor ? editor.unsentCount() : changedNames(parameters, readDraft().values, baseline).length;
-  for (const entry of files.values()) count += fileChangesOf(entry).length;
+  for (const entry of files.values()) count += fileDirtyCount(entry);
   return count;
+}
+
+// Every snapshot change goes through here so the program's editor follows the
+// saved file (the FFT Theme choices, D-013). Returns its message, or ''.
+function setSnapshot(name, entry, snapshot) {
+  entry.snapshot = snapshot;
+  return editor?.noticeFile?.(name, snapshot) || '';
 }
 
 // Runs the program's own rules, writes back any value they adjust, and shows
@@ -152,6 +168,18 @@ function render() {
   const savedRevisions = {};
   const changedFileNouns = [];
   for (const [name, entry] of files) {
+    if (entry.editor.selfSaving) {
+      // Not part of the submit's draft: its edits and errors never hold Launch.
+      entry.editor.setSaved(entry.snapshot.document);
+      entry.editor.setDisabled({editing: Boolean(entry.snapshot.error), busy: Boolean(pending) || fileBusy});
+      entry.editor.setUnusable(entry.snapshot.error);
+      if (entry.editor.changeCount() === 0 && !entry.editor.banner.hidden) showBanner(entry.editor.banner, '');
+      savedRevisions[name] = entry.snapshot.revision;
+      if (filesChangedSinceLaunch(status, programId, {[name]: entry.snapshot.revision})) {
+        changedFileNouns.push(entry.text.noun || entry.snapshot.label.toLowerCase());
+      }
+      continue;
+    }
     const {document, errors: fileErrors} = entry.editor.read();
     const changedSlots = new Set(fileChanges(entry.snapshot.fields, document, entry.snapshot.document));
     fileChangeCount += changedSlots.size;
@@ -277,6 +305,7 @@ function noticeOutsideChange() {
 // D-048: Discard returns options and files to their loaded values.
 function discardAll() {
   for (const entry of files.values()) {
+    if (entry.editor.selfSaving) continue; // its own Discard (D-014)
     entry.editor.write(entry.snapshot.document);
     showBanner(entry.editor.banner, '');
   }
@@ -296,21 +325,23 @@ function loadSavedFile(entry) {
 
 async function reloadSavedFile(name) {
   const entry = files.get(name);
+  let note = '';
   try {
-    entry.snapshot = await api.programFile(programId, name);
+    note = setSnapshot(name, entry, await api.programFile(programId, name));
   } catch (error) {
     showMessage(el.message, `Could not load the saved ${entry.snapshot.label.toLowerCase()}: ${error.message}`, 'error');
     return;
   }
-  showMessage(el.message, '');
+  showMessage(el.message, note, note ? 'error' : 'info');
   loadSavedFile(entry);
 }
 
 // Applies a polled program file (criterion 8; the rule is fileUpdateAction).
-function noticeFileChange(entry, next) {
-  const action = fileUpdateAction(entry.snapshot, next, fileChangesOf(entry).length > 0);
+function noticeFileChange(name, entry, next) {
+  const action = fileUpdateAction(entry.snapshot, next, fileDirtyCount(entry) > 0);
   if (action === 'none') return;
-  entry.snapshot = next;
+  const note = setSnapshot(name, entry, next);
+  if (note) showMessage(el.message, note, 'error');
   if (action === 'follow') {
     loadSavedFile(entry);
     return;
@@ -321,7 +352,8 @@ function noticeFileChange(entry, next) {
     loadSavedFile(entry);
     const noun = entry.text.noun || next.label.toLowerCase();
     showMessage(el.message,
-      `The saved ${noun} on the Pi can't be used, so your unsent edits to the ${noun} were set aside. Launches use the default.`,
+      `The saved ${noun} on the Pi can't be used, so your unsent edits to the ${noun} were set aside. Launches use the default.` +
+      (note ? ` ${note}` : ''),
       'error');
     return;
   }
@@ -335,10 +367,10 @@ function noticeFileChange(entry, next) {
 async function saveChangedFiles() {
   const saved = [];
   for (const [name, entry] of files) {
-    if (fileChangesOf(entry).length === 0) continue;
+    if (entry.editor.selfSaving || fileChangesOf(entry).length === 0) continue;
     const {document} = entry.editor.read();
     try {
-      entry.snapshot = await api.saveProgramFile(programId, name, entry.snapshot.revision, document);
+      setSnapshot(name, entry, await api.saveProgramFile(programId, name, entry.snapshot.revision, document));
       showBanner(entry.editor.banner, '');
       saved.push(entry.snapshot.label);
     } catch (error) {
@@ -366,11 +398,43 @@ async function removeUnusableFile(name) {
   submits += 1;
   render();
   try {
-    entry.snapshot = await api.removeProgramFile(programId, name);
+    setSnapshot(name, entry, await api.removeProgramFile(programId, name));
     loadSavedFile(entry);
     showMessage(el.message, `The unusable saved file was removed. Launches use the default ${entry.snapshot.label.toLowerCase()}.`);
   } catch (error) {
     showMessage(el.message, `Could not remove the saved file: ${error.message}`, 'error');
+  } finally {
+    fileBusy = false;
+    submits += 1;
+    render();
+  }
+}
+
+// A self-saving section's Save (D-014): one PUT at the loaded revision. It holds
+// the launch buttons and drops overlapping polls, like a removal.
+async function saveOwnFile(name) {
+  if (fileBusy || pending) return;
+  const entry = files.get(name);
+  const {document, errors} = entry.editor.read();
+  if (Object.keys(errors).length || entry.editor.changeCount() === 0) return;
+  fileBusy = true;
+  submits += 1;
+  render();
+  try {
+    const note = setSnapshot(name, entry, await api.saveProgramFile(programId, name, entry.snapshot.revision, document));
+    loadSavedFile(entry);
+    const saved = entry.text.saved || `${entry.snapshot.label} saved.`;
+    showMessage(el.message, note ? `${saved} ${note}` : saved, note ? 'error' : 'info');
+  } catch (error) {
+    const label = entry.snapshot.label.toLowerCase();
+    if (error.status === 409) {
+      showBanner(entry.editor.banner,
+        `${entry.snapshot.label} changed on another device after this page loaded it. Your edits are kept.`,
+        [{label: entry.text.load || 'Load the saved version', onClick: () => reloadSavedFile(name)}]);
+      showMessage(el.message, `Nothing was saved: the ${label} changed on another device.`, 'error');
+    } else {
+      showMessage(el.message, `Could not save the ${label}: ${error.message}`, 'error');
+    }
   } finally {
     fileBusy = false;
     submits += 1;
@@ -493,7 +557,7 @@ async function refresh() {
       continue;
     }
     if (pending || fileBusy || started !== submits) return;
-    noticeFileChange(entry, next);
+    noticeFileChange(name, entry, next);
   }
   render();
 }
@@ -508,8 +572,9 @@ async function loadFiles() {
       continue;
     }
     const text = extension?.fileText?.[file.name] || {};
+    const custom = extension?.fileEditors?.[file.name] || null;
     const entry = {snapshot, text, editor: null};
-    entry.editor = createFileEditor(snapshot, {
+    entry.editor = (custom || createFileEditor)(snapshot, {
       text,
       onInput: render,
       // D-048: sets the draft to the tracked default; Launch saves it.
@@ -518,11 +583,17 @@ async function loadFiles() {
         render();
       },
       onRemove: () => removeUnusableFile(file.name),
+      onSave: () => saveOwnFile(file.name),
+      onDiscard: () => loadSavedFile(entry),
     });
     entry.editor.write(snapshot.document);
     files.set(file.name, entry);
-    // D-011: the editor still exists, so the draft code needs no special case.
-    if (hasFileEditor(snapshot.fields)) el.files.append(entry.editor.element);
+    const note = setSnapshot(file.name, entry, snapshot);
+    if (note) showMessage(el.message, note, 'error');
+    // D-011, amended by fft-themes D-016: a file with no fields still has an
+    // editor, so the draft code needs no special case; a program's own editor
+    // is always drawn, so an unusable saved file shows its note and Remove.
+    if (custom || hasFileEditor(snapshot.fields)) el.files.append(entry.editor.element);
   }
 }
 
@@ -579,6 +650,9 @@ async function initialize() {
     });
     el.optionsPanel.hidden = true;
     el.editor.append(editor.element);
+    // The files first, so the saved themes are Theme choices before the
+    // baseline and the presets are reconciled (fft-themes D-013).
+    await loadFiles();
     try {
       await editor.load(status);
     } catch (error) {
@@ -586,8 +660,8 @@ async function initialize() {
     }
   } else {
     buildFields();
+    await loadFiles();
   }
-  await loadFiles();
   try {
     matrix = await api.matrixSettings();
   } catch (error) {

@@ -62,11 +62,15 @@ try:
     from matrix_controller.supervisor import VisualizationSupervisor  # noqa: E402
     from runtime_control import FftRuntimeController  # noqa: E402
     from structural_control import (  # noqa: E402
+        FALLBACK_THEME,
         PreparedStructuralPlan,
         StructuralRuntimeCoordinator,
         StructuralValidationError,
+        launch_theme_fallbacks,
         structure_document_to_definition,
     )
+    from themes import registry as theme_registry  # noqa: E402
+    from themes.color_stops import color_stop_theme  # noqa: E402
     from tools.fft_layers import build_structure_action  # noqa: E402
     from visualizers.bars_unified import BarsUnifiedVisualizer  # noqa: E402
 finally:
@@ -1415,6 +1419,92 @@ class StructuralCoordinatorTests(unittest.TestCase):
         result = self._exchange(coordinator, _payload(self._two_ranges()))
         self.assertNotIn("error", result)
         self.assertNotIn("launch_error", result["value"]["structure"])
+
+    def _register_custom_theme(self, name: str) -> None:
+        saved = dict(theme_registry._THEME_REGISTRY)
+
+        def restore() -> None:
+            theme_registry._THEME_REGISTRY.clear()
+            theme_registry._THEME_REGISTRY.update(saved)
+
+        self.addCleanup(restore)
+        theme_registry.register_theme(
+            color_stop_theme(name, "test", [(0.0, (255, 0, 0)), (1.0, (0, 0, 255))])
+        )
+
+    def test_fallback_theme_is_the_descriptor_default(self) -> None:
+        theme = next(
+            field for field in current_bars_settings_descriptor()["fields"]
+            if field["name"] == "theme"
+        )
+        self.assertEqual(theme["default"], FALLBACK_THEME)
+
+    def test_launch_layer_with_missing_custom_theme_uses_default(self) -> None:
+        # fft-themes M3 criterion 6 (D-013): one layer falls back, the rest launch.
+        self._register_custom_theme("my_here")
+        coordinator = self._coordinator()
+        document = _document([
+            _layer({**self.base, "theme": "my_gone"}),
+            _layer({**self.base, "theme": "my_here", "min_freq": 2000.0}, layer_id="high"),
+            _layer({**self.base, "theme": "warm", "min_freq": 3000.0}, layer_id="top"),
+        ])
+        raw = json.dumps(document)
+        self.assertTrue(coordinator.apply_launch_structure(raw))
+        structure = self.controller.snapshot()["structure"]
+        self.assertNotIn("launch_error", structure)
+        self.assertEqual(
+            [layer["settings"]["theme"] for layer in structure["layers"]],
+            [FALLBACK_THEME, "my_here", "warm"],
+        )
+        self.assertEqual(structure["theme_fallbacks"], [{
+            "path": "structure.layers[0].settings.theme",
+            "layer_id": "current-bars",
+            "theme": "my_gone",
+        }])
+        self.assertEqual(json.loads(raw), document)  # the input is not mutated
+
+        # A later structure.set clears the note, like the launch error.
+        result = self._exchange(coordinator, _payload(self._two_ranges()))
+        self.assertNotIn("error", result)
+        self.assertNotIn("theme_fallbacks", result["value"]["structure"])
+
+    def test_launch_without_fallbacks_publishes_none(self) -> None:
+        coordinator = self._coordinator()
+        self.assertTrue(coordinator.apply_launch_structure(json.dumps(self._two_ranges())))
+        self.assertNotIn("theme_fallbacks", self.controller.snapshot()["structure"])
+
+    def test_refused_launch_reports_error_and_no_fallbacks(self) -> None:
+        coordinator = self._coordinator()
+        raw = json.dumps(_document([
+            _layer({**self.base, "theme": "my_gone"}),
+            _layer({**self.base, "max_freq": 24000.0}, layer_id="high"),
+        ]))
+        self.assertFalse(coordinator.apply_launch_structure(raw))
+        self._assert_unchanged()
+        structure = self.controller.snapshot()["structure"]
+        self.assertEqual(structure["launch_error"]["path"], "structure.layers[1].settings")
+        self.assertNotIn("theme_fallbacks", structure)
+
+    def test_live_structure_set_still_refuses_missing_custom_theme(self) -> None:
+        coordinator = self._coordinator()
+        result = self._exchange(
+            coordinator, _payload(_document([_layer({**self.base, "theme": "my_gone"})]))
+        )
+        error = result.get("error")
+        self.assertIsInstance(error, RuntimeControlError)
+        self.assertEqual(
+            (error.code, error.path), ("invalid_value", "structure.layers[0].settings.theme")
+        )
+        self._assert_unchanged()
+
+    def test_fallback_only_touches_custom_theme_names(self) -> None:
+        for theme in ("plaid", "my_", "MY_GONE", "my-gone", 7, None):
+            with self.subTest(theme=theme):
+                document = _document([_layer({**self.base, "theme": theme})])
+                self.assertEqual(launch_theme_fallbacks(document), (document, []))
+        for document in ([], {"layers": "x"}, {"layers": [1, {"settings": []}]}):
+            with self.subTest(document=document):
+                self.assertEqual(launch_theme_fallbacks(document), (document, []))
 
     @staticmethod
     def _capture_error(coordinator, payload):

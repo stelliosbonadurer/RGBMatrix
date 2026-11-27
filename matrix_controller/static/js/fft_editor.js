@@ -12,14 +12,27 @@ import {api} from './api.js';
 import {createBluetoothControls} from './fft_bluetooth_controls.js';
 import {createLayerGraph} from './fft_graph.js';
 import {createPresetControls} from './fft_preset_controls.js';
-import {parseValue} from './model.js';
+import {createThemesEditor} from './fft_themes_editor.js';
+import {filesChangedSinceLaunch, parseValue} from './model.js';
 import * as fft from './programs/fft.js';
 import * as bluetoothRules from './programs/fft_bluetooth.js';
 import * as fftLayout from './programs/fft_layout.js';
 import * as presetRules from './programs/fft_presets.js';
+import * as fftThemes from './programs/fft_themes.js';
 import {createField, h} from './ui.js';
 
 export const id = fft.id;
+
+// The custom themes file (fft-themes M3, D-014, D-016): program.js keeps the
+// snapshot and draws this editor in place of the generic one; it saves on its own.
+export const fileEditors = {[fftThemes.FILE_NAME]: createThemesEditor};
+export const fileText = {
+  [fftThemes.FILE_NAME]: {
+    noun: 'custom themes',
+    saved: 'Custom themes saved on the Pi. Layers can pick them now; Music FFT loads them when it next launches.',
+    outsideChange: 'Custom themes were changed on another device. Your theme edits are kept.',
+  },
+};
 
 const SNAPSHOT_WAIT_MS = 15000;
 const SNAPSHOT_POLL_MS = 300;
@@ -40,7 +53,11 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   const nextUid = () => `layer-${++uidCounter}`;
 
   let catalog = null; // {structure, assumed_until_launch}
-  let info = null; // the structure whose capabilities the page draws from
+  let info = null; // the structure whose capabilities the page draws from, saved themes added
+  let rawInfo = null; // that structure as the catalog or the run sent it
+  let savedThemes = []; // the saved custom theme names (D-013); none while unusable
+  let themesRevision = 0; // the saved themes file's revision, for D-018
+  let infoLive = false; // rawInfo is a run's structure and that run still runs
   let liveStructure = null; // the snapshot's structure for `snapshot`'s run
   let snapshot = null; // {run_id, revision} of the run this page may update
   let expectedRun = null; // the run whose snapshot this page may load (D-062)
@@ -820,8 +837,18 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
 
   // The snapshot and the catalog go through the same reconcile as a preset
   // (D-064), so the page never assumes a stored shape matches its descriptor.
-  function setBaselineFrom(structure) {
-    info = structure;
+  // The Theme choices are the structure's built-ins, a running FFT's loaded
+  // custom themes while that run lasts, and the saved custom themes
+  // (fft-themes D-013, D-014).
+  function setInfo(structure, live = infoLive) {
+    rawInfo = structure;
+    infoLive = live;
+    info = fftThemes.themeInfo(structure, savedThemes, live);
+  }
+
+  // `live`: the structure is a running FFT's (a snapshot), not the catalog.
+  function setBaselineFrom(structure, live) {
+    setInfo(structure, live);
     const reconciled = presetRules.reconcile(
       {source: baseline.source, backend: structure.output_backend, layers: structure.layers}, structure);
     baseline = {
@@ -834,7 +861,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
   function adopt(reply, {reloadDraft}) {
     snapshot = {run_id: reply.run_id, revision: reply.revision};
     liveStructure = reply.structure;
-    setBaselineFrom(reply.structure);
+    setBaselineFrom(reply.structure, true);
     if (reloadDraft) loadDraft();
     else refresh();
   }
@@ -879,6 +906,10 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
         onMessage(`Launched with the default layer: ${launchError.message}`, 'error');
       } else {
         adopt(reply, {reloadDraft: fft.draftChanges(baseline, draft).total === 0});
+        if (lateLaunch?.runId === expectedRun) {
+          const fallback = fftThemes.fallbackNote(reply.structure?.theme_fallbacks, themeFallback());
+          if (fallback) onMessage(fallback, 'error');
+        }
       }
       lateLaunch = null;
     } finally {
@@ -898,11 +929,16 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       return {text: `Launched with the default layer: ${launchError.message}`, tone: 'error', placed};
     }
     adopt(reply, {reloadDraft: true});
-    return {
-      text: kind === 'update'
-        ? `Sent. ${program.name} restarted with your changes.`
-        : `${program.name} is running on the matrix.`,
-    };
+    const started = kind === 'update'
+      ? `Sent. ${program.name} restarted with your changes.`
+      : `${program.name} is running on the matrix.`;
+    // D-013: the run swapped a missing custom theme for the default.
+    const fallback = fftThemes.fallbackNote(reply.structure?.theme_fallbacks, themeFallback());
+    return fallback ? {text: `${started} ${fallback}`, tone: 'error'} : {text: started};
+  }
+
+  function themeFallback() {
+    return fftThemes.themeDefault(info, fft.layerTypes(info)[0]?.layer_type) ?? 'ocean';
   }
 
   async function waitForSnapshot(runId) {
@@ -1005,10 +1041,42 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     refresh();
   }
 
-  function analyzerStructure() {
-    const live = snapshot && lastStatus?.visualization_id === fft.id &&
+  // The run whose snapshot this page holds is the one the last status shows running.
+  function runLive() {
+    return Boolean(snapshot) && lastStatus?.visualization_id === fft.id &&
       String(lastStatus.run_id) === String(snapshot.run_id) &&
       (lastStatus.state === 'running' || lastStatus.state === 'starting');
+  }
+
+  // Writes the current Theme choices into every row. An unsent layer (or a
+  // value the backend lock set aside, D-061) whose theme is no longer a choice
+  // switches to the default (D-017). Returns the page message for that, or ''.
+  function applyThemeChoices() {
+    const switched = [];
+    for (const uid of order) {
+      const row = rows.get(uid);
+      const control = row.fields.get('theme');
+      const choices = fftThemes.themeChoices(info, row.layer_type);
+      if (!control || !choices) continue;
+      const before = control.input.value;
+      control.setChoices(choices);
+      const fallback = fftThemes.themeDefault(info, row.layer_type);
+      const layerId = row.nameField.read().value;
+      if (!choices.includes(before)) {
+        control.write(fallback);
+        switched.push({layer_id: layerId, theme: before});
+      }
+      if (stash[uid] && hasOwn(stash[uid], 'theme') && !choices.includes(stash[uid].theme)) {
+        switched.push({layer_id: layerId, theme: stash[uid].theme});
+        stash[uid] = {...stash[uid], theme: fallback};
+      }
+    }
+    if (loaded) refresh();
+    return fftThemes.fallbackNote(switched.filter(item => item.theme), themeFallback());
+  }
+
+  function analyzerStructure() {
+    const live = runLive();
     return live && liveStructure
       ? {structure: liveStructure, assumed: []}
       : {structure: catalog?.structure, assumed: catalog?.assumed_until_launch || []};
@@ -1176,14 +1244,14 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
       const listing = presetControls.load(); // the preset list, alongside the catalog; never throws
       bluetooth.load(); // once on page open (D-065); redraws the analyzer row when it answers
       catalog = await api.fftCatalog();
-      info = catalog.structure;
+      setInfo(catalog.structure, false);
       const running = status?.visualization_id === fft.id && (status.state === 'running' || status.state === 'starting');
       baseline = {
         source: running && hasOwn(status.parameters || {}, 'audio_source') ? status.parameters.audio_source : sourceSpec.default,
         backend: null,
         layers: [],
       };
-      setBaselineFrom(catalog.structure);
+      setBaselineFrom(catalog.structure, false);
       if (running) {
         expectedRun = String(status.run_id);
         if (mayHaveSnapshot(status)) {
@@ -1191,7 +1259,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
           if (reply && String(reply.run_id) === expectedRun) {
             snapshot = {run_id: reply.run_id, revision: reply.revision};
             liveStructure = reply.structure;
-            setBaselineFrom(reply.structure);
+            setBaselineFrom(reply.structure, true);
           }
         }
       }
@@ -1206,6 +1274,14 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     // connects; other runs' layers are never followed (D-062).
     noticeStatus(status) {
       lastStatus = status;
+      // Once the run whose structure the page draws from stops, its loaded
+      // custom themes are no longer choices (review finding 1). Not while a
+      // submit is in flight: its reply sets the structure.
+      if (loaded && !busy && infoLive && !runLive()) {
+        setInfo(rawInfo, false);
+        const note = applyThemeChoices();
+        if (note) onMessage(note, 'error');
+      }
       // A run starting or stopping changes what the graph assumes (D-069).
       if (loaded && contextText(binContextNow()) !== contextKey) refresh();
       else refreshAnalyzer();
@@ -1235,7 +1311,21 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
 
     relaunchReasons(status, matrixChanged) {
       if (status?.visualization_id !== fft.id || status.state !== 'running') return [];
-      return fft.relaunchReasons({status, source, matrixChanged});
+      const themesChanged = filesChangedSinceLaunch(status, fft.id, {[fftThemes.FILE_NAME]: themesRevision});
+      const themes = fftThemes.themesNeedRelaunch(themesChanged, readDraft().layers);
+      return fft.relaunchReasons({status, source, matrixChanged, themes});
+    },
+
+    // program.js passes each new snapshot of a program file. The saved themes
+    // join the Theme choices; an unsent layer whose theme is gone switches to
+    // the default (D-017). Returns the page message for that, or ''.
+    noticeFile(name, fileSnapshot) {
+      if (name !== fftThemes.FILE_NAME) return '';
+      savedThemes = fftThemes.savedThemeNames(fileSnapshot);
+      themesRevision = fileSnapshot.revision;
+      if (!rawInfo) return '';
+      setInfo(rawInfo);
+      return applyThemeChoices();
     },
 
     setBusy(next) {

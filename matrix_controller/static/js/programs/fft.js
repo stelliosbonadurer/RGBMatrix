@@ -381,11 +381,14 @@ export function costNote(layers) {
 // ---- Submit (D-062) ---------------------------------------------------------
 
 // Why Send update must relaunch: a launch option or the matrix settings changed.
-export function relaunchReasons({status, source, matrixChanged}) {
+// `themes`: a layer uses a custom theme and the saved themes changed since launch
+// (fft-themes D-018); FFT loads themes only at launch (D-005).
+export function relaunchReasons({status, source, matrixChanged, themes = false}) {
   const reasons = [];
   const launched = status?.parameters?.audio_source;
   if (launched !== undefined && launched !== source) reasons.push('the audio source changed');
   if (matrixChanged) reasons.push('the matrix settings changed since launch');
+  if (themes) reasons.push('the custom themes changed since launch');
   return reasons;
 }
 

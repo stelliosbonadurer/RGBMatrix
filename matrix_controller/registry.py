@@ -226,8 +226,8 @@ def build_default_registry(
                 requires_audio=True,
                 supports_live_control=True,
                 matrix_parameters=MATRIX_PARAMETERS,
-                # No editor fields until fft-themes M3; the page draws no section
-                # for a file without fields (D-011).
+                # No generic editor fields: the FFT page draws its own themes
+                # editor for this file (fft-themes D-016, amending D-011).
                 program_files=(
                     ProgramFileSpec(
                         name="themes",

@@ -114,6 +114,15 @@ export function createField(parameter, value, {onInput, readOnly = false} = {}) 
       if (parameter.type !== 'enum') return;
       for (const option of input.options) option.disabled = disabled.includes(option.value);
     },
+    // Replaces an enum's choices and keeps the value when it is still one; a
+    // value that isn't reads as '' (and fails parseValue) until written.
+    setChoices(choices) {
+      if (parameter.type !== 'enum') return;
+      const value = input.value;
+      parameter.choices = [...choices];
+      input.replaceChildren(...choices.map(choice => h('option', {value: choice}, choice)));
+      input.value = value;
+    },
   };
 }
 

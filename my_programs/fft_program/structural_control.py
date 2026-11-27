@@ -42,6 +42,8 @@ from matrix_controller.runtime_transport import (
     RuntimeControlError,
     RuntimeOperationTimeout,
 )
+from themes import list_themes
+from themes.custom import NAME_PATTERN as CUSTOM_THEME_NAME
 
 
 STRUCTURE_SET_ACTION = "structure.set"
@@ -49,6 +51,48 @@ STRUCTURE_DOCUMENT_FIELDS = frozenset({"output_backend", "layers"})
 LAYER_DOCUMENT_FIELDS = frozenset({
     "layer_id", "layer_type", "analyzer_id", "visible", "settings"
 })
+# The descriptor's default theme; a launch layer naming a missing custom theme
+# uses it (fft-themes D-013).
+FALLBACK_THEME = "ocean"
+
+
+def launch_theme_fallbacks(
+    document: object,
+) -> tuple[object, list[dict[str, str]]]:
+    """Replace unregistered custom themes in a launch document with the default.
+
+    Custom themes load only at launch (fft-themes D-005), so a preset can name one
+    this run doesn't have. Only names shaped like a custom theme (``my_*``) fall
+    back; anything else is left for the validator to refuse. Returns the document
+    (copied only where it changed) and one ``{path, layer_id, theme}`` per change.
+    Anything that isn't the expected shape is returned unchanged for the validator.
+    """
+
+    if not isinstance(document, dict) or not isinstance(document.get("layers"), list):
+        return document, []
+    registered = set(list_themes())
+    layers = list(document["layers"])
+    fallbacks: list[dict[str, str]] = []
+    for index, layer in enumerate(layers):
+        if not isinstance(layer, dict) or not isinstance(layer.get("settings"), dict):
+            continue
+        theme = layer["settings"].get("theme")
+        if (
+            not isinstance(theme, str)
+            or theme in registered
+            or not CUSTOM_THEME_NAME.fullmatch(theme)
+        ):
+            continue
+        layers[index] = {**layer, "settings": {**layer["settings"], "theme": FALLBACK_THEME}}
+        layer_id = layer.get("layer_id")
+        fallbacks.append({
+            "path": f"structure.layers[{index}].settings.theme",
+            "layer_id": layer_id if isinstance(layer_id, str) else "",
+            "theme": theme,
+        })
+    if not fallbacks:
+        return document, []
+    return {**document, "layers": layers}, fallbacks
 
 
 class StructuralValidationError(ValueError):
@@ -299,6 +343,9 @@ class StructuralRuntimeCoordinator:
         # of opening a second projection transaction.
         self._unfinished_activation: _ActivationEnvelope | None = None
         self._launch_error: dict[str, str] | None = None
+        # Launch layers that use the default theme because theirs isn't
+        # registered (D-013); cleared, like the launch error, by structure.set.
+        self._theme_fallbacks: list[dict[str, str]] = []
         # The trusted catalog is immutable, so validate and describe it once
         # instead of on every render-thread snapshot. controller.snapshot()
         # copies it through _json_safe; callers must not mutate it.
@@ -323,6 +370,8 @@ class StructuralRuntimeCoordinator:
         public["capabilities"] = self._capability_data
         if self._launch_error is not None:
             public["launch_error"] = dict(self._launch_error)
+        if self._theme_fallbacks:
+            public["theme_fallbacks"] = [dict(item) for item in self._theme_fallbacks]
         return public
 
     def apply_launch_structure(self, raw: str) -> bool:
@@ -348,6 +397,9 @@ class StructuralRuntimeCoordinator:
                     "launch structure is not valid JSON",
                     path="structure",
                 ) from exc
+            # Launch only: a live structure.set comes from a page that knows
+            # this run's themes, so it is still refused (D-013).
+            document, fallbacks = launch_theme_fallbacks(document)
             candidate = structure_document_to_definition(
                 self._active_definition, document, self._capabilities
             )
@@ -368,6 +420,7 @@ class StructuralRuntimeCoordinator:
         self._active_plan.begin_frame()
         commit()
         self._active_definition = candidate
+        self._theme_fallbacks = fallbacks
         return True
 
     # ------------------------------------------------------------------
@@ -545,6 +598,7 @@ class StructuralRuntimeCoordinator:
             envelope.commit()
             self._active_definition = envelope.definition
             self._launch_error = None
+            self._theme_fallbacks = []
             self._controller.revision += 1
             return self._controller.revision
         finally:

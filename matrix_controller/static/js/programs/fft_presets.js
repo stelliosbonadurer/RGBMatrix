@@ -130,8 +130,9 @@ function analyzerIds(info) {
 // One stored layer against `info`'s descriptor, under `backend`'s fixed values.
 // Returns {layer: null, layerType} for a layer type `info` doesn't list, else the
 // layer (no uid), the values the lock replaced (for the D-061 stash), and what
-// changed: settings filled from defaults, settings dropped, fixed values set, and
-// the analyzer when its own isn't available.
+// changed: settings filled from defaults, settings dropped, fixed values set,
+// choices the descriptor no longer lists (a deleted custom theme, fft-themes
+// D-013) set to their default, and the analyzer when its own isn't available.
 export function reconcileLayer(stored, info, backend) {
   const descriptor = fft.descriptorFor(info, stored?.layer_type);
   if (!descriptor) return {layer: null, layerType: stored?.layer_type};
@@ -140,8 +141,13 @@ export function reconcileLayer(stored, info, backend) {
   const known = new Set(fields.map(field => field.name));
   const settings = {};
   const filled = [];
+  const unavailable = [];
   for (const field of fields) {
-    if (hasOwn(given, field.name)) {
+    if (hasOwn(given, field.name) && field.type === 'choice' && Array.isArray(field.choices) &&
+        !field.choices.includes(given[field.name])) {
+      settings[field.name] = copy(field.default);
+      unavailable.push({label: field.label || field.name, from: given[field.name], to: field.default});
+    } else if (hasOwn(given, field.name)) {
       settings[field.name] = copy(given[field.name]);
     } else {
       settings[field.name] = copy(field.default);
@@ -169,11 +175,13 @@ export function reconcileLayer(stored, info, backend) {
     filled,
     dropped,
     fixed,
+    unavailable,
     analyzer,
   };
 }
 
 const unique = items => [...new Set(items)];
+const sameChoice = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 // Stored content against `info`: an unknown output falls back to the first
 // listed, an unknown source to `sources.default`, and each layer as above.
@@ -187,7 +195,7 @@ export function reconcile(content, info, sources = {}) {
   const layers = [];
   const replaced = [];
   const changes = {
-    filled: [], dropped: [], fixed: [], droppedTypes: [], analyzer: null,
+    filled: [], dropped: [], fixed: [], droppedTypes: [], unavailable: [], analyzer: null,
     backend: backend === (content?.backend ?? null) ? null : {from: content?.backend ?? null, to: backend},
     source: source === (content?.source ?? null) ? null : {from: content?.source ?? null, to: source},
   };
@@ -202,6 +210,11 @@ export function reconcile(content, info, sources = {}) {
     changes.filled.push(...result.filled);
     changes.dropped.push(...result.dropped);
     changes.fixed.push(...result.fixed);
+    for (const item of result.unavailable) {
+      if (!changes.unavailable.some(other => other.label === item.label && sameChoice(other.from, item.from))) {
+        changes.unavailable.push(item);
+      }
+    }
     changes.analyzer ||= result.analyzer;
   }
   for (const key of ['filled', 'dropped', 'fixed', 'droppedTypes']) changes[key] = unique(changes[key]);
@@ -210,7 +223,8 @@ export function reconcile(content, info, sources = {}) {
 
 export function hasChanges(changes) {
   return Boolean(changes.filled.length || changes.dropped.length || changes.fixed.length ||
-    changes.droppedTypes.length || changes.analyzer || changes.backend || changes.source);
+    changes.droppedTypes.length || changes.unavailable?.length || changes.analyzer || changes.backend ||
+    changes.source);
 }
 
 const count = (number, word) => `${number} ${word}${number === 1 ? '' : 's'}`;
@@ -238,6 +252,9 @@ export function reconcileNote(subject, changes, {saveTo = null, backend = null} 
   }
   if (changes.source) {
     parts.push(`Its source ${changes.source.from ?? '(none)'} isn't available, so it uses ${changes.source.to}.`);
+  }
+  for (const item of changes.unavailable || []) {
+    parts.push(`Its ${item.label.toLowerCase()} ${String(item.from)} isn't available, so it uses ${String(item.to)}.`);
   }
   if (changes.analyzer) parts.push(`It now uses the ${changes.analyzer} analyzer.`);
   if (changes.fixed.length) {

@@ -59,12 +59,29 @@ class ColorSettings:
 ### Saved on the Pi (no code)
 
 Custom themes are FFT's program config file, saved by the web service on the Pi
-(`<state directory>/program-files/fft.themes.json`) and edited through
-`GET`/`PUT /api/v1/programs/fft/files/themes`. The FFT page has no editor for it yet.
+(`<state directory>/program-files/fft.themes.json`). Edit them in the FFT page's
+**Custom themes** section: add a theme, set its name, description, color direction,
+colors, and overflow colors (each list previews as a gradient), and press **Save
+themes**. The section saves on its own; Launch and Send update never save it. The
+API is `GET`/`PUT /api/v1/programs/fft/files/themes`.
+
 Each FFT launch receives the saved file in `RGB_MATRIX_PROGRAM_CONFIG` and registers
 its themes before building any layer, so a saved change applies from the next launch.
-A run without that variable reads the tracked default `config/custom_themes.json`
-(no custom themes).
+Saved themes join every layer's Theme list at once; while FFT runs, a layer that uses
+a custom theme after the themes were saved makes Send update a relaunch. A run without
+that variable reads the tracked default `config/custom_themes.json` (no custom themes).
+
+If the saved file can't be used (it was edited by hand, or a later version no longer
+accepts it), the section says why and offers **Remove the saved file**; until then
+launches use no custom themes.
+
+**A missing theme.** A preset or layer can name a custom theme that is no longer
+saved (deleted, or saved on another Pi). Loading it on the page sets that layer to
+`ocean` and says so. A launch structure naming an unregistered `my_*` theme runs that
+layer with `ocean` and reports it in the structure snapshot's `theme_fallbacks`
+(`path`, `layer_id`, `theme`), which the page shows; the other layers are unchanged.
+A live `structure.set` with an unregistered theme, and any non-`my_*` name that isn't
+registered, are still refused.
 
 ```json
 {

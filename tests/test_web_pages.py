@@ -7,6 +7,8 @@
 - No page mentions the fixed pairing code (D-013) or carries inline script/style.
 - ``node --test`` runs the JavaScript tests under ``tests/js``; skipped without
   Node 22 or newer.
+- Custom FFT theme documents the page builds agree with the FFT's parser
+  (fft-themes M3 criterion 2); also skipped without Node.
 """
 
 from __future__ import annotations
@@ -176,6 +178,77 @@ class JavaScriptTests(unittest.TestCase):
             [node, "--test", *files], cwd=ROOT, capture_output=True, text=True, timeout=120
         )
         self.assertEqual(result.returncode, 0, result.stdout[-4000:] + result.stderr[-2000:])
+
+
+# Builds documents the way the themes editor does and says whether the page
+# accepts each; the parser must agree (fft-themes D-008, D-012, M3 criterion 2).
+_THEME_CASES_SCRIPT = r"""
+const themes = await import(process.argv[1]);
+const full = () => {
+  let list = [{position: 0, color: [255, 0, 0]}, {position: 1, color: [0, 0, 255]}];
+  while (list.length < themes.MAX_STOPS) list = themes.addStop(list);
+  return list;
+};
+const theme = changes => ({...themes.newTheme([]), ...changes});
+const many = (count, changes = {}) => Array.from({length: count}, (_unused, index) =>
+  theme({name: `my_t${index}`, ...changes}));
+const cases = {
+  new_theme: {themes: [themes.newTheme([])]},
+  empty: {themes: []},
+  longest_name_and_description: {themes: [theme({name: `my_${'a'.repeat(29)}`, description: '\u00e9'.repeat(80)})]},
+  full_lists: {themes: [theme({axis: 'column', stops: full(), overflow: [full(), full(), full(), full()]})]},
+  thirty_two: {themes: many(32)},
+  near_the_cap: {themes: many(10, {stops: full(), overflow: [full(), full(), full(), full()]})},
+  over_the_cap: {themes: many(32, {stops: full(), overflow: [full(), full(), full(), full()]})},
+  thirty_three: {themes: many(33)},
+  name_too_long: {themes: [theme({name: `my_${'a'.repeat(30)}`})]},
+  duplicate: {themes: [theme({name: 'my_a'}), theme({name: 'my_a'})]},
+  description_too_long: {themes: [theme({description: 'x'.repeat(81)})]},
+  decreasing: {themes: [theme({stops: [{position: 0, color: [0, 0, 0]}, {position: 0.7, color: [0, 0, 0]},
+    {position: 0.3, color: [0, 0, 0]}, {position: 1, color: [0, 0, 0]}]})]},
+  five_overflow: {themes: [theme({overflow: Array.from({length: 5}, full)})]},
+};
+const out = Object.fromEntries(Object.entries(cases).map(([name, document]) =>
+  [name, {document, ok: Object.keys(themes.themeErrors(document)).length === 0}]));
+out.limits = {
+  MAX_THEMES: themes.MAX_THEMES, MIN_STOPS: themes.MIN_STOPS, MAX_STOPS: themes.MAX_STOPS,
+  MAX_OVERFLOW_LAYERS: themes.MAX_OVERFLOW, MAX_DESCRIPTION: themes.MAX_DESCRIPTION,
+  MAX_DOCUMENT_BYTES: themes.MAX_DOCUMENT_BYTES, AXES: themes.AXES,
+};
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+class CustomThemeDocumentTests(unittest.TestCase):
+    def test_page_documents_agree_with_the_fft_parser(self) -> None:
+        from my_programs.fft_program.themes import custom
+
+        node = _node()
+        if node is None:
+            self.skipTest("Node 22 or newer is not installed")
+        module = (STATIC / "js" / "programs" / "fft_themes.js").as_uri()
+        result = subprocess.run(
+            [node, "--input-type=module", "-e", _THEME_CASES_SCRIPT, module],
+            cwd=ROOT, capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        cases = json.loads(result.stdout)
+        limits = cases.pop("limits")
+        for name in ("MAX_THEMES", "MIN_STOPS", "MAX_STOPS", "MAX_OVERFLOW_LAYERS",
+                     "MAX_DESCRIPTION", "MAX_DOCUMENT_BYTES"):
+            self.assertEqual(limits[name], getattr(custom, name), name)
+        self.assertEqual(tuple(limits["AXES"]), custom.AXES)
+        expected = {"new_theme", "empty", "longest_name_and_description", "full_lists",
+                    "thirty_two", "near_the_cap"}
+        self.assertEqual({name for name, case in cases.items() if case["ok"]}, expected)
+        for name, case in cases.items():
+            with self.subTest(case=name):
+                try:
+                    custom.parse_custom_themes(case["document"])
+                    accepted = True
+                except custom.CustomThemeError:
+                    accepted = False
+                self.assertEqual(accepted, case["ok"])
 
 
 if __name__ == "__main__":
