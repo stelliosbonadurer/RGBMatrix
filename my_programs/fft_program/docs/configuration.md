@@ -85,8 +85,8 @@ Bars are measured in full-scale units, where a full-scale sine reads 1.0 (0 dBFS
 they don't change with `block_size` or `fft_size`. `noise_floor_dbfs` (−120 to −20)
 is subtracted from each bar's level before the weighting curve multiplies it, so one
 floor cuts quiet bass and quiet treble alike. A bar below the floor is dark. The
-default −65 dBFS is provisional until a silence measurement on the Pi; it keeps
-white noise at −60 dBFS RMS dark at block 512.
+default −65 dBFS was kept after an in-room check on the Pi (not a silence
+measurement); it keeps white noise at −60 dBFS RMS dark at block 512.
 
 `aggregation` sets how the FFT bins inside one bar combine into its level. Each method
 has its own full-scale constant, computed when the layer is compiled, so a full-scale

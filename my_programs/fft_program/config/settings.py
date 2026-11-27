@@ -107,8 +107,8 @@ class ColorSettings:
 class SensitivitySettings:
     """Audio sensitivity configuration."""
     # Subtracted from each bar before weighting, in dBFS (a full-scale sine is 0).
-    # Lower is more sensitive; raise it if bars move with no audio. -65 is provisional
-    # until a silence run on the Pi (fft-level-controls D-033).
+    # Lower is more sensitive; raise it if bars move with no audio. -65 was kept after
+    # the fft-level-controls M5 in-room check (D-033, D-048), not measured.
     noise_floor_dbfs: float = -65.0
     # How the FFT bins in one bar combine: 'mean', 'band_energy' (sqrt of the summed
     # squares), or 'max'. Each reads a full-scale sine as 1.0 (fft-level-controls D-012).

@@ -159,8 +159,8 @@ class StandardAnalysisPlan:
     aggregation: str = AGGREGATION_DEFAULT
 
 
-# The noise floor's bounds and default, in dBFS (D-017, D-030, D-033). The default
-# is provisional until a silence run on the Pi.
+# The noise floor's bounds and default, in dBFS (D-017, D-030, D-033). -65 was kept
+# after the fft-level-controls M5 in-room check (D-048), not measured.
 NOISE_FLOOR_DBFS_MIN = -120.0
 NOISE_FLOOR_DBFS_MAX = -20.0
 NOISE_FLOOR_DBFS_DEFAULT = -65.0
