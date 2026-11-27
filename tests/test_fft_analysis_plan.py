@@ -145,7 +145,12 @@ class StandardAnalysisCompilationTests(unittest.TestCase):
         np.testing.assert_array_equal(plan.window, expected_window)
         for actual, expected in zip(plan.bin_indices, expected_indices):
             np.testing.assert_array_equal(actual, expected)
-        np.testing.assert_array_equal(plan.bin_weights, expected_weights)
+        # The weights carry the full-scale normalization (D-031).
+        scale = 2.0 / float(np.sum(expected_window))
+        self.assertEqual(plan.spectrum_scale, scale)
+        np.testing.assert_array_equal(
+            plan.bin_weights, (expected_weights * scale).astype(np.float32)
+        )
 
     def test_default_points_stay_close_to_the_retired_weight_curve(self) -> None:
         plan = compile_standard_analysis_plan(_candidate(), sample_rate=44_100)
@@ -154,7 +159,8 @@ class StandardAnalysisCompilationTests(unittest.TestCase):
         positions = np.log10(centers / 100) / np.log10(6300 / 100)
         retired = 0.45 + (10.0 - 0.45) * positions ** 1.5
 
-        relative_error = np.abs(plan.bin_weights - retired) / retired
+        weights = plan.bin_weights / plan.spectrum_scale
+        relative_error = np.abs(weights - retired) / retired
         self.assertLess(float(relative_error.max()), 0.09)
 
     def test_compiled_arrays_are_read_only(self) -> None:
@@ -362,7 +368,10 @@ class ProjectionLayoutTests(unittest.TestCase):
         )
         layout = projection_layout(100, 6300, points, 44_100, 8192, 64)
 
-        np.testing.assert_array_equal(plan.bin_weights, layout.weights)
+        np.testing.assert_array_equal(
+            plan.bin_weights,
+            (layout.weights * plan.spectrum_scale).astype(np.float32),
+        )
         for actual, expected in zip(plan.bin_indices, layout.bin_indices):
             np.testing.assert_array_equal(actual, expected)
 

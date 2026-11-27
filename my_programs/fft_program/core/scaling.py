@@ -4,7 +4,9 @@ Per-layer level and motion for the FFT visualizer (fft-level-controls M2).
 Auto level is one asymmetric envelope on the frame peak's square: it rises with
 ``attack_seconds`` and falls with ``release_seconds``, and the scale is
 ``sqrt(envelope) × headroom`` (D-014). With auto level off the divisor is the
-constant ``FIXED_SCALE`` (D-015). Gain multiplies afterwards (D-001).
+constant ``FIXED_SCALE`` (D-015). Auto level never divides by less than
+``10^(−max_boost_db/20)`` (D-006, D-035). Gain multiplies afterwards (D-001). Bars
+arrive in full-scale units: a full-scale sine reads 1.0 (D-017).
 
 Every time constant is in seconds. Each call measures the interval since the
 previous call (clamped to ``MAX_STEP_SECONDS`` after stalls) and turns each
@@ -22,11 +24,24 @@ import numpy as np  # type: ignore
 from config.settings import PeakSettings, ScalingSettings, SmoothingSettings
 
 
-# Auto level off divides by this constant reference (D-015).
-FIXED_SCALE = 0.3
-# Auto level never divides by less than this: today's min_scale, a max auto boost
-# of 20. It becomes a per-layer setting in M3 with normalized units (D-024).
-AUTO_LEVEL_MIN_SCALE = 0.05
+# The retired raw-unit constants, converted exactly at the default block size 512,
+# where a raw magnitude times 1/127.75 is full-scale units (D-032).
+_RAW_TO_FULL_SCALE_AT_BLOCK_512 = 1.0 / 127.75
+# Auto level off divides by this constant reference (D-015): the retired 0.3,
+# about -52.6 dBFS.
+FIXED_SCALE = 0.3 * _RAW_TO_FULL_SCALE_AT_BLOCK_512
+# Bounds and default of max auto boost, in dB re full scale (D-035). The default
+# rounds the retired min_scale 0.05 (68.1 dB at block 512).
+MAX_BOOST_DB_MIN = 0.0
+MAX_BOOST_DB_MAX = 120.0
+MAX_BOOST_DB_DEFAULT = 68.0
+
+
+def min_scale(max_boost_db: float) -> float:
+    """The smallest divisor auto level may use for a max auto boost in dB."""
+    return 10.0 ** (-float(max_boost_db) / 20.0)
+
+
 # The longest interval one call advances state by; a longer stall counts as this.
 MAX_STEP_SECONDS = 0.25
 # A fresh processor's first call advances this much: one call at the assumed
@@ -78,7 +93,7 @@ class ScalingProcessor:
             return FIXED_SCALE
         return max(
             math.sqrt(self.envelope) * self.scaling.headroom,
-            AUTO_LEVEL_MIN_SCALE,
+            min_scale(self.scaling.max_boost_db),
         )
 
     def process(self, bars: np.ndarray, now: float) -> tuple:

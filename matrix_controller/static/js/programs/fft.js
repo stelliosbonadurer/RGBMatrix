@@ -360,7 +360,7 @@ export function draftChanges(baseline, draft) {
 // spectrum (core/analyzer_registry.py); hidden layers count too.
 export function mappingKey(settings) {
   const points = sortedPoints(settings?.weight_points || []).map(point => [point.position, point.weight]);
-  return JSON.stringify([settings?.min_freq, settings?.max_freq, settings?.noise_floor, points]);
+  return JSON.stringify([settings?.min_freq, settings?.max_freq, settings?.noise_floor_dbfs, points]);
 }
 
 export function mappingCount(layers) {

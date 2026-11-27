@@ -68,7 +68,7 @@ _TRANSFORM_SETTING_NAMES = ("block_size", "fft_size")
 _PROJECTION_SETTING_NAMES = (
     "min_freq",
     "max_freq",
-    "noise_floor",
+    "noise_floor_dbfs",
     "weight_points",
 )
 
@@ -109,7 +109,7 @@ def _projection_candidate(
             max_freq=settings["max_freq"],  # type: ignore[arg-type]
             weight_points=canonical_weight_points(settings["weight_points"]),
         ),
-        float(settings["noise_floor"]),
+        float(settings["noise_floor_dbfs"]),
     )
 
 
@@ -162,7 +162,7 @@ def standard_analyzer_definition(
             "fft_size": audio_settings.fft_size,
             "min_freq": frequency_settings.active_min_freq,
             "max_freq": frequency_settings.active_max_freq,
-            "noise_floor": sensitivity_settings.noise_floor,
+            "noise_floor_dbfs": sensitivity_settings.noise_floor_dbfs,
             "weight_points": weight_points_document(
                 sensitivity_settings.weight_points
             ),
@@ -269,7 +269,7 @@ class AnalyzerRegistry:
             settings["fft_size"],
             settings["min_freq"],
             settings["max_freq"],
-            settings["noise_floor"],
+            settings["noise_floor_dbfs"],
             # Lists are unhashable; the canonical tuple also makes key equality
             # independent of the order points arrived in.
             canonical_weight_points(settings["weight_points"]),
@@ -363,13 +363,13 @@ class AnalyzerRegistry:
         runtime = self._projection_runtimes.get(key)
         prepared = self._projection_prepared
         if runtime is None:
-            candidate, noise_floor = _projection_candidate(definition, settings)
+            candidate, noise_floor_dbfs = _projection_candidate(definition, settings)
             creator = getattr(self._owner, "create_projection", None)
             if not callable(creator):
                 raise AnalyzerRegistryError(
                     "analyzer runtime does not support per-layer projections"
                 )
-            runtime = creator(candidate, noise_floor)
+            runtime = creator(candidate, noise_floor_dbfs)
             self._validate_runtime(runtime, definition)
             self._projection_runtimes[key] = runtime
             if prepared is not None:

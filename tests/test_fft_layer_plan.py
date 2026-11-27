@@ -644,6 +644,7 @@ class CurrentBarsDescriptorTests(unittest.TestCase):
                 "auto_level_headroom": "auto_level",
                 "auto_level_attack_seconds": "auto_level",
                 "auto_level_release_seconds": "auto_level",
+                "auto_level_max_boost_db": "auto_level",
                 "dynamic_cycle_speed": "theme",
                 "dynamic_frozen": "theme",
             },

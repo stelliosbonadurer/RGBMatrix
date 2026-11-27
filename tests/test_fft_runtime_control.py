@@ -227,9 +227,9 @@ class SettingsFileTests(unittest.TestCase):
 
     def test_retired_weight_pair_converts_to_points_with_a_note(self) -> None:
         settings, output = self._load(
-            {"noise_floor": 0.2, "low_freq_weight": 0.6, "high_freq_weight": 8.0}
+            {"noise_floor_dbfs": -50.0, "low_freq_weight": 0.6, "high_freq_weight": 8.0}
         )
-        self.assertEqual(settings.sensitivity.noise_floor, 0.2)
+        self.assertEqual(settings.sensitivity.noise_floor_dbfs, -50.0)
         self.assertEqual(
             settings.sensitivity.weight_points, legacy_weight_points(0.6, 8.0)
         )
@@ -240,9 +240,17 @@ class SettingsFileTests(unittest.TestCase):
             settings.sensitivity.weight_points, legacy_weight_points(0.45, 4.0)
         )
 
+    def test_retired_raw_noise_floor_fails_naming_the_new_key(self) -> None:
+        # fft-level-controls D-030: no exact conversion, so startup fails.
+        with self.assertRaises(ValueError) as caught:
+            self._load({"noise_floor": 0.3})
+        self.assertIn("noise_floor_dbfs", str(caught.exception))
+        settings, _output = self._load({})
+        self.assertEqual(settings.sensitivity.noise_floor_dbfs, -65.0)
+
     def test_silence_threshold_is_dropped_with_a_note(self) -> None:
-        settings, output = self._load({"silence_threshold": 0.1, "noise_floor": 0.4})
-        self.assertEqual(settings.sensitivity.noise_floor, 0.4)
+        settings, output = self._load({"silence_threshold": 0.1, "noise_floor_dbfs": -40.0})
+        self.assertEqual(settings.sensitivity.noise_floor_dbfs, -40.0)
         self.assertEqual(settings.sensitivity.weight_points, legacy_weight_points())
         self.assertIn("ignored retired sensitivity.silence_threshold", output)
 

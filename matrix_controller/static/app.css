@@ -919,7 +919,6 @@ details.panel[open] > summary { margin-bottom: 12px; }
 .point-dot { fill: var(--pink); stroke: var(--bg); stroke-width: 2; }
 .point-dot.selected { fill: var(--orange); }
 .point-ring { fill: none; stroke: var(--orange); stroke-width: 2; }
-.zero-zone { fill: var(--surface-raised); stroke: var(--line); }
 .floor-track { stroke: var(--line-strong); stroke-width: 4; stroke-linecap: round; }
 .floor-fill { stroke: var(--orange); stroke-width: 4; stroke-linecap: round; opacity: .55; }
 .floor-handle { fill: var(--orange); stroke: var(--bg); stroke-width: 2; }

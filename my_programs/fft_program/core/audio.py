@@ -17,6 +17,7 @@ from core.analysis_plan import (
     StandardAnalysisCandidate,
     StandardAnalysisPlan,
     compile_standard_analysis_plan,
+    raw_noise_floor,
 )
 
 
@@ -139,7 +140,7 @@ class _ProjectionRecord:
     """Mutable control-plane owner for one fixed projection transport."""
 
     candidate: StandardAnalysisCandidate
-    noise_floor: float
+    noise_floor_dbfs: float
     transport: _LatestAnalysisTransport
     plan: Optional[StandardAnalysisPlan] = None
     epoch: int = 0
@@ -151,7 +152,7 @@ class _WorkerProjectionState:
 
     token: object
     plan: StandardAnalysisPlan
-    noise_floor: float
+    noise_floor: float  # raw magnitude units, from the dBFS setting (D-031)
     transport: _LatestAnalysisTransport
     epoch: int
 
@@ -171,7 +172,7 @@ class _WorkerAnalysisState:
 
     @property
     def noise_floor(self) -> float:
-        """Compatibility view of the primary projection noise floor."""
+        """Compatibility view of the primary projection's raw noise floor."""
         return self.projections[0].noise_floor
 
     @property
@@ -245,7 +246,7 @@ class AudioProcessor:
     - Audio input stream management
     - FFT computation
     - Frequency binning with logarithmic distribution
-    - Noise floor subtraction
+    - Noise floor subtraction (dBFS, before weighting) and full-scale normalization
     """
     
     def __init__(
@@ -300,7 +301,7 @@ class AudioProcessor:
         self._projection_records: dict[object, _ProjectionRecord] = {
             self._primary_projection_token: _ProjectionRecord(
                 candidate=self.analysis_candidate,
-                noise_floor=float(sensitivity_settings.noise_floor),
+                noise_floor_dbfs=float(sensitivity_settings.noise_floor_dbfs),
                 transport=_LatestAnalysisTransport(num_bins),
             )
         }
@@ -326,7 +327,7 @@ class AudioProcessor:
     def create_projection(
         self,
         candidate: StandardAnalysisCandidate,
-        noise_floor: float,
+        noise_floor_dbfs: float,
     ) -> AudioProjection:
         """Create one projection without opening another capture stream."""
         if self._transform_key(candidate) != self._transform_key(
@@ -339,7 +340,7 @@ class AudioProcessor:
         token = object()
         record = _ProjectionRecord(
             candidate=candidate,
-            noise_floor=float(noise_floor),
+            noise_floor_dbfs=float(noise_floor_dbfs),
             transport=_LatestAnalysisTransport(candidate.num_bins),
         )
         self._projection_records[token] = record
@@ -406,7 +407,7 @@ class AudioProcessor:
         plan = self.compile_analysis_candidate(candidate)
         primary = self._projection_record(self._primary_projection_token)
         primary.candidate = candidate
-        primary.noise_floor = float(self.sensitivity_settings.noise_floor)
+        primary.noise_floor_dbfs = float(self.sensitivity_settings.noise_floor_dbfs)
         primary.plan = plan
         self.active_plan = plan
         changed_tokens = {self._primary_projection_token}
@@ -458,7 +459,9 @@ class AudioProcessor:
                 _WorkerProjectionState(
                     token=token,
                     plan=plan,
-                    noise_floor=record.noise_floor,
+                    noise_floor=raw_noise_floor(
+                        record.noise_floor_dbfs, plan.spectrum_scale
+                    ),
                     transport=record.transport,
                     epoch=record.epoch,
                 )
@@ -499,16 +502,19 @@ class AudioProcessor:
         noise_floor: float,
         destination: np.ndarray,
     ) -> None:
-        """Map one shared full spectrum into one configured 64-bin view."""
+        """Map one shared full spectrum into one configured 64-bin view.
+
+        The floor is subtracted before weighting (D-005); the weights also carry the
+        full-scale normalization (D-031), so the result is in full-scale units.
+        """
 
         destination.fill(0)
         for index, bin_indices in enumerate(plan.bin_indices):
             if len(bin_indices) > 0:
-                destination[index] = (
-                    np.mean(magnitudes[bin_indices]) * plan.bin_weights[index]
-                )
+                destination[index] = np.mean(magnitudes[bin_indices])
         np.subtract(destination, noise_floor, out=destination)
         np.maximum(destination, 0, out=destination)
+        np.multiply(destination, plan.bin_weights, out=destination)
 
     def _process_latest_samples_once(self) -> bool:
         """Analyze at most one newest sample generation without waiting."""

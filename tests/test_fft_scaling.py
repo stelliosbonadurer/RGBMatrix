@@ -28,11 +28,12 @@ sys.modules["sounddevice"] = _sounddevice
 try:
     from config.settings import PeakSettings, ScalingSettings, SmoothingSettings  # noqa: E402
     from core.scaling import (  # noqa: E402
-        AUTO_LEVEL_MIN_SCALE,
         FIRST_STEP_SECONDS,
         FIXED_SCALE,
+        MAX_BOOST_DB_DEFAULT,
         MAX_STEP_SECONDS,
         ScalingProcessor,
+        min_scale,
     )
 finally:
     if _prior_sounddevice is None:
@@ -101,8 +102,12 @@ class TwoRateTests(unittest.TestCase):
         # Bursts and silences: each peak holds, then falls. (While a bar glides
         # down slowly, a marker re-catches it only on a call, so its hold-and-fall
         # cycle has a per-call phase; that is not compared here.)
+        # 0.9 in the retired raw units, so bars reach the same few heights as
+        # before full-scale normalization (D-032).
+        loud = 0.9 * FIXED_SCALE / 0.3
+
         def bursts(t: float) -> float:
-            return 0.9 if int(t * 2) % 2 == 0 else 0.0
+            return loud if int(t * 2) % 2 == 0 else 0.0
 
         def run(rate):
             scaler = _scaler(auto_level=False)
@@ -215,10 +220,43 @@ class AutoLevelTests(unittest.TestCase):
         scaler.scaling.auto_level = True
         self.assertAlmostEqual(scaler.scale, math.sqrt(scaler.envelope) * 2.5)
 
-    def test_scale_never_drops_below_the_floor(self) -> None:
+    def test_scale_never_drops_below_the_max_auto_boost_limit(self) -> None:
         scaler = _scaler()
         scaler.process(np.zeros(WIDTH, dtype=np.float32), 0.0)
-        self.assertEqual(scaler.scale, AUTO_LEVEL_MIN_SCALE)
+        self.assertEqual(scaler.scale, min_scale(MAX_BOOST_DB_DEFAULT))
+
+    def test_max_auto_boost_is_in_db_re_full_scale(self) -> None:
+        # Criterion 4 (D-035): scale >= 10^(-boost/20).
+        self.assertAlmostEqual(min_scale(40.0), 0.01)
+        self.assertEqual(min_scale(0.0), 1.0)
+        quiet = _scaler(max_boost_db=40.0)
+        quiet.process(SHAPE * 1e-4, 0.0)  # peak 1e-4: auto level wants 2.5e-4
+        self.assertAlmostEqual(quiet.scale, 0.01)
+        loud = _scaler(max_boost_db=40.0)
+        loud.process(SHAPE * 0.5, 0.0)  # peak 0.5: 1.25, above the limit
+        self.assertAlmostEqual(loud.scale, 0.5 * 2.5, places=6)
+        # The limit follows the live setting, like the other level settings.
+        quiet.scaling.max_boost_db = 80.0
+        self.assertAlmostEqual(quiet.scale, 1e-4 * 2.5, places=9)
+
+
+class RetiredUnitConversionTests(unittest.TestCase):
+    """Criterion 5 (D-032): today's look at the default block size 512."""
+
+    RAW_TO_FULL_SCALE = 2.0 / float(np.sum(np.hanning(512)))
+
+    def test_auto_level_off_matches_the_retired_raw_divisor(self) -> None:
+        scaler = _scaler(auto_level=False, gain=1.5)
+        raw = SHAPE * 40.0  # raw magnitudes as the retired projection produced
+        normalized, _smoothed, _peaks = scaler.process(
+            (raw * self.RAW_TO_FULL_SCALE).astype(np.float32), 0.0
+        )
+        np.testing.assert_allclose(normalized, raw * 1.5 / 0.3, rtol=1e-6)
+
+    def test_default_boost_limit_is_within_two_percent_of_the_retired_one(self) -> None:
+        retired = 0.05 * self.RAW_TO_FULL_SCALE
+        self.assertLess(abs(min_scale(MAX_BOOST_DB_DEFAULT) / retired - 1.0), 0.02)
+        self.assertAlmostEqual(FIXED_SCALE, 0.3 * self.RAW_TO_FULL_SCALE, places=12)
 
     def test_attack_and_release_are_the_envelopes_time_constants(self) -> None:
         scaler = _scaler(attack_seconds=2.0, release_seconds=0.5)

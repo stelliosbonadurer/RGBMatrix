@@ -18,6 +18,9 @@ import numpy as np  # type: ignore
 
 from core.analysis_plan import (
     DEFAULT_WEIGHT_POINTS,
+    NOISE_FLOOR_DBFS_DEFAULT,
+    NOISE_FLOOR_DBFS_MAX,
+    NOISE_FLOOR_DBFS_MIN,
     MAX_WEIGHT_POINTS,
     MIN_WEIGHT_POINTS,
     WEIGHT_MAX,
@@ -49,7 +52,12 @@ from core.runtime_graph import (
     compile_runtime_graph,
     thaw_settings,
 )
-from core.scaling import ScalingProcessor
+from core.scaling import (
+    MAX_BOOST_DB_DEFAULT,
+    MAX_BOOST_DB_MAX,
+    MAX_BOOST_DB_MIN,
+    ScalingProcessor,
+)
 from themes import get_theme, list_themes
 from visualizers.bars_unified import BarsUnifiedVisualizer
 from visualizers.peaks import draw_peaks
@@ -90,13 +98,14 @@ CURRENT_BARS_SETTING_NAMES = frozenset({
     "auto_level_headroom",
     "auto_level_attack_seconds",
     "auto_level_release_seconds",
+    "auto_level_max_boost_db",
     "smoothing_rise_seconds",
     "smoothing_fall_seconds",
     "dynamic_cycle_speed",
     "dynamic_frozen",
     "min_freq",
     "max_freq",
-    "noise_floor",
+    "noise_floor_dbfs",
     "weight_points",
 })
 
@@ -503,13 +512,14 @@ def current_bars_settings_from_runtime(
         "auto_level_headroom": float(settings.scaling.headroom),
         "auto_level_attack_seconds": float(settings.scaling.attack_seconds),
         "auto_level_release_seconds": float(settings.scaling.release_seconds),
+        "auto_level_max_boost_db": float(settings.scaling.max_boost_db),
         "smoothing_rise_seconds": float(settings.smoothing.rise_seconds),
         "smoothing_fall_seconds": float(settings.smoothing.fall_seconds),
         "dynamic_cycle_speed": float(getattr(theme, "cycle_speed", 0.06)),
         "dynamic_frozen": bool(getattr(theme, "frozen", False)),
         "min_freq": float(settings.frequency.active_min_freq),
         "max_freq": float(settings.frequency.active_max_freq),
-        "noise_floor": float(settings.sensitivity.noise_floor),
+        "noise_floor_dbfs": float(settings.sensitivity.noise_floor_dbfs),
         "weight_points": weight_points_document(settings.sensitivity.weight_points),
     }
 
@@ -598,9 +608,10 @@ def current_bars_settings_descriptor() -> dict[str, object]:
             {"name": "max_freq", "label": "Max Hz", "group": "range",
              "type": "number", "min": 1.0, "max": 24000.0, "default": 6300.0,
              "help": "Highest frequency in Hz shown by the rightmost bar; at most half the sample rate."},
-            {"name": "noise_floor", "label": "Noise floor", "group": "range",
-             "type": "number", "min": 0.0, "max": 100.0, "default": 0.3,
-             "help": "Subtracted from every weighted bar; raise it if bars move with no audio."},
+            {"name": "noise_floor_dbfs", "label": "Noise floor (dBFS)", "group": "range",
+             "type": "number", "min": NOISE_FLOOR_DBFS_MIN, "max": NOISE_FLOOR_DBFS_MAX,
+             "default": NOISE_FLOOR_DBFS_DEFAULT,
+             "help": "Level subtracted from every bar before weighting, in dB below full scale. Raise it (toward -20) if bars move with no audio; lower it (toward -120) to show quieter sound."},
             {"name": "weight_points", "label": "Weighting points", "group": "range",
              "type": "points",
              "min_items": MIN_WEIGHT_POINTS, "max_items": MAX_WEIGHT_POINTS,
@@ -637,6 +648,11 @@ def current_bars_settings_descriptor() -> dict[str, object]:
              "type": "number", "min": AUTO_LEVEL_SECONDS_MIN, "max": AUTO_LEVEL_SECONDS_MAX,
              "default": RELEASE_SECONDS_DEFAULT,
              "help": "Time constant for adapting to quieter music, in seconds. Lower brings a quiet passage back up sooner; higher keeps it short longer."},
+            {"name": "auto_level_max_boost_db", "label": "Max auto boost (dB)", "group": "level",
+             "shown_when": dict(_WHEN_AUTO_LEVEL),
+             "type": "number", "min": MAX_BOOST_DB_MIN, "max": MAX_BOOST_DB_MAX,
+             "default": MAX_BOOST_DB_DEFAULT,
+             "help": "Most auto level may raise quiet music, in dB. Higher keeps quiet passages tall; lower lets them stay short."},
         ],
         "backend_constraints": {
             PILLOW_BULK_OUTPUT_PATH: {
@@ -725,6 +741,9 @@ def normalize_current_bars_settings(
         normalized, "peak_fall_rate", 0.0, PEAK_FALL_RATE_MAX
     )
     normalized["gain"] = _number(normalized, "gain", GAIN_MIN, GAIN_MAX)
+    normalized["auto_level_max_boost_db"] = _number(
+        normalized, "auto_level_max_boost_db", MAX_BOOST_DB_MIN, MAX_BOOST_DB_MAX
+    )
     normalized["auto_level_headroom"] = _number(
         normalized, "auto_level_headroom", HEADROOM_MIN, HEADROOM_MAX
     )
@@ -741,7 +760,9 @@ def normalize_current_bars_settings(
         raise LayerSettingsError(
             "max_freq must be greater than min_freq", field="max_freq"
         )
-    normalized["noise_floor"] = _number(normalized, "noise_floor", 0.0, 100.0)
+    normalized["noise_floor_dbfs"] = _number(
+        normalized, "noise_floor_dbfs", NOISE_FLOOR_DBFS_MIN, NOISE_FLOOR_DBFS_MAX
+    )
     try:
         normalized["weight_points"] = weight_points_document(
             normalized["weight_points"]
@@ -871,6 +892,7 @@ def _settings_for_layer(
     settings.scaling.headroom = normalized["auto_level_headroom"]
     settings.scaling.attack_seconds = normalized["auto_level_attack_seconds"]
     settings.scaling.release_seconds = normalized["auto_level_release_seconds"]
+    settings.scaling.max_boost_db = normalized["auto_level_max_boost_db"]
     settings.smoothing.rise_seconds = normalized["smoothing_rise_seconds"]
     settings.smoothing.fall_seconds = normalized["smoothing_fall_seconds"]
     return settings
@@ -1005,7 +1027,7 @@ def compile_current_bars_layer_plan(
                     for name in (
                         "min_freq",
                         "max_freq",
-                        "noise_floor",
+                        "noise_floor_dbfs",
                         "weight_points",
                     )
                 },

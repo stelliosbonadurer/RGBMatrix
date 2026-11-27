@@ -95,10 +95,10 @@ Common issues and their solutions.
 **Solutions:**
 
 1. **Check audio device** is correct
-2. **Lower noise_floor:** Try `0.0` to see raw signal
+2. **Lower the layer's Noise floor (dBFS):** try `-120` to see the raw signal
 3. **Increase sensitivity:**
    - Raise the layer's Gain
-   - Lower the layer's Headroom (auto level on)
+   - Lower the layer's Headroom, or raise its Max auto boost (auto level on)
 4. **Check audio levels** - is the mic picking up sound?
 
 ### Bars Always at Maximum
@@ -107,7 +107,7 @@ Common issues and their solutions.
 
 **Solutions:**
 
-1. **Increase noise_floor:** Try `0.3` or higher
+1. **Raise the layer's Noise floor (dBFS):** try `-50` or higher
 2. **Increase scaling:**
    - Lower the layer's Gain
    - Raise the layer's Headroom (auto level on)
@@ -130,7 +130,7 @@ Common issues and their solutions.
 
 **Solutions:**
 
-1. **Increase noise_floor:** Filter out background noise
+1. **Raise the layer's Noise floor (dBFS):** filter out background noise
 2. **Raise the layer's Rise (s):** for example `0.05` for smoother movement
 3. **Raise the layer's Attack and Release:** steadier scaling, less reactive to
    sudden sounds

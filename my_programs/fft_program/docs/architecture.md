@@ -69,6 +69,14 @@ behind. Stable buffer identities avoid per-frame transport allocation.
 `StandardAnalysisPlan` owns immutable FFT size, Hann window, bin-index arrays, and bin
 weights. Compilation occurs only at startup or after a successful relevant Apply.
 
+The spectrum is in full-scale units: a full-scale sine centred on an FFT bin reads 1.0
+whatever the block or FFT size. The plan's weights are the layer's weighting curve
+times `spectrum_scale` (`2 / Σ window`), so one multiply weights and normalizes a bar.
+Each bar is the mean of its bins, minus the noise floor (set in dBFS and converted to
+raw units once per published state), clipped at 0, then times its weight: the floor
+comes off before weighting. Auto level, gain, and max auto boost act later, per layer,
+in `core/scaling.py`; they never split a projection.
+
 The worker reads one versioned state containing the plan and noise floor. Applying a
 new plan/noise floor replaces that state atomically and advances its epoch. A result
 computed from an obsolete epoch is rejected instead of being published. Invalid Apply

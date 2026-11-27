@@ -483,14 +483,14 @@ class MagnitudeAnalyzerBehaviorTests(unittest.TestCase):
         expected = np.zeros(processor.num_bins, dtype=np.float32)
         for index, bin_indices in enumerate(plan.bin_indices):
             if len(bin_indices) > 0:
-                expected[index] = (
-                    np.mean(magnitudes[bin_indices])
-                    * plan.bin_weights[index]
-                )
-        expected = np.maximum(
-            0,
-            expected - processor.sensitivity_settings.noise_floor,
-        )
+                expected[index] = np.mean(magnitudes[bin_indices])
+        # The floor (dBFS, in raw units) comes off before the weights, which
+        # carry the full-scale normalization (D-005, D-031).
+        raw_floor = 10.0 ** (
+            processor.sensitivity_settings.noise_floor_dbfs / 20.0
+        ) / plan.spectrum_scale
+        expected = np.maximum(expected - np.float32(raw_floor), np.float32(0))
+        expected = (expected * plan.bin_weights).astype(np.float32)
 
         self.assertIsNotNone(actual)
         self.assertEqual(actual.shape, (64,))
@@ -765,3 +765,125 @@ class StandardRenderSourceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def _flat_processor(weight: float, floor_dbfs: float, block_size: int = 512):
+    # A narrow range near 2 kHz: bars hold one FFT bin each (or none), and a
+    # sine's negative-frequency image is far outside the Hann main lobe, which at
+    # 100 Hz would add about 1% to the reading.
+    processor = AudioProcessor(
+        AudioSettings(block_size=block_size),
+        FrequencySettings(min_freq=2000, max_freq=2100, zoom_mode=False),
+        SensitivitySettings(
+            noise_floor_dbfs=floor_dbfs,
+            weight_points=[{"position": 0.0, "weight": weight}],
+        ),
+        64,
+    )
+    processor.setup()
+    return processor
+
+
+def _bars(processor: AudioProcessor, samples: np.ndarray) -> np.ndarray:
+    processor._audio_callback(samples.reshape(-1, 1).astype(np.float32), len(samples), None, None)
+    assert processor._process_latest_samples_once()
+    bars = processor.get_fft_magnitudes().copy()
+    processor.release_fft_magnitudes()
+    return bars
+
+
+def _one_bin_bar(processor: AudioProcessor) -> tuple[int, float]:
+    """A bar covering exactly one FFT bin, and that bin's frequency."""
+    plan = processor.active_plan
+    index = next(i for i, bins in enumerate(plan.bin_indices) if len(bins) == 1)
+    frequency = int(plan.bin_indices[index][0]) * processor.sample_rate / plan.fft_size
+    return index, frequency
+
+
+def _sine(frequency: float, amplitude: float, block_size: int, sample_rate: int) -> np.ndarray:
+    n = np.arange(block_size)
+    return amplitude * np.sin(2 * np.pi * frequency * n / sample_rate)
+
+
+class NormalizedSpectrumTests(unittest.TestCase):
+    """fft-level-controls M3: full-scale units and a dBFS floor before weighting."""
+
+    def test_a_full_scale_sine_reads_one_at_any_block_size(self) -> None:
+        # Criterion 1 (D-017, D-031).
+        for block_size in (512, 1024):
+            with self.subTest(block_size=block_size):
+                processor = _flat_processor(1.0, -120.0, block_size)
+                index, frequency = _one_bin_bar(processor)
+                bars = _bars(
+                    processor,
+                    _sine(frequency, 1.0, block_size, processor.sample_rate),
+                )
+                self.assertAlmostEqual(float(bars[index]), 1.0, delta=0.01)
+
+    def test_the_floor_comes_off_before_the_weights(self) -> None:
+        # Criterion 2 (D-005): the same floor cuts weight-1 and weight-4 bars alike.
+        reference = _flat_processor(1.0, -120.0)
+        index, frequency = _one_bin_bar(reference)
+        samples = _sine(frequency, 10 ** (-30 / 20), 512, reference.sample_rate)
+        level = float(_bars(reference, samples)[index])
+        floor = 10 ** (-40 / 20)
+        for weight in (1.0, 4.0):
+            with self.subTest(weight=weight):
+                bars = _bars(_flat_processor(weight, -40.0), samples)
+                self.assertAlmostEqual(
+                    float(bars[index]), max(level - floor, 0.0) * weight, delta=1e-5
+                )
+
+    def test_default_floor_keeps_quiet_noise_dark_and_shows_a_tone(self) -> None:
+        # Criterion 3 (D-033): -60 dBFS RMS white noise stays dark at -65 dBFS.
+        processor = _processor()
+        processor.setup()
+        self.assertEqual(processor.sensitivity_settings.noise_floor_dbfs, -65.0)
+        rng = np.random.default_rng(20261126)
+        loudest = 0.0
+        for _frame in range(300):
+            noise = rng.standard_normal(512) * 10 ** (-60 / 20)
+            loudest = max(loudest, float(np.max(_bars(processor, noise))))
+        self.assertEqual(loudest, 0.0)
+        plan = processor.active_plan
+        index = 32
+        bins = plan.bin_indices[index]
+        centre = float(np.mean(bins)) * processor.sample_rate / plan.fft_size
+        bars = _bars(processor, _sine(centre, 10 ** (-20 / 20), 512, processor.sample_rate))
+        self.assertGreater(float(bars[index]), 0.0)
+
+    def test_auto_level_off_matches_the_retired_formula_on_the_same_samples(self) -> None:
+        # Criterion 5 (D-032), end to end at block 512: projection then scaler,
+        # against the retired raw mean / 0.3 × gain. The lowest floor, -120 dBFS,
+        # still subtracts 1e-6: at most 1e-6 × 1.5 / FIXED_SCALE ≈ 6.4e-4 heights.
+        from config.settings import PeakSettings, ScalingSettings, SmoothingSettings
+        from core.scaling import ScalingProcessor
+
+        processor = AudioProcessor(
+            AudioSettings(),
+            FrequencySettings(),
+            SensitivitySettings(
+                noise_floor_dbfs=-120.0,
+                weight_points=[{"position": 0.0, "weight": 1.0}],
+            ),
+            64,
+        )
+        processor.setup()
+        plan = processor.active_plan
+        rng = np.random.default_rng(5)
+        samples = (rng.standard_normal(512) * 0.05).astype(np.float32)
+        bars = _bars(processor, samples)
+        scaler = ScalingProcessor(
+            ScalingSettings(auto_level=False, gain=1.5),
+            SmoothingSettings(), PeakSettings(), 64,
+        )
+        normalized, _smoothed, _peaks = scaler.process(bars, 0.0)
+
+        magnitudes = np.abs(np.fft.rfft(samples * plan.window, n=plan.fft_size))
+        retired = np.array([
+            np.mean(magnitudes[bins]) if len(bins) else 0.0
+            for bins in plan.bin_indices
+        ])
+        expected = retired / 0.3 * 1.5
+        self.assertGreater(float(expected.max()), 1.0)  # bars of real height
+        np.testing.assert_allclose(normalized, expected, rtol=1e-5, atol=7e-4)

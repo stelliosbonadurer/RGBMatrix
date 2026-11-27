@@ -38,13 +38,14 @@
      "auto_level_headroom": 2.5,
      "auto_level_attack_seconds": 5.5,
      "auto_level_release_seconds": 2.75,
+     "auto_level_max_boost_db": 68.0,
      "smoothing_rise_seconds": 0.023,
      "smoothing_fall_seconds": 0.11,
      "dynamic_cycle_speed": 0.06,
      "dynamic_frozen": false,
      "min_freq": 100.0,
      "max_freq": 6300.0,
-     "noise_floor": 0.3,
+     "noise_floor_dbfs": -65.0,
      "weight_points": [
       {
        "position": 0.0,
@@ -330,14 +331,14 @@
         "help": "Highest frequency in Hz shown by the rightmost bar; at most half the sample rate."
        },
        {
-        "name": "noise_floor",
-        "label": "Noise floor",
+        "name": "noise_floor_dbfs",
+        "label": "Noise floor (dBFS)",
         "group": "range",
         "type": "number",
-        "min": 0.0,
-        "max": 100.0,
-        "default": 0.3,
-        "help": "Subtracted from every weighted bar; raise it if bars move with no audio."
+        "min": -120.0,
+        "max": -20.0,
+        "default": -65.0,
+        "help": "Level subtracted from every bar before weighting, in dB below full scale. Raise it (toward -20) if bars move with no audio; lower it (toward -120) to show quieter sound."
        },
        {
         "name": "weight_points",
@@ -453,6 +454,22 @@
         "max": 30.0,
         "default": 2.75,
         "help": "Time constant for adapting to quieter music, in seconds. Lower brings a quiet passage back up sooner; higher keeps it short longer."
+       },
+       {
+        "name": "auto_level_max_boost_db",
+        "label": "Max auto boost (dB)",
+        "group": "level",
+        "shown_when": {
+         "field": "auto_level",
+         "values": [
+          true
+         ]
+        },
+        "type": "number",
+        "min": 0.0,
+        "max": 120.0,
+        "default": 68.0,
+        "help": "Most auto level may raise quiet music, in dB. Higher keeps quiet passages tall; lower lets them stay short."
        }
       ],
       "backend_constraints": {

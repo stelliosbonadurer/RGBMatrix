@@ -2,7 +2,7 @@
 
 ## The Problem
 
-After refactoring the `fft_sandbox.py` monolithic script into a modular architecture, the new program was noticeably slower and less responsive than the original. There was also a visual artifact where pixels appeared dimmer around the halfway point horizontally.
+After refactoring the `fft_sandbox.py` monolithic script (now in `my_programs/legacy_scripts/`) into a modular architecture, the new program was noticeably slower and less responsive than the original. There was also a visual artifact where pixels appeared dimmer around the halfway point horizontally.
 
 ## Initial "Optimizations" That Made Things Worse
 

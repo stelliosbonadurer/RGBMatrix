@@ -10,14 +10,15 @@
 export const GRAPH_FIELDS = Object.freeze({
   min: 'min_freq',
   max: 'max_freq',
-  floor: 'noise_floor',
+  floor: 'noise_floor_dbfs',
   points: 'weight_points',
 });
 
 export const STRIP_LOW_HZ = 20; // the strip's left end (D-058)
 export const RANGE_RATIO = 1.05; // the narrowest range a drag makes
 export const WEIGHT_AXIS = Object.freeze([0.1, 100]); // log, plus an "off" row (D-059)
-export const FLOOR_AXIS = Object.freeze([0.01, 100]); // log, plus a 0 zone (D-059)
+export const FLOOR_AXIS = Object.freeze([-120, -20]); // dBFS, linear (fft-level-controls D-034)
+export const FLOOR_TICKS = Object.freeze([-120, -100, -80, -60, -40, -20]);
 
 // ---- Rounding (D-060) --------------------------------------------------------
 
@@ -168,19 +169,15 @@ export function detailScale(width) {
   };
 }
 
+// The floor lane: dBFS on a linear axis, quietest at the left.
 export function floorScale(width) {
-  const zeroLeft = 12;
-  const zeroRight = 36;
-  const left = 50;
-  const right = width - 16;
-  const a = Math.log10(FLOOR_AXIS[0]);
-  const b = Math.log10(FLOOR_AXIS[1]);
+  const left = 24;
+  const right = width - 24;
+  const [a, b] = FLOOR_AXIS;
   return {
-    zeroLeft, zeroRight, left, right, y: 18,
-    x: value => (value <= 0 ? (zeroLeft + zeroRight) / 2
-      : left + (Math.log10(clamp(value, FLOOR_AXIS[0], FLOOR_AXIS[1])) - a) / (b - a) * (right - left)),
-    v: x => (x < (zeroRight + left) / 2 ? 0
-      : 10 ** (a + (clamp(x, left, right) - left) / (right - left) * (b - a))),
+    left, right, y: 18,
+    x: value => left + (clamp(value, a, b) - a) / (b - a) * (right - left),
+    v: x => a + (clamp(x, left, right) - left) / (right - left) * (b - a),
   };
 }
 
@@ -246,13 +243,13 @@ export function nudgeRange(key, up, big, range) {
 
 // ---- Floor edits ------------------------------------------------------------------
 
-export const dragFloor = (x, scale) => sig3(scale.v(x));
+// A drag sets whole dB.
+export const dragFloor = (x, scale) => Math.round(scale.v(x)) || 0;
 
-// ×1.25, or ×2 with Shift; below 0.01 is 0, and up from 0 is 0.01.
+// 1 dB, or 5 dB with Shift, kept inside the axis.
 export function nudgeFloor(value, up, big) {
-  const factor = big ? 2 : 1.25;
-  if (up) return value <= 0 ? FLOOR_AXIS[0] : sig3(Math.min(FLOOR_AXIS[1], value * factor));
-  return value / factor < FLOOR_AXIS[0] ? 0 : sig3(value / factor);
+  const step = (up ? 1 : -1) * (big ? 5 : 1);
+  return clamp(Math.round((value + step) * 10) / 10, FLOOR_AXIS[0], FLOOR_AXIS[1]);
 }
 
 // ---- Point edits ------------------------------------------------------------------

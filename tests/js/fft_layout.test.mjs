@@ -83,9 +83,13 @@ test('the scales invert', () => {
   assert.equal(detail.y(0.05), detail.logBottom);
   close(detail.p(detail.x(0.37)), 0.37, 1e-12, 'position');
 
+  // The floor lane is linear dBFS (fft-level-controls D-034).
   const floor = rules.floorScale(400);
-  for (const value of [0.01, 0.3, 1, 100]) close(floor.v(floor.x(value)), value, 1e-9 * value, 'floor');
-  assert.equal(floor.v(floor.x(0)), 0);
+  for (const value of [-120, -65, -42.5, -20]) close(floor.v(floor.x(value)), value, 1e-9, 'floor');
+  assert.equal(floor.x(-120), floor.left);
+  assert.equal(floor.x(-20), floor.right);
+  assert.equal(floor.x(-200), floor.left); // clamped to the axis
+  close(floor.x(-70), (floor.left + floor.right) / 2, 1e-9, 'floor midpoint');
 });
 
 test('range ends drag within 20 Hz to Nyquist at 3 significant figures (criterion 3)', () => {
@@ -139,14 +143,16 @@ test('arrow keys nudge range ends by a semitone, or an octave with Shift', () =>
 });
 
 test('the floor drags and nudges on its own scale (criterion 5)', () => {
+  // Whole dB on a drag; 1 dB, or 5 with Shift, on a nudge; inside -120 to -20.
   const floor = rules.floorScale(400);
-  assert.equal(rules.dragFloor(floor.zeroLeft, floor), 0);
-  assert.equal(rules.dragFloor(floor.right + 50, floor), 100);
-  assert.equal(rules.nudgeFloor(0, true, false), 0.01);
-  assert.equal(rules.nudgeFloor(0.01, false, false), 0);
-  assert.equal(rules.nudgeFloor(1, true, false), 1.25);
-  assert.equal(rules.nudgeFloor(1, false, true), 0.5);
-  assert.equal(rules.nudgeFloor(80, true, true), 100);
+  assert.equal(rules.dragFloor(floor.left - 50, floor), -120);
+  assert.equal(rules.dragFloor(floor.right + 50, floor), -20);
+  assert.equal(rules.dragFloor(floor.x(-64.6), floor), -65);
+  assert.equal(rules.nudgeFloor(-65, true, false), -64);
+  assert.equal(rules.nudgeFloor(-65, false, true), -70);
+  assert.equal(rules.nudgeFloor(-22, true, true), -20);
+  assert.equal(rules.nudgeFloor(-119.5, false, false), -120);
+  assert.equal(rules.GRAPH_FIELDS.floor, 'noise_floor_dbfs');
 });
 
 test('a dragged point stays between its neighbors (criterion 6)', () => {

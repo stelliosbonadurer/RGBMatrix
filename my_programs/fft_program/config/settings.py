@@ -106,7 +106,10 @@ class ColorSettings:
 @dataclass
 class SensitivitySettings:
     """Audio sensitivity configuration."""
-    noise_floor: float = 0.3      # Subtract from signal (0 = sensitive, 0.5 = cut noise)
+    # Subtracted from each bar before weighting, in dBFS (a full-scale sine is 0).
+    # Lower is more sensitive; raise it if bars move with no audio. -65 is provisional
+    # until a silence run on the Pi (fft-level-controls D-033).
+    noise_floor_dbfs: float = -65.0
     # Frequency weighting: {"position": 0-1 along the log range, "weight": 0-100}.
     # Linear between points, flat beyond the ends. The default approximates the
     # retired low_freq_weight=0.45 / high_freq_weight=10.0 curve.
@@ -119,6 +122,12 @@ _LEGACY_WEIGHT_KEYS = ("low_freq_weight", "high_freq_weight")
 def _sensitivity_from_json(data: dict) -> SensitivitySettings:
     """Build sensitivity settings, converting retired keys (D-022)."""
     data = dict(data)
+    if "noise_floor" in data:
+        # The old floor was in raw units after weighting; no exact conversion (D-030).
+        raise ValueError(
+            "sensitivity.noise_floor is retired; set sensitivity.noise_floor_dbfs "
+            "(dBFS, -120 to -20, subtracted before weighting) instead"
+        )
     if "silence_threshold" in data:
         data.pop("silence_threshold")
         print("Settings note: ignored retired sensitivity.silence_threshold")
@@ -150,6 +159,7 @@ class ScalingSettings:
     attack_seconds: float = 5.5        # Time constant for adapting to LOUDER audio
     release_seconds: float = 2.75      # Time constant for adapting to QUIETER audio
     gain: float = 1.5                  # Multiplies bar height after scaling (2 = twice as tall)
+    max_boost_db: float = 68.0         # Most auto level may raise quiet input, in dB re full scale
 
 
 @dataclass

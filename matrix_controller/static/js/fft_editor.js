@@ -587,7 +587,7 @@ export function createEditor({program, parameters, onChange, onMessage = () => {
     row.graphGood ||= {
       minFreq: specs.get(names.min)?.default,
       maxFreq: specs.get(names.max)?.default,
-      floor: specs.get(names.floor)?.default ?? 0,
+      floor: specs.get(names.floor)?.default ?? fftLayout.FLOOR_AXIS[0],
       points: new Map(),
     };
     const good = row.graphGood;

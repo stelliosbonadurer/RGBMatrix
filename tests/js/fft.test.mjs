@@ -40,8 +40,8 @@ test('the catalog has the shape the page reads', () => {
   const descriptor = fft.descriptorFor(structure, 'current-bars');
   const groups = fft.settingGroups(descriptor);
   assert.deepEqual(groups.map(group => group.label), ['Range & weighting', 'Level', 'Look', 'Peaks', 'Motion', 'Dynamic theme']);
-  assert.deepEqual(groups[0].fields.map(field => field.label), ['Min Hz', 'Max Hz', 'Noise floor', 'Weighting points']);
-  assert.deepEqual(groups[1].fields.map(field => field.label), ['Gain', 'Auto level', 'Headroom', 'Attack (s)', 'Release (s)']);
+  assert.deepEqual(groups[0].fields.map(field => field.label), ['Min Hz', 'Max Hz', 'Noise floor (dBFS)', 'Weighting points']);
+  assert.deepEqual(groups[1].fields.map(field => field.label), ['Gain', 'Auto level', 'Headroom', 'Attack (s)', 'Release (s)', 'Max auto boost (dB)']);
   // The default layer is every descriptor default.
   assert.deepEqual(structure.layers[0].settings, fft.defaultSettings(descriptor));
 });
@@ -250,13 +250,13 @@ test('unsent changes count each edit once (D-052)', () => {
 });
 
 test('the cost note counts distinct bar mappings over every layer (D-066)', () => {
-  const settings = {min_freq: 100, max_freq: 6300, noise_floor: 0.3, weight_points: [{position: 0, weight: 1}, {position: 1, weight: 2}]};
+  const settings = {min_freq: 100, max_freq: 6300, noise_floor_dbfs: -65, weight_points: [{position: 0, weight: 1}, {position: 1, weight: 2}]};
   const same = {...settings, weight_points: [...settings.weight_points].reverse(), theme: 'warm'};
   const hidden = {...settings, min_freq: 2000};
   const layers = [{settings, visible: true}, {settings: same, visible: true}];
   assert.equal(fft.mappingCount(layers), 1);
   assert.equal(fft.costNote(layers), '');
-  const more = [...layers, {settings: hidden, visible: false}, {settings: {...settings, noise_floor: 0.5}, visible: true}];
+  const more = [...layers, {settings: hidden, visible: false}, {settings: {...settings, noise_floor_dbfs: -50}, visible: true}];
   assert.equal(fft.mappingCount(more), 3);
   assert.match(fft.costNote(more), /^4 layers use 3 different bar mappings of the one spectrum\./);
   assert.match(fft.costNote(more), /35% missed refreshes/);

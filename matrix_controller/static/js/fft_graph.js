@@ -286,13 +286,12 @@ export function createLayerGraph({onRange, onFloor, onPoint, onSelect, onRemove}
     const scale = rules.floorScale(width);
     const value = model.floor;
     const hx = scale.x(value);
+    // The fill is the part of the level range the floor cuts away.
     const out = [
-      s('rect', {class: 'zero-zone', x: scale.zeroLeft, y: scale.y - 9, width: scale.zeroRight - scale.zeroLeft, height: 18, rx: 9}),
-      s('text', {class: 'axis', x: (scale.zeroLeft + scale.zeroRight) / 2, y: 42, 'text-anchor': 'middle'}, '0'),
       s('line', {class: 'floor-track', x1: scale.left, y1: scale.y, x2: scale.right, y2: scale.y}),
+      s('line', {class: 'floor-fill', x1: scale.left, y1: scale.y, x2: fixed(hx), y2: scale.y}),
     ];
-    if (value > 0) out.push(s('line', {class: 'floor-fill', x1: scale.left, y1: scale.y, x2: fixed(hx), y2: scale.y}));
-    for (const tick of [0.01, 0.1, 1, 10, 100]) {
+    for (const tick of rules.FLOOR_TICKS) {
       const x = fixed(scale.x(tick));
       out.push(s('line', {class: 'grid-line', x1: x, y1: scale.y + 6, x2: x, y2: scale.y + 10}));
       out.push(s('text', {class: 'axis', x, y: 42, 'text-anchor': 'middle'}, String(tick)));
@@ -300,7 +299,7 @@ export function createLayerGraph({onRange, onFloor, onPoint, onSelect, onRemove}
     out.push(s('circle', {class: 'floor-handle', cx: fixed(hx), cy: scale.y, r: 8}));
     floorBase.replaceChildren(...out);
     setHit(floorHit, {cx: fixed(hx), cy: scale.y, r: 22, 'data-cx': fixed(hx), 'data-cy': scale.y},
-      {valueText: String(value), disabled: model.disabled.floor, values: [value, 0, rules.FLOOR_AXIS[1]]});
+      {valueText: `${value} dBFS`, disabled: model.disabled.floor, values: [value, ...rules.FLOOR_AXIS]});
   }
 
   function draw() {
@@ -318,7 +317,7 @@ export function createLayerGraph({onRange, onFloor, onPoint, onSelect, onRemove}
     if (key === 'min') return `Min ${formatHz(model.minFreq)}`;
     if (key === 'max') return `Max ${formatHz(model.maxFreq)}`;
     if (key === 'band') return `${formatHz(model.minFreq)} – ${formatHz(model.maxFreq)}`;
-    if (key === 'floor') return `Noise floor ${model.floor}`;
+    if (key === 'floor') return `Noise floor ${model.floor} dBFS`;
     const point = model.points.find(item => `pt:${item.id}` === key);
     if (!point) return '';
     return `${point.position.toFixed(3)} · ≈ ${formatHz(positionHz(model.minFreq, model.maxFreq, point.position))} · ` +

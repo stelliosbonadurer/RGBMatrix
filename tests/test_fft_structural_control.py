@@ -99,7 +99,7 @@ class _Analyzer:
     def release_fft_magnitudes(self):
         self.release_calls += 1
 
-    def create_projection(self, candidate, _noise_floor):
+    def create_projection(self, candidate, _noise_floor_dbfs):
         # Mirror AudioProcessor: the sample-rate check fails only here.
         if candidate.max_freq > NYQUIST:
             raise ValueError(
@@ -364,6 +364,33 @@ class StructuralExecutionTests(unittest.TestCase):
         self.assertIs(plan.layers[0].analyzer, plan.layers[1].analyzer)
         self.assertIsNot(plan.layers[0].analyzer, plan.layers[2].analyzer)
         self.assertEqual(len(analyzer.projections), 2)
+
+    def test_floor_splits_projections_and_max_boost_does_not(self) -> None:
+        # fft-level-controls criterion 6: the floor is a projection setting, max
+        # auto boost a presentation one.
+        settings, definition, capabilities, registry, analyzer, _plan, _controller = _runtime()
+        base = dict(definition.layers[0].settings)
+        first = replace(definition.layers[0], layer_id="first", settings=dict(base))
+        boosted = replace(
+            definition.layers[0],
+            layer_id="boosted",
+            settings={**base, "auto_level_max_boost_db": 30.0},
+        )
+        floored = replace(
+            definition.layers[0],
+            layer_id="floored",
+            settings={**base, "noise_floor_dbfs": -40.0},
+        )
+        graph = compile_runtime_graph(
+            replace(definition, layers=(first, boosted, floored)),
+            capabilities,
+        )
+        plan = compile_current_bars_layer_plan(
+            graph, registry, settings=settings, width=8, height=8
+        )
+
+        self.assertIs(plan.layers[0].analyzer, plan.layers[1].analyzer)
+        self.assertIsNot(plan.layers[0].analyzer, plan.layers[2].analyzer)
 
     def test_equivalent_analyzer_references_share_one_physical_lease(self) -> None:
         settings, definition, capabilities, _registry, _analyzer, _plan, _controller = _runtime()

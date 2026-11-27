@@ -136,6 +136,24 @@ test('a layer saved before seconds-based timing drops its per-call keys and fill
   assert.match(note, /smoothing_rise/);
 });
 
+test('a layer saved with the raw noise floor drops it and fills the dBFS floor and max auto boost (fft-level-controls D-030, D-035)', () => {
+  const structure = catalog.structure;
+  const current = structure.layers[0].settings;
+  const added = ['noise_floor_dbfs', 'auto_level_max_boost_db'];
+  const old = Object.fromEntries(Object.entries(current).filter(([name]) => !added.includes(name)));
+  const saved = {...structure.layers[0], settings: {...old, noise_floor: 0.3, gain: 2}};
+  const content = {source: 'usb-mic', backend: structure.output_backend, layers: [saved]};
+  const result = presets.reconcile(content, structure, {choices: ['usb-mic'], default: 'usb-mic'});
+  assert.deepEqual(result.changes.dropped, ['noise_floor']);
+  const labels = new Map(fft.descriptorFor(structure, 'current-bars').fields.map(field => [field.name, field.label]));
+  assert.deepEqual([...result.changes.filled].sort(), added.map(name => labels.get(name)).sort());
+  const settings = result.layers[0].settings;
+  assert.equal(settings.noise_floor_dbfs, -65);
+  assert.equal(settings.auto_level_max_boost_db, 68);
+  assert.equal(settings.gain, 2);
+  assert.match(presets.reconcileNote('Warm bass', result.changes), /noise_floor/);
+});
+
 test('Default is the catalog layer, output, and source (D-070)', () => {
   const preset = presets.defaultPreset(catalog, 'usb-mic');
   assert.equal(preset.preset_id, presets.DEFAULT_ID);

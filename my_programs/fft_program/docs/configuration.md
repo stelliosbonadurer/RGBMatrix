@@ -65,7 +65,7 @@ zoom_max_freq: int = 6300   # Zoom maximum Hz
 ### SensitivitySettings
 
 ```python
-noise_floor: float = 0.3   # Subtract from signal (0=sensitive, 0.5=cut noise)
+noise_floor_dbfs: float = -65.0  # Subtracted before weighting, in dBFS
 weight_points: list = [    # Frequency weighting curve
     {"position": 0.0, "weight": 0.45},
     {"position": 0.1, "weight": 0.752},
@@ -76,7 +76,19 @@ weight_points: list = [    # Frequency weighting curve
 ```
 
 These are the startup values for the default layer and the analyzer. At runtime each
-layer carries its own `noise_floor` and `weight_points` in its structure settings.
+layer carries its own `noise_floor_dbfs` and `weight_points` in its structure settings.
+
+Bars are measured in full-scale units, where a full-scale sine reads 1.0 (0 dBFS), so
+they don't change with `block_size` or `fft_size`. `noise_floor_dbfs` (−120 to −20)
+is subtracted from each bar's level before the weighting curve multiplies it, so one
+floor cuts quiet bass and quiet treble alike. A bar below the floor is dark. The
+default −65 dBFS is provisional until a silence measurement on the Pi; it keeps
+white noise at −60 dBFS RMS dark at block 512.
+
+The retired `noise_floor` (raw units, subtracted after weighting) has no exact dBFS
+equivalent, so a settings file that still has it fails to load with a message naming
+`noise_floor_dbfs`. A saved preset that has it loads with −65 dBFS, and the FFT page's
+note names the dropped key.
 
 `weight_points` has 1–16 points. `position` runs from 0 (the layer's `min_freq`) to
 1 (its `max_freq`) on the same log scale as the bars, and `weight` (0–100) multiplies
@@ -94,7 +106,7 @@ the file also has `weight_points`, those win and the old keys are ignored. The r
 
 **Tips:**
 
-- Increase `noise_floor` if you see dancing bars with no audio
+- Raise `noise_floor_dbfs` (toward −20) if you see dancing bars with no audio
 - Raise the weight of the last points if treble is too quiet
 - Lower the weight of the first points if bass dominates everything
 
@@ -106,12 +118,19 @@ headroom: float = 2.5         # Scale = level x headroom; higher = shorter bars
 attack_seconds: float = 5.5   # Time constant for adapting to louder audio
 release_seconds: float = 2.75 # Time constant for adapting to quieter audio
 gain: float = 1.5             # Multiplies bar height (2 = twice as tall)
+max_boost_db: float = 68.0    # Most auto level may raise quiet input, in dB
 ```
+
+Auto level divides each bar by `sqrt(envelope) × headroom` but never by less than
+`10^(−max_boost_db/20)` (in full-scale units), so it lifts quiet music by at most
+`max_boost_db` dB. The default rounds the retired `min_scale` of 0.05 (68.1 dB at block 512).
+With auto level off the divisor is the retired 0.3 converted to full-scale units at
+block 512 (about −52.6 dBFS), so bars look as they did at the default block size.
 
 These, `SmoothingSettings`, and the peak timing are the startup values for the
 default layer. Each layer carries its own copies in its structure settings
 (`auto_level`, `auto_level_headroom`, `auto_level_attack_seconds`,
-`auto_level_release_seconds`, `gain`, `smoothing_rise_seconds`,
+`auto_level_release_seconds`, `auto_level_max_boost_db`, `gain`, `smoothing_rise_seconds`,
 `smoothing_fall_seconds`, `peak_hold_seconds`, `peak_fall_rate`), and the FFT page
 can copy any one of them to every layer.
 

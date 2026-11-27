@@ -145,10 +145,10 @@ class RecordingRuntime:
             raise RuntimeError("no result lease")
         self.leased = False
 
-    def create_projection(self, candidate, noise_floor):
+    def create_projection(self, candidate, noise_floor_dbfs):
         projection = RecordingRuntime()
         projection.candidate = candidate
-        projection.noise_floor = noise_floor
+        projection.noise_floor_dbfs = noise_floor_dbfs
         self.projections.append(projection)
         return projection
 
@@ -213,7 +213,7 @@ class AnalyzerRegistryCompilationTests(unittest.TestCase):
             analyzer_type=first.analyzer_type,
             result_shape=first.result_shape,
             result_dtype=first.result_dtype,
-            settings={**first.settings, "noise_floor": 0.9},
+            settings={**first.settings, "noise_floor_dbfs": -50.0},
         )
         plan = compile_runtime_graph(
             RuntimeDefinition(
@@ -244,7 +244,7 @@ class AnalyzerRegistryCompilationTests(unittest.TestCase):
             num_bins=64,
             output_backend=DIRECT_OUTPUT_BACKEND,
         )
-        sensitivity.noise_floor = 0.8
+        sensitivity.noise_floor_dbfs = -50.0
         second = compile_standard_analyzer_plan(
             audio_settings=audio,
             frequency_settings=frequency,
@@ -364,7 +364,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
         processor._analyze_into(
             samples,
             processor.active_plan,
-            processor.sensitivity_settings.noise_floor,
+            processor._worker_state.noise_floor,  # raw units, from the dBFS setting
             expected,
         )
 
@@ -414,7 +414,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
         low_settings = {
             "min_freq": 80.0,
             "max_freq": 1950.0,
-            "noise_floor": 0.0,
+            "noise_floor_dbfs": -120.0,
             "weight_points": legacy_weight_points(),
         }
         high_settings = {
@@ -442,7 +442,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
             {
                 "min_freq": frequency.active_min_freq,
                 "max_freq": frequency.active_max_freq,
-                "noise_floor": sensitivity.noise_floor,
+                "noise_floor_dbfs": sensitivity.noise_floor_dbfs,
                 "weight_points": legacy_weight_points(),
             },
         )
@@ -485,7 +485,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
             {
                 "min_freq": 80.0,
                 "max_freq": 1950.0,
-                "noise_floor": 0.0,
+                "noise_floor_dbfs": -120.0,
                 "weight_points": legacy_weight_points(),
             },
         )
@@ -525,7 +525,7 @@ class RealAnalyzerRegistryBehaviorTests(unittest.TestCase):
             {STANDARD_ANALYZER_TYPE: lambda _definition: processor},
         )
         low = {
-            "min_freq": 80.0, "max_freq": 1950.0, "noise_floor": 0.3,
+            "min_freq": 80.0, "max_freq": 1950.0, "noise_floor_dbfs": -65.0,
             "weight_points": legacy_weight_points(),
         }
         high = {**low, "min_freq": 2000.0, "max_freq": 6300.0}

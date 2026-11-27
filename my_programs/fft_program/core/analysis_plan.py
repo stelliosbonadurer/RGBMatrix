@@ -129,12 +129,39 @@ class StandardAnalysisCandidate:
 
 @dataclass(frozen=True, slots=True)
 class StandardAnalysisPlan:
-    """Array-oriented runtime inputs used by the standard FFT hot path."""
+    """Array-oriented runtime inputs used by the standard FFT hot path.
+
+    ``bin_weights`` is the weighting curve times ``spectrum_scale``, so one multiply
+    both weights and normalizes a bar (D-017, D-031). ``spectrum_scale`` turns a raw
+    FFT magnitude into full-scale units: a full-scale sine centred on a bin reads 1.0.
+    """
 
     fft_size: int
     window: np.ndarray
     bin_indices: tuple[np.ndarray, ...]
     bin_weights: np.ndarray
+    spectrum_scale: float = 1.0
+
+
+# The noise floor's bounds and default, in dBFS (D-017, D-030, D-033). The default
+# is provisional until a silence run on the Pi.
+NOISE_FLOOR_DBFS_MIN = -120.0
+NOISE_FLOOR_DBFS_MAX = -20.0
+NOISE_FLOOR_DBFS_DEFAULT = -65.0
+
+
+def spectrum_scale(window: np.ndarray) -> float:
+    """What a raw magnitude is multiplied by so a full-scale sine reads 1.0 (D-031).
+
+    A sine of amplitude A centred on an FFT bin has magnitude ``A × Σwindow / 2``
+    there, whatever the zero padding.
+    """
+    return 2.0 / float(np.sum(window))
+
+
+def raw_noise_floor(noise_floor_dbfs: float, scale: float) -> float:
+    """The dBFS floor in raw magnitude units, subtracted before weighting (D-005)."""
+    return 10.0 ** (float(noise_floor_dbfs) / 20.0) / scale
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,12 +254,18 @@ def compile_standard_analysis_plan(
     )
     window = np.hanning(candidate.block_size)
     window.flags.writeable = False
+    scale = spectrum_scale(window)
+    # Normalization folds into the weights: no per-frame cost (D-017). float32
+    # matches the transport slots, so the hot-path multiply needs no cast.
+    weights = (layout.weights * scale).astype(np.float32)
+    weights.flags.writeable = False
 
     return StandardAnalysisPlan(
         fft_size=candidate.fft_size,
         window=window,
         bin_indices=layout.bin_indices,
-        bin_weights=layout.weights,
+        bin_weights=weights,
+        spectrum_scale=scale,
     )
 
 
@@ -254,11 +287,16 @@ __all__ = [
     "weight_points_document",
     # Defined here.
     "AnalysisPlanValidationError",
+    "NOISE_FLOOR_DBFS_DEFAULT",
+    "NOISE_FLOOR_DBFS_MAX",
+    "NOISE_FLOOR_DBFS_MIN",
     "ProjectionLayout",
     "STANDARD_ANALYSIS_SCHEMA_VERSION",
     "StandardAnalysisCandidate",
     "StandardAnalysisPlan",
     "compile_standard_analysis_plan",
     "projection_layout",
+    "raw_noise_floor",
+    "spectrum_scale",
     "weight_curve",
 ]
